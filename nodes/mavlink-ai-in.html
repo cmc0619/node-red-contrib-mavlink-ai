@@ -1,0 +1,41 @@
+<script type="text/javascript">
+  RED.nodes.registerType('mavlink-ai-in', {
+    category: 'MAVLink AI',
+    color: '#C7E9C0',
+    defaults: {
+      name: { value: '' },
+      connection: { value: '', type: 'mavlink-ai-connection', required: true },
+      messageFilter: { value: '' },
+      outputRaw: { value: false }
+    },
+    inputs: 0,
+    outputs: 1,
+    icon: 'bridge.svg',
+    label: function () {
+      return this.name || 'mavlink ai in';
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="mavlink-ai-in">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="MAVLink In">
+  </div>
+  <div class="form-row">
+    <label for="node-input-connection">Connection</label>
+    <input type="text" id="node-input-connection">
+  </div>
+  <div class="form-row">
+    <label for="node-input-messageFilter">Filter</label>
+    <input type="text" id="node-input-messageFilter" placeholder="HEARTBEAT,GLOBAL_POSITION_INT">
+  </div>
+  <div class="form-row">
+    <label for="node-input-outputRaw">Raw</label>
+    <input type="checkbox" id="node-input-outputRaw" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
+</script>
+
+<script type="text/html" data-help-name="mavlink-ai-in">
+  <p>Receives decoded MAVLink messages from a shared MAVLink AI Connection.</p>
+</script>
