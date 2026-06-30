@@ -1,0 +1,41 @@
+<script type="text/javascript">
+  RED.nodes.registerType('mavlink-ai-filter', {
+    category: 'MAVLink AI',
+    color: '#D7E8FF',
+    defaults: {
+      name: { value: '' },
+      messageNames: { value: '' },
+      sysid: { value: '' },
+      compid: { value: '' }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: 'filter.svg',
+    label: function () {
+      return this.name || 'mavlink ai filter';
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="mavlink-ai-filter">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Filter MAVLink">
+  </div>
+  <div class="form-row">
+    <label for="node-input-messageNames">Messages</label>
+    <input type="text" id="node-input-messageNames" placeholder="HEARTBEAT,GLOBAL_POSITION_INT">
+  </div>
+  <div class="form-row">
+    <label for="node-input-sysid">SysID</label>
+    <input type="number" id="node-input-sysid" placeholder="any">
+  </div>
+  <div class="form-row">
+    <label for="node-input-compid">CompID</label>
+    <input type="number" id="node-input-compid" placeholder="any">
+  </div>
+</script>
+
+<script type="text/html" data-help-name="mavlink-ai-filter">
+  <p>Filters decoded MAVLink messages by message name, system ID, and component ID.</p>
+</script>
