@@ -1,0 +1,48 @@
+{
+  "name": "node-red-contrib-mavlink-ai",
+  "version": "0.0.1",
+  "description": "A v2-style Node-RED MAVLink module built around profiles, connections, routing, and reusable action nodes.",
+  "keywords": [
+    "node-red",
+    "mavlink",
+    "ardupilot",
+    "drone",
+    "robotics",
+    "udp",
+    "serial"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cmc0619/node-red-contrib-mavlink-ai.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cmc0619/node-red-contrib-mavlink-ai/issues"
+  },
+  "homepage": "https://github.com/cmc0619/node-red-contrib-mavlink-ai#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "node-mavlink": "^0.1.0"
+  },
+  "optionalDependencies": {
+    "serialport": "^13.0.0"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "node test/smoke-load.js"
+  },
+  "node-red": {
+    "nodes": {
+      "mavlink-ai-profile": "nodes/mavlink-ai-profile.js",
+      "mavlink-ai-connection": "nodes/mavlink-ai-connection.js",
+      "mavlink-ai-in": "nodes/mavlink-ai-in.js",
+      "mavlink-ai-out": "nodes/mavlink-ai-out.js",
+      "mavlink-ai-build": "nodes/mavlink-ai-build.js",
+      "mavlink-ai-filter": "nodes/mavlink-ai-filter.js",
+      "mavlink-ai-command": "nodes/mavlink-ai-command.js",
+      "mavlink-ai-mission": "nodes/mavlink-ai-mission.js"
+    }
+  }
+}
