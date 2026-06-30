@@ -1,0 +1,92 @@
+<script type="text/javascript">
+  RED.nodes.registerType('mavlink-ai-connection', {
+    category: 'config',
+    defaults: {
+      name: { value: '' },
+      profile: { value: '', type: 'mavlink-ai-profile', required: true },
+      transport: { value: 'udp-peer', required: true },
+      routingMode: { value: 'single-profile', required: true },
+      bindAddress: { value: '0.0.0.0' },
+      bindPort: { value: 14550, validate: RED.validators.number() },
+      remoteHost: { value: '' },
+      remotePort: { value: 14550, validate: RED.validators.number() },
+      serialPath: { value: '' },
+      serialBaud: { value: 57600, validate: RED.validators.number() },
+      reconnect: { value: true },
+      heartbeat: { value: false },
+      heartbeatIntervalMs: { value: 1000, validate: RED.validators.number() }
+    },
+    label: function () {
+      return this.name || 'MAVLink AI Connection';
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="mavlink-ai-connection">
+  <div class="form-row">
+    <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-config-input-name" placeholder="Copter UDP 14550">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-profile">Profile</label>
+    <input type="text" id="node-config-input-profile">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-transport">Transport</label>
+    <select id="node-config-input-transport">
+      <option value="udp-peer">UDP Peer</option>
+      <option value="udp-in">UDP In</option>
+      <option value="udp-out">UDP Out</option>
+      <option value="serial">Serial</option>
+      <option value="tcp-client">TCP Client</option>
+      <option value="tcp-server">TCP Server</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-routingMode">Routing</label>
+    <select id="node-config-input-routingMode">
+      <option value="single-profile">Single profile</option>
+      <option value="routed">Routed by sysid/compid</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-bindAddress">Bind Addr</label>
+    <input type="text" id="node-config-input-bindAddress">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-bindPort">Bind Port</label>
+    <input type="number" id="node-config-input-bindPort">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-remoteHost">Remote Host</label>
+    <input type="text" id="node-config-input-remoteHost">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-remotePort">Remote Port</label>
+    <input type="number" id="node-config-input-remotePort">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-serialPath">Serial Path</label>
+    <input type="text" id="node-config-input-serialPath" placeholder="/dev/ttyACM0">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-serialBaud">Baud</label>
+    <input type="number" id="node-config-input-serialBaud">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-reconnect">Reconnect</label>
+    <input type="checkbox" id="node-config-input-reconnect" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-heartbeat">Heartbeat</label>
+    <input type="checkbox" id="node-config-input-heartbeat" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-heartbeatIntervalMs">HB ms</label>
+    <input type="number" id="node-config-input-heartbeatIntervalMs">
+  </div>
+</script>
+
+<script type="text/html" data-help-name="mavlink-ai-connection">
+  <p>Shared MAVLink transport/session config. This owns UDP, TCP, or serial connection runtime and references a MAVLink AI Profile.</p>
+</script>
