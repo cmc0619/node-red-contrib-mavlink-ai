@@ -1,0 +1,36 @@
+<script type="text/javascript">
+  RED.nodes.registerType('mavlink-ai-build', {
+    category: 'MAVLink AI',
+    color: '#D7E8FF',
+    defaults: {
+      name: { value: '' },
+      profile: { value: '', type: 'mavlink-ai-profile', required: false },
+      messageName: { value: 'HEARTBEAT', required: true }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: 'function.svg',
+    label: function () {
+      return this.name || 'mavlink ai build';
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="mavlink-ai-build">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Build MAVLink Message">
+  </div>
+  <div class="form-row">
+    <label for="node-input-profile">Profile</label>
+    <input type="text" id="node-input-profile">
+  </div>
+  <div class="form-row">
+    <label for="node-input-messageName">Message</label>
+    <input type="text" id="node-input-messageName" placeholder="COMMAND_LONG">
+  </div>
+</script>
+
+<script type="text/html" data-help-name="mavlink-ai-build">
+  <p>Builds a normalized outbound MAVLink message object. Encoding is not implemented yet.</p>
+</script>
