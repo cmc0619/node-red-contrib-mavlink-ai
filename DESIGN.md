@@ -4,20 +4,62 @@
 
 `node-red-contrib-mavlink-ai` is a second-generation Node-RED MAVLink module.
 
-The goal is not to patch the old shape. The goal is to build a clean architecture where MAVLink protocol identity, transport, routing, message construction, and mission workflows are separated.
+This repo exists because the first-generation shape naturally drifted toward a coupled design: comms nodes started owning transport, dialect, message parsing, mission behavior, and user workflow assumptions. That works for a quick proof of concept, but it becomes brittle as soon as more than one vehicle, one dialect, one transport, or one flow tab is involved.
 
-The core design rule:
+v2 is a clean architecture reset.
+
+The module should be a MAVLink protocol layer for Node-RED, not merely a serial/UDP node with MAVLink features glued onto it.
+
+The core design rule is:
 
 ```text
-Profile    = what kind of MAVLink thing this is
-Connection = how Node-RED talks to it
-Route      = how sysid/compid packets map to profiles
-Nodes      = what the flow does with messages
+Profile    = MAVLink identity, dialect, vehicle defaults, protocol defaults
+Connection = transport/session/resource owner
+Route      = sysid/compid mapping to profile
+Nodes      = visible Node-RED behavior
 ```
 
-This module should coexist with older MAVLink Node-RED modules. It should use distinct package, node type, file, and palette names.
+Or more bluntly:
 
-## 2. Package and Node Names
+```text
+Profile = what this MAVLink thing means.
+Connection = how we talk to it.
+Route = which packet belongs to which thing.
+Flow nodes = what we do with it.
+```
+
+## 2. High-Level Goals
+
+v2 must support:
+
+```text
+- Multiple vehicles in the same Node-RED runtime.
+- Multiple vehicle types: GCS, copter, plane, rover, boat, sub, antenna tracker, generic.
+- Multiple MAVLink profiles using the same dialect but different defaults.
+- Multiple connections: UDP, serial, TCP.
+- One UDP port connected to one vehicle.
+- One UDP port receiving multiple sysids/compids.
+- Multiple UDP ports mapped to multiple vehicles.
+- Flow tabs split by function while sharing the same connection.
+- A clean path to mission download/upload without stuffing workflow state into transport code.
+- UDP/TCP usage without requiring `serialport`.
+- Coexistence with older Node-RED MAVLink modules.
+```
+
+v2 must avoid:
+
+```text
+- Hidden global parser state.
+- Hidden global dialect state.
+- Hidden global current vehicle.
+- Treating a UDP port as the same thing as a vehicle.
+- Requiring serial dependencies for UDP/TCP users.
+- Burying mission state machines inside comms.
+- Making every node independently open its own socket.
+- Making flow tabs require a spiderweb of link nodes just to talk to the same vehicle.
+```
+
+## 3. Package and Node Names
 
 Package name:
 
@@ -32,10 +74,10 @@ mavlink-ai-profile
 mavlink-ai-connection
 mavlink-ai-in
 mavlink-ai-out
+mavlink-ai-build
+mavlink-ai-filter
 mavlink-ai-command
 mavlink-ai-mission
-mavlink-ai-filter
-mavlink-ai-build
 ```
 
 Palette display names:
@@ -45,23 +87,32 @@ MAVLink AI Profile
 MAVLink AI Connection
 MAVLink AI In
 MAVLink AI Out
+MAVLink AI Build
+MAVLink AI Filter
 MAVLink AI Command
 MAVLink AI Mission
-MAVLink AI Filter
-MAVLink AI Build
 ```
 
-No migration support is required. This is a new module with new names.
-
-## 3. Node-RED Flow Model
-
-Node-RED config nodes are reusable shared configuration objects. Users can create multiple instances of the same config node type, and regular nodes can reference them.
-
-This module should use config nodes for shared MAVLink resources:
+The `mavlink-ai-*` prefix is intentional. The module must coexist with earlier modules such as:
 
 ```text
-[mavlink-ai-profile]
-[mavlink-ai-connection]
+mavlink-comms
+mavlink-msg
+mavlink-mission
+node-red-contrib-mavlink-aigen
+```
+
+No migration support is required for v2 unless explicitly requested later. v2 should be clean, separate, and boringly predictable.
+
+## 4. Node-RED Flow Model
+
+Node-RED config nodes are reusable shared configuration objects. Users can create multiple instances of the same config-node type, and regular nodes can reference them.
+
+This module should use two config-node layers:
+
+```text
+mavlink-ai-profile
+mavlink-ai-connection
 ```
 
 A profile can be reused by one or more connections.
@@ -75,20 +126,87 @@ A config node can be shared across tabs.
 A config node is not automatically a wire between tabs.
 ```
 
-Therefore, a connection config node should own the runtime transport/session resource and expose methods/events to regular nodes. Regular nodes on separate tabs can select the same connection config and interact with the same MAVLink session without requiring link nodes everywhere.
+This matters. A config node does not magically pass Node-RED `msg` objects from one flow tab to another. But a config node can own a shared runtime resource, like a socket, serial port, subscription list, parser, or outbound queue.
 
-## 4. Profile vs Connection
+Therefore, the connection config node should own the runtime session and expose methods/events to regular nodes.
 
-### 4.1 Profile Config Node
+That allows this pattern:
 
-The profile config node describes MAVLink identity, protocol behavior, and vehicle defaults.
+```text
+Tab: Copter Telemetry
+  [MAVLink AI In] -> [MAVLink AI Filter] -> [Debug/Dashboard]
+       uses: Copter UDP Connection
 
-It does not own sockets, serial ports, or TCP listeners.
+Tab: Copter Commands
+  [Inject] -> [MAVLink AI Command] -> [MAVLink AI Out]
+       uses: Copter UDP Connection
 
-Suggested type:
+Tab: Copter Mission
+  [Inject] -> [MAVLink AI Mission]
+       uses: Copter UDP Connection
+```
+
+All three tabs can use the same connection config node without requiring visible wires between tabs.
+
+This is the core reason `mavlink-ai-connection` should be a config node instead of only a normal visible `comms` node.
+
+## 5. Why Not One Big Comms Node?
+
+A visible comms node is tempting:
+
+```text
+[serial/udp/tcp + dialect + parser + mission + heartbeat + commands]
+```
+
+That is easy to demo and miserable to extend.
+
+Problems with one big comms node:
+
+```text
+- Other tabs need link nodes to send through it.
+- Dialect becomes tied to a transport instead of the MAVLink profile.
+- Multiple vehicles become awkward.
+- Mission workflow state gets mixed into socket state.
+- Testing protocol behavior requires transport setup.
+- UDP routing becomes an afterthought.
+- Commands and message builders become dependent on a specific comms node instance.
+```
+
+Better model:
+
+```text
+Profile node: owns protocol identity/defaults.
+Connection node: owns transport/session.
+Regular nodes: build, filter, receive, send, command, mission.
+```
+
+## 6. Profile Config Node
+
+The profile config node describes a MAVLink identity and its protocol defaults.
+
+It does **not** own sockets, serial ports, TCP listeners, UDP ports, mission locks, timers, or peer state.
+
+Type:
 
 ```text
 mavlink-ai-profile
+```
+
+Responsibilities:
+
+```text
+- Profile name.
+- Profile type / vehicle type.
+- Dialect selection.
+- MAVLink version preference.
+- Source system ID.
+- Source component ID.
+- Default target system.
+- Default target component.
+- Preferred mission item message type.
+- Default mission type.
+- Heartbeat identity defaults.
+- Protocol/debug preferences.
 ```
 
 Suggested fields:
@@ -126,9 +244,13 @@ Heartbeat MAV_TYPE: MAV_TYPE_GCS
 Heartbeat autopilot type: MAV_AUTOPILOT_INVALID
 ```
 
-### 4.2 Vehicle Type Is Not Dialect
+The defaults should make the module useful as a lightweight GCS/client first. Vehicle profiles can then define the target vehicle defaults.
 
-Vehicle/profile type and dialect are separate concepts.
+## 7. Vehicle Type Is Not Dialect
+
+Vehicle type and dialect are separate concepts.
+
+This is important enough to repeat.
 
 A copter, plane, and rover may all use:
 
@@ -136,38 +258,58 @@ A copter, plane, and rover may all use:
 ardupilotmega
 ```
 
-But each can have different defaults:
+But they may have different defaults:
 
 ```text
 Copter Profile
 - profile type: copter
 - dialect: ardupilotmega
 - default target system: 1
+- heartbeat type: MAV_TYPE_QUADROTOR or GCS depending on source identity
 - preferred mission item type: MISSION_ITEM_INT
 
 Rover Profile
 - profile type: rover
 - dialect: ardupilotmega
 - default target system: 2
+- heartbeat type: MAV_TYPE_GROUND_ROVER or GCS depending on source identity
 - preferred mission item type: MISSION_ITEM_INT
 
 Plane Profile
 - profile type: plane
 - dialect: ardupilotmega
 - default target system: 3
+- heartbeat type: MAV_TYPE_FIXED_WING or GCS depending on source identity
 - preferred mission item type: MISSION_ITEM_INT
 ```
 
-This lets the module support multiple vehicles in one Node-RED runtime without global state contamination.
+The dialect defines the message dictionary. The profile defines how this Node-RED runtime should behave when dealing with a specific MAVLink system or role.
 
-### 4.3 Connection Config Node
+## 8. Connection Config Node
 
-The connection config node owns the transport/session.
+The connection config node owns transport and session state.
 
-Suggested type:
+Type:
 
 ```text
 mavlink-ai-connection
+```
+
+Responsibilities:
+
+```text
+- Own UDP socket, serial port, or TCP socket/server.
+- Reference a default profile.
+- Decode inbound MAVLink packets.
+- Route inbound packets to profiles using sysid/compid.
+- Encode outbound messages.
+- Track UDP peer state.
+- Own outbound queue.
+- Own heartbeat timer.
+- Own reconnect timer.
+- Own subscription registry.
+- Emit status and error events.
+- Close resources cleanly on redeploy/stop.
 ```
 
 Suggested fields:
@@ -178,6 +320,9 @@ Default profile
 Transport: serial | udp-peer | udp-in | udp-out | tcp-client | tcp-server
 Serial path
 Serial baud
+Serial data bits
+Serial stop bits
+Serial parity
 UDP bind address
 UDP bind port
 UDP remote host
@@ -195,9 +340,9 @@ Inbound rate limits
 Outbound queue enabled
 ```
 
-A connection references one default profile, but may route packets to multiple profiles in advanced mode.
+A connection references one default profile. In simple mode, all accepted packets use that profile. In routed mode, packets can be mapped to multiple profiles by sysid/compid.
 
-## 5. UDP, sysid, and compid
+## 9. UDP, sysid, and compid
 
 A UDP socket is bound by the OS to:
 
@@ -224,7 +369,7 @@ sysid: 1
 compid: 1
 ```
 
-The OS cannot bind a UDP socket to a MAVLink sysid or compid. The module can only inspect MAVLink packets after receiving them and route/filter based on decoded packet identity.
+The OS cannot bind a UDP socket to a MAVLink sysid or compid. The module can only inspect MAVLink packets after receiving them and then route/filter based on decoded packet identity.
 
 Therefore:
 
@@ -234,7 +379,7 @@ sysid/compid mapping = routing concern
 vehicle defaults = profile concern
 ```
 
-### 5.1 Simple UDP Mode
+### 9.1 Simple UDP Mode
 
 Most users start here:
 
@@ -248,9 +393,19 @@ Accept sysid: 1
 Accept compid: any
 ```
 
-### 5.2 Routed UDP Mode
+This means:
 
-Advanced users can receive multiple MAVLink systems on one UDP socket:
+```text
+Listen on UDP 14550.
+Decode inbound packets.
+Only accept sysid 1 unless configured otherwise.
+Treat accepted packets as belonging to Copter Profile.
+Send replies to the learned UDP peer if udp-peer mode is used.
+```
+
+### 9.2 Routed UDP Mode
+
+Advanced users may receive multiple MAVLink systems on one UDP socket:
 
 ```text
 Connection: Swarm UDP 14550
@@ -264,9 +419,18 @@ Routes:
   3:* -> Plane Profile
 ```
 
-This supports SITL swarms, mavlink-router, companion-computer routing, shared radio links, and multiple MAVLink components appearing on one connection.
+This supports:
 
-### 5.3 Multiple-Port Mode
+```text
+- SITL swarms.
+- mavlink-router style fan-in.
+- Companion-computer relays.
+- Shared radio links.
+- Multiple components visible through one endpoint.
+- Flight controller + camera + gimbal + payload combinations.
+```
+
+### 9.3 Multiple-Port Mode
 
 Also valid:
 
@@ -276,11 +440,73 @@ Rover UDP 14551  -> Rover Profile
 Plane UDP 14552  -> Plane Profile
 ```
 
-The module should support all three models without forcing one.
+The module should support all three models:
 
-## 6. Runtime Architecture
+```text
+one port, one vehicle
+one port, multiple vehicles
+multiple ports, multiple vehicles
+```
 
-Target architecture:
+Do not bake in a box canyon.
+
+## 10. Route Table
+
+The route table maps MAVLink identity to profile.
+
+Route matching should support:
+
+```text
+sysid exact
+compid exact
+sysid wildcard
+compid wildcard
+priority/order
+fallback profile
+reject unmatched
+```
+
+Example route config:
+
+```json
+[
+  { "sysid": 1, "compid": "*", "profile": "Copter" },
+  { "sysid": 2, "compid": "*", "profile": "Rover" },
+  { "sysid": 3, "compid": 1, "profile": "Plane Autopilot" },
+  { "sysid": 3, "compid": 154, "profile": "Plane Camera" }
+]
+```
+
+Routing decisions should be deterministic.
+
+If two routes match, the more specific route wins:
+
+```text
+sysid + compid exact
+sysid exact + compid wildcard
+sysid wildcard + compid exact
+wildcard fallback
+```
+
+If no route matches, behavior should be configurable:
+
+```text
+reject unmatched
+use default profile
+emit warning and reject
+emit warning and use default profile
+```
+
+Default should probably be:
+
+```text
+single-profile mode: use default profile if accepted by filters
+routed mode: reject unmatched and emit warning/status event
+```
+
+## 11. Runtime Architecture
+
+Simple architecture:
 
 ```text
 [mavlink-ai-profile: Copter]
@@ -291,13 +517,13 @@ Target architecture:
           |
           +-- [mavlink-ai-in]
           +-- [mavlink-ai-out]
+          +-- [mavlink-ai-build]
+          +-- [mavlink-ai-filter]
           +-- [mavlink-ai-command]
           +-- [mavlink-ai-mission]
-          +-- [mavlink-ai-filter]
-          +-- [mavlink-ai-build]
 ```
 
-Multi-profile routed architecture:
+Routed architecture:
 
 ```text
 [mavlink-ai-profile: Copter] <--- route 1:*
@@ -306,27 +532,82 @@ Multi-profile routed architecture:
 
 [mavlink-ai-connection: UDP 14550]
           |
+          +-- owns socket
+          +-- decodes packets
           +-- routes inbound packets by sysid/compid
-          +-- applies outbound target/profile defaults
+          +-- applies profile/default target behavior to outbound messages
           +-- owns parser/encoder/session state
 ```
 
-## 7. Regular Nodes
+Flow-tab architecture:
 
-### 7.1 `mavlink-ai-in`
+```text
+Tab: Telemetry
+  [mavlink-ai-in] -> [mavlink-ai-filter] -> [debug]
 
-Receives decoded MAVLink messages from a connection.
+Tab: Commands
+  [inject] -> [mavlink-ai-command] -> [mavlink-ai-out]
+
+Tab: Mission
+  [inject] -> [mavlink-ai-mission]
+
+All use: [mavlink-ai-connection: Copter UDP]
+```
+
+## 12. Internal APIs
+
+The connection node should expose an internal API to regular nodes.
+
+Suggested API:
+
+```js
+connection.send(message, options)
+connection.sendRaw(buffer, options)
+connection.subscribe(filter, callback)
+connection.unsubscribe(subscriptionId)
+connection.getStatus()
+connection.getProfileForPacket(packet)
+connection.resolveProfile(nameOrId)
+connection.acquireLock(lockName, owner, options)
+connection.releaseLock(lockName, owner)
+```
+
+The profile node should expose:
+
+```js
+profile.getDefaults()
+profile.getDialect()
+profile.getProtocolOptions()
+profile.getMessageDefinition(messageNameOrId)
+profile.getEnum(enumName)
+profile.normalizeFields(messageName, fields)
+```
+
+Protocol code should live in `lib/protocol`, not directly in the Node-RED node files.
+
+Transport code should live in `lib/transport`, not directly in the Node-RED node files.
+
+Mission workflow code should live in `lib/mission`, not directly in the Node-RED node files.
+
+## 13. Regular Nodes
+
+### 13.1 `mavlink-ai-in`
+
+Receives decoded MAVLink messages from a shared connection.
 
 Fields:
 
 ```text
 Name
 Connection
-Message filter: all | by name | by ID | by regex/list
+Message filter: all | by name | by ID | by list | by regex
 sysid filter
 compid filter
+Profile filter
 Rate limit
+Changed-only mode
 Output mode: decoded | raw | both
+Status/error output enabled
 ```
 
 Outputs:
@@ -337,24 +618,39 @@ Output 2: raw packets, optional
 Output 3: status/errors, optional
 ```
 
-### 7.2 `mavlink-ai-out`
+Default should be safe and not noisy:
 
-Sends MAVLink messages through a connection.
+```text
+Output decoded messages only.
+No raw packets unless requested.
+No high-volume debug unless requested.
+```
 
-Inputs:
+### 13.2 `mavlink-ai-out`
+
+Sends MAVLink messages through a shared connection.
+
+Accepted input topics:
 
 ```text
 mavlink/send
 mavlink/raw
 ```
 
-The node should accept normalized outbound message objects and raw buffers.
+Accepted payloads:
 
-### 7.3 `mavlink-ai-build`
+```text
+normalized outbound message object
+raw Buffer
+```
 
-Builds a MAVLink message object without sending it.
+It should not build high-level commands itself. It sends what it is given.
 
-Useful when composing flows visually.
+### 13.3 `mavlink-ai-build`
+
+Builds a normalized MAVLink message object without sending it.
+
+Useful for visual flow composition.
 
 Modes:
 
@@ -363,9 +659,13 @@ Fixed message type
 Message type from msg
 Field mapping from node config
 Field mapping from msg.payload
+Profile defaults applied or not applied
+Enum name resolution enabled or disabled
 ```
 
-### 7.4 `mavlink-ai-filter`
+This node should eventually validate required fields using the selected dialect/profile.
+
+### 13.4 `mavlink-ai-filter`
 
 Filters decoded MAVLink messages.
 
@@ -374,18 +674,32 @@ Useful filters:
 ```text
 Message name
 Message ID
+Profile name
 sysid
 compid
 target_system
 target_component
 field value
+field exists
 rate limit
 changed only
 ```
 
-### 7.5 `mavlink-ai-command`
+Examples:
 
-Builds common commands.
+```text
+Pass only HEARTBEAT.
+Pass only GLOBAL_POSITION_INT from sysid 1.
+Pass only MISSION_* messages.
+Pass only messages where target_system is 1 or missing.
+Limit ATTITUDE to 5 per second.
+```
+
+High-rate telemetry can flood Node-RED. Rate limiting is not decorative; it is survival.
+
+### 13.5 `mavlink-ai-command`
+
+Builds common command messages.
 
 Initial commands:
 
@@ -401,24 +715,27 @@ request message
 set message interval
 ```
 
-This node should not own transport. It emits a normalized outbound MAVLink message for `mavlink-ai-out` or sends through a selected connection if direct-send mode is enabled.
+Primary output should be a normalized outbound message for `mavlink-ai-out`.
 
-Preferred design:
-
-```text
-Command node builds.
-Out node sends.
-```
-
-Optional ergonomic design:
+Preferred flow:
 
 ```text
-Command node can direct-send through selected connection.
+[inject] -> [mavlink-ai-command] -> [mavlink-ai-out]
 ```
 
-### 7.6 `mavlink-ai-mission`
+Optional later ergonomic mode:
 
-Owns mission workflow state machines.
+```text
+mavlink-ai-command direct-sends through selected connection
+```
+
+But direct-send should not be the only path. Building messages and sending messages are separate concerns.
+
+### 13.6 `mavlink-ai-mission`
+
+Mission protocol workflow node.
+
+Mission handling is stateful, timeout-driven, and easy to make awful. Keep it isolated.
 
 Actions:
 
@@ -427,9 +744,9 @@ download mission
 upload mission
 clear mission
 request mission count
-request item
-send item
-send ack
+request mission item
+send mission item
+send mission ack
 ```
 
 Outputs:
@@ -442,9 +759,11 @@ Output 3: errors/timeouts
 
 Mission protocol logic must not be buried in the transport layer.
 
-## 8. Message Contracts
+## 14. Message Contracts
 
-### 8.1 Decoded Message
+The module needs stable message contracts. Do not let every node invent its own payload shape.
+
+### 14.1 Decoded MAVLink Message
 
 ```js
 {
@@ -467,12 +786,19 @@ Mission protocol logic must not be buried in the transport layer.
       seq: 42,
       incompat_flags: 0,
       compat_flags: 0
-    }
+    },
+    transport: {
+      name: "Copter UDP 14550",
+      type: "udp-peer",
+      remoteAddress: "127.0.0.1",
+      remotePort: 14550
+    },
+    receivedAt: 1782849600000
   }
 }
 ```
 
-### 8.2 Outbound Message
+### 14.2 Outbound MAVLink Message
 
 ```js
 {
@@ -491,7 +817,7 @@ Mission protocol logic must not be buried in the transport layer.
 }
 ```
 
-### 8.3 Raw Message
+### 14.3 Raw Message
 
 ```js
 {
@@ -500,7 +826,7 @@ Mission protocol logic must not be buried in the transport layer.
 }
 ```
 
-### 8.4 Status Message
+### 14.4 Status Message
 
 ```js
 {
@@ -516,7 +842,7 @@ Mission protocol logic must not be buried in the transport layer.
 }
 ```
 
-### 8.5 Error Message
+### 14.5 Error Message
 
 ```js
 {
@@ -535,9 +861,9 @@ Mission protocol logic must not be buried in the transport layer.
 }
 ```
 
-## 9. Dialect Handling
+## 15. Dialect Handling
 
-Dialect handling belongs to the profile layer.
+Dialect handling belongs to the profile/protocol layer.
 
 Supported dialect sources:
 
@@ -547,7 +873,17 @@ local path: mounted file or /data path
 custom: user-provided XML path
 ```
 
-Do not silently fall back to `common` if the selected dialect fails.
+Bundled dialects should live under:
+
+```text
+lib/dialects/bundled/
+```
+
+Cached or user-provided dialects may live under:
+
+```text
+/data/mavlink/dialects/
+```
 
 Bad behavior:
 
@@ -569,7 +905,37 @@ Optional advanced setting:
 
 Default: unchecked.
 
-## 10. Transport Handling
+Silent fallback is evil because it creates fake success. The node looks alive while message definitions are wrong or missing.
+
+## 16. Protocol Layer
+
+Protocol code should be isolated behind a wrapper.
+
+Suggested files:
+
+```text
+lib/protocol/mavlink-codec.js
+lib/protocol/message-normalizer.js
+lib/protocol/enum-resolver.js
+lib/protocol/message-validator.js
+```
+
+Responsibilities:
+
+```text
+- Load dialect definitions.
+- Create parser/encoder instances.
+- Decode raw packets into normalized messages.
+- Encode normalized outbound messages into raw packets.
+- Resolve enum names to numeric values.
+- Resolve numeric enum values to names when useful.
+- Validate required fields.
+- Apply profile defaults.
+```
+
+Node files should not need to know the ugly details of `node-mavlink` usage. They should call wrapper methods.
+
+## 17. Transport Handling
 
 Transport belongs to the connection layer.
 
@@ -584,9 +950,38 @@ tcp-client
 tcp-server
 ```
 
-### 10.1 Serial
+### 17.1 UDP
 
-Required fields:
+UDP modes:
+
+```text
+udp-in    listen only
+udp-out   send only
+udp-peer  listen, learn peer, and reply
+```
+
+`udp-peer` should be the likely default for GCS/SITL style usage.
+
+UDP peer tracking should remember the most recent valid sender for a route/profile when configured to do so.
+
+Questions to decide during implementation:
+
+```text
+- Should peer tracking be global per connection?
+- Per sysid?
+- Per sysid/compid?
+- Manually pinned remote host/port only?
+```
+
+Likely default:
+
+```text
+udp-peer learns remote endpoint per sysid, with manual remote host/port override available.
+```
+
+### 17.2 Serial
+
+Serial fields:
 
 ```text
 path
@@ -597,21 +992,11 @@ parity
 reconnect
 ```
 
-### 10.2 UDP
+Serial is optional. The module must not require `serialport` for UDP/TCP users.
 
-Modes:
+### 17.3 TCP
 
-```text
-udp-in    listen only
-udp-out   send only
-udp-peer  listen, learn peer, and reply
-```
-
-`udp-peer` should be the likely default for GCS/SITL-style usage.
-
-### 10.3 TCP
-
-Modes:
+TCP modes:
 
 ```text
 tcp-client
@@ -620,15 +1005,15 @@ tcp-server
 
 TCP is secondary to UDP and serial for initial development.
 
-## 11. Dependency Rules
+## 18. Dependency Rules
 
-Core runtime dependencies:
+Core runtime dependency:
 
 ```text
 node-mavlink
 ```
 
-Optional runtime dependencies:
+Optional runtime dependency:
 
 ```text
 serialport
@@ -664,40 +1049,13 @@ function loadSerialPort() {
 }
 ```
 
-## 12. Connection Runtime Responsibilities
+This is not optional. Top-level serial imports break users who never wanted serial in the first place.
 
-The connection config node should own:
+## 19. Connection Lifecycle
 
-```text
-transport socket/port
-connection state
-parser/encoder instance
-route table
-peer tracking for udp-peer
-outbound queue
-heartbeat timer
-lifecycle cleanup
-status events
-error events
-```
+Node-RED redeploys happen constantly during development. Config nodes that own runtime resources must clean up correctly.
 
-It should expose an internal API to regular nodes:
-
-```js
-connection.send(message, options)
-connection.sendRaw(buffer, options)
-connection.subscribe(filter, callback)
-connection.unsubscribe(subscriptionId)
-connection.getStatus()
-connection.getProfileForPacket(packet)
-connection.resolveProfile(nameOrId)
-```
-
-## 13. Lifecycle Rules
-
-Node-RED redeploys happen constantly during development.
-
-Connection config nodes must clean up resources on close:
+On close/redeploy/stop, a connection must:
 
 ```text
 close serial port
@@ -706,7 +1064,10 @@ close TCP socket/server
 clear heartbeat timer
 clear reconnect timer
 clear mission locks
+clear outbound queue
 remove event listeners
+remove subscriptions
+mark status closed
 ```
 
 No hidden global singleton state.
@@ -717,22 +1078,51 @@ Forbidden:
 let currentDialect;
 let currentConnection;
 let currentParser;
+let currentVehicle;
 ```
 
 Everything must be scoped to a config node instance.
 
-## 14. Outbound Queue
+## 20. Subscription Model
 
-Multiple flow tabs may try to send messages at once.
+Regular nodes should subscribe to a connection instead of every node decoding packets independently.
 
-Examples:
+A subscription should include filters:
+
+```js
+{
+  messageNames: ["HEARTBEAT", "GLOBAL_POSITION_INT"],
+  messageIds: [0, 33],
+  sysid: 1,
+  compid: "*",
+  profile: "Copter",
+  rateLimitHz: 5,
+  raw: false
+}
+```
+
+The connection should decode once, then distribute normalized messages to matching subscribers.
+
+This avoids:
+
+```text
+- multiple decoders fighting over the same stream
+- high-rate telemetry flooding every node
+- duplicated route logic
+- nodes needing to understand transport internals
+```
+
+## 21. Outbound Queue
+
+Multiple flow tabs may try to send at once:
 
 ```text
 heartbeat
 mission download
 arm command
 mode change
-request data stream
+request message
+set stream interval
 ```
 
 The connection should own outbound serialization.
@@ -748,21 +1138,55 @@ Future queue can support priority:
 3: heartbeat/background
 ```
 
-Do not overbuild this at first, but do not let every node independently write to the socket without coordination.
+Do not overbuild priority at first, but do not allow every node to independently write to the socket with no coordination.
 
-## 15. Mission Locking
+## 22. Heartbeat Design
+
+Heartbeat is both simple and surprisingly easy to place badly.
+
+Two possible designs:
+
+```text
+Option A: heartbeat is a setting on mavlink-ai-connection.
+Option B: mavlink-ai-heartbeat visible node generates HEARTBEAT messages.
+```
+
+v2 should start with Option A:
+
+```text
+Connection can send heartbeat using profile defaults.
+```
+
+A visible heartbeat node can be added later if flow-level heartbeat control becomes important.
+
+Heartbeat settings belong partly to profile and partly to connection:
+
+```text
+Profile: heartbeat identity values.
+Connection: whether to send heartbeat and interval.
+```
+
+## 23. Mission Locking
 
 Only one mission workflow should run per connection/profile/mission_type at a time.
 
-If a second mission workflow starts while one is active, return a clear error:
+This should fail clearly:
 
 ```text
 Mission workflow already active for Copter UDP 14550 / mission.
 ```
 
-Do not let two mission downloads both request mission items at the same time.
+Do not allow two mission downloads to both request item 0, both wait for item 1, and then try to assemble the same mission. That is how the goblins get promoted to management.
 
-## 16. Mission State Machines
+Lock key shape:
+
+```text
+mission:<connection-id>:<profile-id>:<mission-type>
+```
+
+## 24. Mission State Machines
+
+Mission handling should be explicit.
 
 Download states:
 
@@ -812,7 +1236,107 @@ Progress event example:
 }
 ```
 
-## 17. File Layout
+Completed mission example:
+
+```js
+{
+  topic: "mission/downloaded",
+  payload: {
+    target_system: 1,
+    target_component: 1,
+    mission_type: "MAV_MISSION_TYPE_MISSION",
+    count: 12,
+    items: [
+      {
+        seq: 0,
+        command: "MAV_CMD_NAV_WAYPOINT",
+        frame: "MAV_FRAME_GLOBAL_RELATIVE_ALT_INT",
+        x: 399999999,
+        y: -749999999,
+        z: 50
+      }
+    ]
+  }
+}
+```
+
+Do not start implementation with mission. Mission depends on profile, protocol, connection, routing, subscriptions, and send queue being sane first.
+
+## 25. Status and Errors
+
+Status should be structured, not random strings.
+
+Good status:
+
+```js
+{
+  topic: "mavlink/status",
+  payload: {
+    node: "mavlink-ai-connection",
+    connection: "Copter UDP 14550",
+    state: "connected",
+    transport: "udp-peer",
+    detail: "Listening on 0.0.0.0:14550"
+  }
+}
+```
+
+Good error:
+
+```js
+{
+  topic: "mavlink/error",
+  payload: {
+    node: "mavlink-ai-profile",
+    code: "DIALECT_LOAD_FAILED",
+    message: "Unable to load dialect ardupilotmega",
+    context: {
+      dialect: "ardupilotmega"
+    }
+  }
+}
+```
+
+Avoid mystery errors like:
+
+```text
+Error: undefined
+failed
+bad packet
+nope
+```
+
+That stuff is how logs become haunted furniture.
+
+## 26. UI/UX Naming Rules
+
+Names matter in Node-RED because config nodes are often selected from dropdowns.
+
+Good names:
+
+```text
+AI Profile - Copter
+AI Profile - Rover
+AI Profile - Plane
+AI Conn - Copter UDP 14550
+AI Conn - Rover Serial USB0
+AI Conn - Plane TCP SITL
+```
+
+Bad names:
+
+```text
+config
+mavlink
+test
+thing
+serial
+udp
+```
+
+Default labels should include enough detail to tell profiles and connections apart.
+
+## 27. File Layout
 
 Suggested repo layout:
 
@@ -826,24 +1350,28 @@ nodes/
   mavlink-ai-in.html
   mavlink-ai-out.js
   mavlink-ai-out.html
+  mavlink-ai-build.js
+  mavlink-ai-build.html
+  mavlink-ai-filter.js
+  mavlink-ai-filter.html
   mavlink-ai-command.js
   mavlink-ai-command.html
   mavlink-ai-mission.js
   mavlink-ai-mission.html
-  mavlink-ai-filter.js
-  mavlink-ai-filter.html
-  mavlink-ai-build.js
-  mavlink-ai-build.html
 
 lib/
   dialects/
     bundled/
+      common.xml
+      ardupilotmega.xml
+      minimal.xml
     dialect-loader.js
     dialect-cache.js
   protocol/
     mavlink-codec.js
     message-normalizer.js
     enum-resolver.js
+    message-validator.js
   transport/
     serial-transport.js
     udp-transport.js
@@ -865,9 +1393,22 @@ test/
   unit/
   integration/
   flows/
+
+examples/
+  01-udp-heartbeat-listener.json
+  02-udp-routed-multi-vehicle.json
+  03-build-and-send-heartbeat.json
+  04-arm-disarm-command.json
+  05-request-autopilot-version.json
+  06-download-mission.json
+  07-filter-global-position-int.json
+  08-raw-packet-debug.json
+  09-serial-connection.json
 ```
 
-## 18. Testing Plan
+Do not keep everything in root-level node files forever. That is how v1 becomes soup.
+
+## 28. Testing Plan
 
 Unit tests:
 
@@ -877,7 +1418,10 @@ enum lookup
 message normalization
 message build validation
 route matching
+wildcard route priority
 UDP peer tracking
+subscription filtering
+rate limiting
 mission state transitions
 timeout behavior
 retry behavior
@@ -895,6 +1439,7 @@ unknown message name
 routed multi-sysid packet stream
 missing serialport with UDP-only config
 serial transport selected without serialport
+connection cleanup on close
 ```
 
 Manual Node-RED example flows:
@@ -911,7 +1456,7 @@ Manual Node-RED example flows:
 09 Serial connection example
 ```
 
-## 19. Acceptance Criteria
+## 29. Acceptance Criteria
 
 v2 architecture baseline is acceptable when:
 
@@ -930,9 +1475,10 @@ v2 architecture baseline is acceptable when:
 - mavlink-ai-mission can download a mission against SITL or a recorded harness.
 - Invalid dialects fail loudly.
 - Example flows exist.
+- Smoke-load test passes.
 ```
 
-## 20. Implementation Order
+## 30. Implementation Order
 
 Build in this order:
 
@@ -957,24 +1503,126 @@ Build in this order:
 18. README polish
 ```
 
-Do not start with mission handling. Mission handling depends on the protocol, routing, connection, and subscription model being sane first.
+Do not start with mission handling. Mission handling before the connection/subscription model is stable is how software goes to the cornfield.
 
-## 21. Final Architecture Statement
+## 31. Early Implementation Priorities
 
-`node-red-contrib-mavlink-ai` should be a MAVLink protocol layer for Node-RED, not a serial node with MAVLink features glued to it.
+The first real code should prove these things:
 
-The design should make simple cases easy:
+```text
+- Node-RED loads the package.
+- Multiple profiles can be created.
+- A connection can reference a profile.
+- UDP socket can receive bytes.
+- Decoder can produce normalized HEARTBEAT messages.
+- mavlink-ai-in can subscribe to those messages.
+- mavlink-ai-filter can pass only selected messages.
+- mavlink-ai-build can build a normalized HEARTBEAT or COMMAND_LONG.
+- mavlink-ai-out can encode/send through the connection.
+```
+
+Only then touch mission workflows.
+
+## 32. Design Traps to Avoid
+
+### 32.1 Dialect in the Comms Node
+
+Bad:
+
+```text
+mavlink-ai-connection owns dialect.
+```
+
+Better:
+
+```text
+mavlink-ai-profile owns dialect.
+mavlink-ai-connection references profile(s).
+```
+
+### 32.2 One UDP Port Equals One Vehicle
+
+Bad assumption:
+
+```text
+UDP 14550 means exactly one vehicle.
+```
+
+Better:
+
+```text
+UDP 14550 is one socket.
+Packets inside it may contain one or many MAVLink systems.
+Routes decide profile ownership.
+```
+
+### 32.3 Mandatory Serial Dependency
+
+Bad:
+
+```text
+Requiring serialport breaks UDP-only installs.
+```
+
+Better:
+
+```text
+serialport is optional and lazy-loaded.
+```
+
+### 32.4 Mission in Transport
+
+Bad:
+
+```text
+UDP packet handler directly runs mission download.
+```
+
+Better:
+
+```text
+Mission node subscribes to relevant messages and sends mission requests through connection API.
+```
+
+### 32.5 Global Parser
+
+Bad:
+
+```text
+one global parser/dialect/current vehicle
+```
+
+Better:
+
+```text
+each connection/profile instance owns its required state
+```
+
+## 33. Final Architecture Statement
+
+`node-red-contrib-mavlink-ai` should make the simple case easy:
 
 ```text
 one UDP port -> one copter -> decoded messages
 ```
 
-And advanced cases possible:
+And the advanced case possible:
 
 ```text
 one UDP port -> multiple sysids -> multiple profiles -> separate flows
 ```
 
-No global parser state. No mandatory serial dependency. No dialect buried inside a comms node. No mission workflow hiding inside transport code.
+The architecture should stay boring:
 
-Clean lines or death by goblin soup.
+```text
+Profile owns protocol identity.
+Connection owns the wire.
+Routing maps packets to profiles.
+Nodes build, filter, send, receive, and run workflows.
+```
+
+No global parser state.
+No mandatory serial baggage.
+No dialect buried inside a comms node.
+No mission workflow hiding inside transport code.
+No v1 soup in a fake mustache.
