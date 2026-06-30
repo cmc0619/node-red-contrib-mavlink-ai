@@ -56,4 +56,5 @@ A UDP port, serial port, or TCP socket is a connection resource. One UDP port ca
 Start with:
 
 - [`DESIGN.md`](DESIGN.md)
+- [`RELEASE_SCOPE.md`](RELEASE_SCOPE.md)
 - [`ROADMAP.md`](ROADMAP.md)
