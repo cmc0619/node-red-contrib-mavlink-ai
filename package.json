@@ -24,7 +24,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "node-mavlink": "^0.1.0"
+    "node-mavlink": "*"
   },
   "optionalDependencies": {
     "serialport": "^13.0.0"
