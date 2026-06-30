@@ -1,0 +1,51 @@
+<script type="text/javascript">
+  RED.nodes.registerType('mavlink-ai-mission', {
+    category: 'MAVLink AI',
+    color: '#FFE6B3',
+    defaults: {
+      name: { value: '' },
+      connection: { value: '', type: 'mavlink-ai-connection', required: true },
+      action: { value: 'download', required: true },
+      timeoutMs: { value: 3000, validate: RED.validators.number() },
+      maxRetries: { value: 3, validate: RED.validators.number() }
+    },
+    inputs: 1,
+    outputs: 3,
+    outputLabels: ['mission', 'progress', 'error'],
+    icon: 'font-awesome/fa-map',
+    label: function () {
+      return this.name || 'mavlink ai mission';
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="mavlink-ai-mission">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="MAVLink Mission">
+  </div>
+  <div class="form-row">
+    <label for="node-input-connection">Connection</label>
+    <input type="text" id="node-input-connection">
+  </div>
+  <div class="form-row">
+    <label for="node-input-action">Action</label>
+    <select id="node-input-action">
+      <option value="download">Download</option>
+      <option value="upload">Upload</option>
+      <option value="clear">Clear</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-input-timeoutMs">Timeout ms</label>
+    <input type="number" id="node-input-timeoutMs">
+  </div>
+  <div class="form-row">
+    <label for="node-input-maxRetries">Retries</label>
+    <input type="number" id="node-input-maxRetries">
+  </div>
+</script>
+
+<script type="text/html" data-help-name="mavlink-ai-mission">
+  <p>Mission workflow node. The state machine is intentionally not implemented in this skeleton.</p>
+</script>
