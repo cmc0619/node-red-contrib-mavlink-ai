@@ -4,6 +4,7 @@
     defaults: {
       name: { value: '' },
       profileType: { value: 'gcs', required: true },
+      firmware: { value: 'generic', required: true },
       dialect: { value: 'ardupilotmega', required: true },
       customDialectPath: { value: '' },
       mavlinkVersion: { value: 'auto', required: true },
@@ -39,6 +40,15 @@
       <option value="boat">Boat</option>
       <option value="sub">Sub</option>
       <option value="antenna-tracker">Antenna Tracker</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-firmware">Firmware</label>
+    <select id="node-config-input-firmware">
+      <option value="generic">Generic</option>
+      <option value="ardupilot">ArduPilot</option>
+      <option value="px4">PX4</option>
+      <option value="custom">Custom</option>
     </select>
   </div>
   <div class="form-row">

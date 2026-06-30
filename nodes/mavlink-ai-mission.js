@@ -135,11 +135,27 @@ async function clearMission(connection, targetSystem, targetComponent, missionTy
   };
 }
 
+/**
+ * Emit an error on output 3 and finish the input handler.
+ *
+ * @param {object} node
+ * @param {function} send
+ * @param {function} done
+ * @param {object} payload  error payload (§14.5)
+ * @param {Error} [rawErr]  optional error to pass to done()
+ * @returns {void}
+ */
 function finishError(node, send, done, payload, rawErr) {
   send([null, null, { topic: 'mavlink/error', payload }]);
   done(rawErr);
 }
 
+/**
+ * Return the first argument that is neither undefined nor null.
+ *
+ * @param {...*} values
+ * @returns {*}
+ */
 function firstDefined(...values) {
   for (const v of values) {
     if (v !== undefined && v !== null) {

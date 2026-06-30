@@ -8,11 +8,21 @@ both versions can coexist in the same Node-RED runtime.
 
 ## Status
 
-v2 baseline is implemented: profiles, the protocol/dialect layer, the UDP / TCP
-/ serial connection runtime, routing, subscriptions, the in/out/build/filter/
-command nodes, and the mission download/upload/clear workflows. Serial is
-optional and lazy-loaded. See [`ROADMAP.md`](ROADMAP.md) for what is done and
-what is next.
+v2 baseline is implemented: profiles (with a firmware abstraction field), the
+protocol/dialect layer, the UDP / TCP / serial connection runtime, routing with
+per-profile decode, subscriptions, the in/out/build/filter/command nodes, and
+the mission download/upload/clear workflows. Serial is optional and lazy-loaded.
+
+**Known limitations (not yet complete — see [`RELEASE_SCOPE.md`](RELEASE_SCOPE.md)
+and the "Open 1.0 gaps" section of [`ROADMAP.md`](ROADMAP.md)):**
+
+- Dialects load only from the **bundled** set. A custom local/Docker **XML
+  dialect path is not compiled at runtime** — it fails loudly rather than
+  loading.
+- The dialect loader uses fixed include chains (assumes `common` for vehicle
+  dialects) rather than resolving the MAVLink include graph.
+- The editor's dialect dropdown lists a hand-maintained subset, not every
+  bundled dialect the loader can serve.
 
 ## Install
 

@@ -20,6 +20,7 @@ implemented in the v2 baseline.
 - [x] system/component defaults
 - [x] mission defaults
 - [x] heartbeat identity defaults
+- [x] firmware abstraction field (generic | ardupilot | px4 | custom)
 - [x] validation errors for invalid config (loud dialect-load failure)
 
 ## Phase 2: Protocol layer
@@ -32,7 +33,9 @@ implemented in the v2 baseline.
 - [x] decode wrapper
 - [x] message normalizer
 - [x] clear errors for unknown message/dialect failures
-- [ ] runtime XML compilation of arbitrary custom dialects (out of scope for now)
+- [ ] runtime XML loading of custom local/Docker dialect paths — see "Open 1.0 gaps"
+- [ ] dialect include-graph resolution (do not assume `common`) — see "Open 1.0 gaps"
+- [ ] dynamic bundled-dialect discovery in the editor UI — see "Open 1.0 gaps"
 
 ## Phase 3: Connection layer
 
@@ -44,6 +47,8 @@ implemented in the v2 baseline.
 - [x] outbound send queue
 - [x] profile routing mode
 - [x] sysid/compid route table
+- [x] routed decode uses the matched profile's dialect (per-profile codec)
+- [x] structured decode error with raw packet metadata on undecodable packets
 - [x] subscription API for regular nodes
 
 ## Phase 4: Basic flow nodes
@@ -101,6 +106,22 @@ implemented in the v2 baseline.
 - [x] flow exports
 - [ ] screenshots
 - [ ] npm publish readiness pass
+
+## Open 1.0 gaps (not yet implemented)
+
+These are stated 1.0 requirements in `RELEASE_SCOPE.md` that the current
+baseline does **not** meet. They are tracked as GitHub issues, not just prose.
+
+- [ ] **Custom local/Docker XML dialect loading** (RELEASE_SCOPE §7, issue #2).
+  Today `custom` only resolves to a *bundled* dialect basename; an arbitrary
+  local or mounted XML path fails loudly and is **not** compiled at runtime. The
+  loud failure is intentional, but this is not "done".
+- [ ] **Dialect include-graph resolution** (RELEASE_SCOPE §1, issue #3). The
+  loader uses fixed include chains and assumes `common` for vehicle dialects.
+  `common` is typical but not mandatory; a real include-graph resolver is needed.
+- [ ] **Dynamic bundled-dialect discovery in the UI** (RELEASE_SCOPE §7,
+  issue #4). The loader supports ~10 dialects, but the editor dropdown still
+  lists only a hand-maintained subset.
 
 ## Development rule
 

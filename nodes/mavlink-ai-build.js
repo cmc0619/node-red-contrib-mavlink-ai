@@ -90,6 +90,12 @@ module.exports = function registerMavlinkAiBuild(RED) {
   RED.nodes.registerType('mavlink-ai-build', MavlinkAiBuildNode);
 };
 
+/**
+ * Return the first argument that is neither undefined nor null.
+ *
+ * @param {...*} values
+ * @returns {*}
+ */
 function firstDefined(...values) {
   for (const v of values) {
     if (v !== undefined && v !== null) {
@@ -99,6 +105,16 @@ function firstDefined(...values) {
   return undefined;
 }
 
+/**
+ * Emit a structured `mavlink/error` message and set the node's error badge.
+ *
+ * @param {object} node
+ * @param {object} msg   the message being processed
+ * @param {function} send
+ * @param {string} code
+ * @param {string} message
+ * @returns {void}
+ */
 function sendError(node, msg, send, code, message) {
   node.status({ fill: 'red', shape: 'ring', text: code });
   msg.topic = 'mavlink/error';

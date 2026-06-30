@@ -32,6 +32,10 @@ module.exports = function registerMavlinkAiProfile(RED) {
 
     node.name = config.name;
     node.profileType = config.profileType || 'gcs';
+    // Firmware abstraction hook (RELEASE_SCOPE §8). Exposed from day one so the
+    // code has a place to branch on firmware instead of hard-coding ArduPilot
+    // assumptions into generic paths. Behavior is mostly generic for now.
+    node.firmware = config.firmware || 'generic';
     node.dialect = config.dialect || 'ardupilotmega';
     node.customDialectPath = config.customDialectPath || '';
     node.mavlinkVersion = config.mavlinkVersion || 'auto';
@@ -60,6 +64,7 @@ module.exports = function registerMavlinkAiProfile(RED) {
 
     node.getDefaults = () => ({
       profileType: node.profileType,
+      firmware: node.firmware,
       dialect: node.dialect,
       mavlinkVersion: node.mavlinkVersion,
       sourceSystemId: node.sourceSystemId,

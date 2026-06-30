@@ -9,7 +9,7 @@ const { OutboundQueue } = require('../lib/runtime/outbound-queue');
 const { LockManager } = require('../lib/runtime/lock-manager');
 const { statusPayload } = require('../lib/util/status');
 const { toInt, toBool, parseIdList } = require('../lib/util/validation');
-const { MavlinkError, toMavlinkError } = require('../lib/util/errors');
+const { MavlinkError, toMavlinkError, errorPayload } = require('../lib/util/errors');
 
 /**
  * mavlink-ai-connection (DESIGN.md §8, §11, §19).
@@ -43,6 +43,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
 
     node.emitter = new EventEmitter();
     node.emitter.setMaxListeners(0);
+    // Default no-op 'error' listener: an EventEmitter throws if an 'error'
+    // event is emitted with no listeners, and transport/decode errors are
+    // emitted here whether or not a node is listening.
+    node.emitter.on('error', () => {});
     node.subscriptions = new SubscriptionRegistry();
     node.locks = new LockManager();
     node.statusState = 'idle';
@@ -54,6 +58,9 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node._codec = null;
     node._router = null;
     node._queue = null;
+    // Per-profile codec cache so routed connections decode each packet with the
+    // matched profile's dialect (DESIGN.md / RELEASE_SCOPE §4), not the default.
+    node._codecByProfile = new Map();
 
     // --- status helpers ------------------------------------------------------
     node.getStatus = () =>
@@ -65,12 +72,26 @@ module.exports = function registerMavlinkAiConnection(RED) {
         detail: node.statusDetail
       });
 
+    /**
+     * Update the connection state/detail and emit a `status` event.
+     *
+     * @param {string} state
+     * @param {string} [detail]
+     * @returns {void}
+     */
     function setStatus(state, detail) {
       node.statusState = state;
       node.statusDetail = detail || '';
       node.emitter.emit('status', node.getStatus());
     }
 
+    /**
+     * Record a fatal init error and log it via the Node-RED node.
+     *
+     * @param {string} code
+     * @param {string} message
+     * @returns {void}
+     */
     function fatal(code, message) {
       node.statusState = 'error';
       node.statusDetail = message;
@@ -94,10 +115,40 @@ module.exports = function registerMavlinkAiConnection(RED) {
       node._codec = new MavlinkCodec(
         Object.assign({ bundle: node.profile.getDialect() }, node.profile.getProtocolOptions())
       );
+      node._codecByProfile.set(node.profile.id, node._codec);
     } catch (err) {
       fatal('CODEC_INIT_FAILED', err.message);
       registerNoop(node);
       return;
+    }
+
+    /**
+     * Resolve (and cache) the codec for a routed profile. Falls back to the
+     * default codec for the default profile, for lightweight name-only route
+     * targets, or for any profile whose dialect failed to load.
+     *
+     * @param {object} profile  resolved profile (config node or { name })
+     * @returns {MavlinkCodec}
+     */
+    function getCodecForProfile(profile) {
+      if (!profile || typeof profile.getDialect !== 'function' || !profile.isValid || !profile.isValid()) {
+        return node._codec;
+      }
+      if (profile.id && node._codecByProfile.has(profile.id)) {
+        return node._codecByProfile.get(profile.id);
+      }
+      let codec;
+      try {
+        codec = new MavlinkCodec(
+          Object.assign({ bundle: profile.getDialect() }, profile.getProtocolOptions())
+        );
+      } catch (err) {
+        return node._codec;
+      }
+      if (profile.id) {
+        node._codecByProfile.set(profile.id, codec);
+      }
+      return codec;
     }
 
     // --- routing -------------------------------------------------------------
@@ -172,8 +223,17 @@ module.exports = function registerMavlinkAiConnection(RED) {
     };
 
     // --- inbound packet handling --------------------------------------------
+    /**
+     * Route, decode, and distribute one inbound packet (DESIGN.md §4):
+     * route on the header, decode with the matched profile's dialect, then
+     * dispatch to subscribers or emit a structured decode error.
+     *
+     * @param {MavLinkPacket} packet
+     * @returns {void}
+     */
     function onPacket(packet) {
       const header = packet.header;
+      // 1. Route on the framed header (sysid/compid) before decoding.
       const decision = node._router.route(header.sysid, header.compid);
       if (!decision.accepted) {
         node.emitter.emit('rejected', { sysid: header.sysid, compid: header.compid, reason: decision.reason });
@@ -181,10 +241,29 @@ module.exports = function registerMavlinkAiConnection(RED) {
       }
       const profile = decision.profile || node.profile;
       const transportDescriptor = node._transport ? node._transport.descriptor : { type: node.transportType };
-      const payload = node._codec.decode(packet, {
-        profile: profile ? profile.name : undefined,
-        transport: transportDescriptor
-      });
+
+      // 2. Decode with the matched profile's dialect (routed connections may
+      //    carry systems on different dialects).
+      const codec = getCodecForProfile(profile);
+
+      // 3. If the matched dialect has no definition for this message id, or
+      //    decoding throws, emit a structured decode error with raw metadata
+      //    instead of silently passing an undecodable packet.
+      if (!codec.bundle.registry[header.msgid]) {
+        emitDecodeError(header, codec, profile, packet, 'No message definition for this id in the matched dialect.');
+        return;
+      }
+      let payload;
+      try {
+        payload = codec.decode(packet, {
+          profile: profile ? profile.name : undefined,
+          transport: transportDescriptor
+        });
+      } catch (err) {
+        emitDecodeError(header, codec, profile, packet, err.message);
+        return;
+      }
+
       // `_buffer` carries the original wire bytes for subscribers that opt into
       // raw output. It is stripped before a decoded message leaves a node, so
       // it never pollutes the §14.1 contract.
@@ -195,7 +274,42 @@ module.exports = function registerMavlinkAiConnection(RED) {
       node.emitter.emit('raw', { topic: 'mavlink/raw', payload: packet.buffer });
     }
 
+    /**
+     * Emit a structured `decodeError` event with raw packet metadata when a
+     * packet cannot be decoded with the matched dialect (DESIGN.md §4).
+     *
+     * @param {object} header  packet header (sysid/compid/msgid)
+     * @param {MavlinkCodec} codec  the codec that failed
+     * @param {object} profile  the matched profile
+     * @param {MavLinkPacket} packet
+     * @param {string} detail  human-readable cause
+     * @returns {void}
+     */
+    function emitDecodeError(header, codec, profile, packet, detail) {
+      const payload = errorPayload({
+        node: 'mavlink-ai-connection',
+        connection: node.name,
+        code: 'DECODE_FAILED',
+        message: `Unable to decode message id ${header.msgid} with dialect '${codec.bundle.name}': ${detail}`,
+        context: {
+          sysid: header.sysid,
+          compid: header.compid,
+          msgid: header.msgid,
+          dialect: codec.bundle.name,
+          profile: profile ? profile.name : undefined,
+          raw: packet.buffer.toString('hex')
+        }
+      });
+      node.emitter.emit('decodeError', { topic: 'mavlink/error', payload });
+    }
+
     // --- heartbeat -----------------------------------------------------------
+    /**
+     * Start the periodic HEARTBEAT timer (background priority) using the
+     * profile's heartbeat identity. No-op if heartbeat is disabled or running.
+     *
+     * @returns {void}
+     */
     function startHeartbeat() {
       if (!node.heartbeatEnabled || node._heartbeatTimer) {
         return;
@@ -211,6 +325,11 @@ module.exports = function registerMavlinkAiConnection(RED) {
       }
     }
 
+    /**
+     * Stop the heartbeat timer.
+     *
+     * @returns {void}
+     */
     function stopHeartbeat() {
       if (node._heartbeatTimer) {
         clearInterval(node._heartbeatTimer);
@@ -223,6 +342,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
       enabled: toBool(config.outboundQueue, true)
     });
 
+    /**
+     * Create the transport, wire its events to the decoder/status/heartbeat,
+     * and start it.
+     *
+     * @returns {void}
+     */
     function startTransport() {
       try {
         node._transport = createTransport({
@@ -283,6 +408,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       stopHeartbeat();
       node.subscriptions.clear();
       node.locks.clear();
+      node._codecByProfile.clear();
       if (node._queue) {
         node._queue.clear();
       }
@@ -311,6 +437,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
 
 // --- helpers ----------------------------------------------------------------
 
+/**
+ * Return the first argument that is neither undefined nor null.
+ *
+ * @param {...*} values
+ * @returns {*}
+ */
 function firstDefined(...values) {
   for (const v of values) {
     if (v !== undefined && v !== null) {
@@ -320,6 +452,14 @@ function firstDefined(...values) {
   return undefined;
 }
 
+/**
+ * Build a human-readable status detail describing what the transport bound to
+ * or connected to.
+ *
+ * @param {object} node  the connection node
+ * @param {object} info  transport listening/connected info
+ * @returns {string}
+ */
 function describeListening(node, info) {
   if (node.transportType.startsWith('udp') || node.transportType === 'tcp-server') {
     return `Listening on ${node.bindAddress}:${node.bindPort}`;

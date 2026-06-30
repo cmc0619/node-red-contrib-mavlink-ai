@@ -93,6 +93,12 @@ module.exports = function registerMavlinkAiCommand(RED) {
   RED.nodes.registerType('mavlink-ai-command', MavlinkAiCommandNode);
 };
 
+/**
+ * Return the first argument that is neither undefined nor null.
+ *
+ * @param {...*} values
+ * @returns {*}
+ */
 function firstDefined(...values) {
   for (const v of values) {
     if (v !== undefined && v !== null) {
