@@ -1,0 +1,32 @@
+<script type="text/javascript">
+  RED.nodes.registerType('mavlink-ai-out', {
+    category: 'MAVLink AI',
+    color: '#C7E9C0',
+    defaults: {
+      name: { value: '' },
+      connection: { value: '', type: 'mavlink-ai-connection', required: true }
+    },
+    inputs: 1,
+    outputs: 0,
+    icon: 'bridge.svg',
+    align: 'right',
+    label: function () {
+      return this.name || 'mavlink ai out';
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="mavlink-ai-out">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="MAVLink Out">
+  </div>
+  <div class="form-row">
+    <label for="node-input-connection">Connection</label>
+    <input type="text" id="node-input-connection">
+  </div>
+</script>
+
+<script type="text/html" data-help-name="mavlink-ai-out">
+  <p>Sends normalized MAVLink messages or raw packets through a shared MAVLink AI Connection.</p>
+</script>
