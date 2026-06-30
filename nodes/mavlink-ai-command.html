@@ -1,0 +1,43 @@
+<script type="text/javascript">
+  RED.nodes.registerType('mavlink-ai-command', {
+    category: 'MAVLink AI',
+    color: '#FFE6B3',
+    defaults: {
+      name: { value: '' },
+      profile: { value: '', type: 'mavlink-ai-profile', required: false },
+      command: { value: 'arm', required: true }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: 'font-awesome/fa-bolt',
+    label: function () {
+      return this.name || 'mavlink ai command';
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="mavlink-ai-command">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="MAVLink Command">
+  </div>
+  <div class="form-row">
+    <label for="node-input-profile">Profile</label>
+    <input type="text" id="node-input-profile">
+  </div>
+  <div class="form-row">
+    <label for="node-input-command">Command</label>
+    <select id="node-input-command">
+      <option value="arm">Arm</option>
+      <option value="disarm">Disarm</option>
+      <option value="land">Land</option>
+      <option value="rtl">RTL</option>
+      <option value="request_message">Request Message</option>
+      <option value="set_message_interval">Set Message Interval</option>
+    </select>
+  </div>
+</script>
+
+<script type="text/html" data-help-name="mavlink-ai-command">
+  <p>Builds common MAVLink COMMAND_LONG messages. Transport send behavior belongs to MAVLink AI Out or a connection-backed direct-send mode later.</p>
+</script>
