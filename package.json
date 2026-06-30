@@ -24,14 +24,16 @@
     "node": ">=18"
   },
   "dependencies": {
-    "node-mavlink": "*"
+    "node-mavlink": "^2.3.0"
   },
   "optionalDependencies": {
     "serialport": "^13.0.0"
   },
-  "devDependencies": {},
   "scripts": {
-    "test": "node test/smoke-load.js"
+    "test": "node test/smoke-load.js && node --test test/unit/*.test.js test/integration/*.test.js",
+    "test:smoke": "node test/smoke-load.js",
+    "test:unit": "node --test test/unit/*.test.js",
+    "test:integration": "node --test test/integration/*.test.js"
   },
   "node-red": {
     "nodes": {

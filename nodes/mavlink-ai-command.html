@@ -4,7 +4,7 @@
     color: '#FFE6B3',
     defaults: {
       name: { value: '' },
-      profile: { value: '', type: 'mavlink-ai-profile', required: false },
+      profile: { value: '', type: 'mavlink-ai-profile', required: true },
       command: { value: 'arm', required: true }
     },
     inputs: 1,
@@ -30,8 +30,11 @@
     <select id="node-input-command">
       <option value="arm">Arm</option>
       <option value="disarm">Disarm</option>
+      <option value="set_mode">Set Mode</option>
+      <option value="takeoff">Takeoff</option>
       <option value="land">Land</option>
       <option value="rtl">RTL</option>
+      <option value="reboot">Reboot Autopilot</option>
       <option value="request_message">Request Message</option>
       <option value="set_message_interval">Set Message Interval</option>
     </select>

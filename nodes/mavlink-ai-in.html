@@ -5,14 +5,31 @@
     defaults: {
       name: { value: '' },
       connection: { value: '', type: 'mavlink-ai-connection', required: true },
-      messageFilter: { value: '' },
-      outputRaw: { value: false }
+      messageNames: { value: '' },
+      messageIds: { value: '' },
+      sysid: { value: '' },
+      compid: { value: '' },
+      profileFilter: { value: '' },
+      rateLimitHz: { value: 0 },
+      changedOnly: { value: false },
+      outputRaw: { value: false },
+      outputs: { value: 1 }
     },
     inputs: 0,
     outputs: 1,
     icon: 'bridge.svg',
     label: function () {
       return this.name || 'mavlink ai in';
+    },
+    oneditprepare: function () {
+      const node = this;
+      function syncOutputs() {
+        $('#node-input-outputs').val($('#node-input-outputRaw').is(':checked') ? 2 : 1);
+      }
+      $('#node-input-outputRaw').on('change', syncOutputs);
+    },
+    oneditsave: function () {
+      $('#node-input-outputs').val($('#node-input-outputRaw').is(':checked') ? 2 : 1);
     }
   });
 </script>
@@ -27,15 +44,46 @@
     <input type="text" id="node-input-connection">
   </div>
   <div class="form-row">
-    <label for="node-input-messageFilter">Filter</label>
-    <input type="text" id="node-input-messageFilter" placeholder="HEARTBEAT,GLOBAL_POSITION_INT">
+    <label for="node-input-messageNames">Messages</label>
+    <input type="text" id="node-input-messageNames" placeholder="HEARTBEAT,GLOBAL_POSITION_INT (blank = all)">
   </div>
   <div class="form-row">
-    <label for="node-input-outputRaw">Raw</label>
+    <label for="node-input-messageIds">Message IDs</label>
+    <input type="text" id="node-input-messageIds" placeholder="0,33 (blank = all)">
+  </div>
+  <div class="form-row">
+    <label for="node-input-sysid">SysID</label>
+    <input type="text" id="node-input-sysid" placeholder="any">
+  </div>
+  <div class="form-row">
+    <label for="node-input-compid">CompID</label>
+    <input type="text" id="node-input-compid" placeholder="any">
+  </div>
+  <div class="form-row">
+    <label for="node-input-profileFilter">Profile</label>
+    <input type="text" id="node-input-profileFilter" placeholder="any">
+  </div>
+  <div class="form-row">
+    <label for="node-input-rateLimitHz">Rate limit Hz</label>
+    <input type="number" id="node-input-rateLimitHz" placeholder="0 = unlimited">
+  </div>
+  <div class="form-row">
+    <label for="node-input-changedOnly">Changed only</label>
+    <input type="checkbox" id="node-input-changedOnly" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
+  <div class="form-row">
+    <label for="node-input-outputRaw">Raw output</label>
     <input type="checkbox" id="node-input-outputRaw" style="display: inline-block; width: auto; vertical-align: top;">
   </div>
+  <input type="hidden" id="node-input-outputs">
 </script>
 
 <script type="text/html" data-help-name="mavlink-ai-in">
-  <p>Receives decoded MAVLink messages from a shared MAVLink AI Connection.</p>
+  <p>Receives decoded MAVLink messages from a shared <b>MAVLink AI Connection</b>. The connection decodes packets once and distributes them to matching subscribers.</p>
+  <h3>Outputs</h3>
+  <ol class="node-ports">
+    <li>Decoded messages (<code>mavlink/&lt;NAME&gt;</code>).</li>
+    <li>Raw packet buffers (only when <b>Raw output</b> is enabled).</li>
+  </ol>
+  <p>Use the filters to subscribe to specific messages, systems, components, or a routed profile, and rate-limit high-rate telemetry.</p>
 </script>

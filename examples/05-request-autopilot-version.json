@@ -1,0 +1,132 @@
+[
+  {
+    "id": "flow05",
+    "type": "tab",
+    "label": "MAVLink AI - 05 Request AUTOPILOT_VERSION",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "ai_profile_copter",
+    "type": "mavlink-ai-profile",
+    "name": "AI Profile - Copter",
+    "profileType": "gcs",
+    "dialect": "ardupilotmega",
+    "customDialectPath": "",
+    "mavlinkVersion": "auto",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
+    "defaultTargetSystem": 1,
+    "defaultTargetComponent": 1,
+    "preferredMissionItemType": "MISSION_ITEM_INT",
+    "defaultMissionType": "mission",
+    "heartbeatType": "",
+    "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
+    "debugProtocol": false
+  },
+  {
+    "id": "ai_conn_udp",
+    "type": "mavlink-ai-connection",
+    "name": "AI Conn - Copter UDP 14550",
+    "profile": "ai_profile_copter",
+    "transport": "udp-peer",
+    "routingMode": "single-profile",
+    "bindAddress": "0.0.0.0",
+    "bindPort": 14550,
+    "remoteHost": "",
+    "remotePort": 14550,
+    "serialPath": "",
+    "serialBaud": 57600,
+    "reconnect": true,
+    "heartbeat": true,
+    "heartbeatIntervalMs": 1000,
+    "acceptedSysids": "",
+    "acceptedCompids": "",
+    "unmatchedPolicy": "default",
+    "routeTable": "",
+    "outboundQueue": true
+  },
+  {
+    "id": "n05_inj",
+    "type": "inject",
+    "z": "flow05",
+    "name": "Request msg 148",
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"message_id\":148}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 170,
+    "y": 100,
+    "wires": [
+      [
+        "n05_cmd"
+      ]
+    ]
+  },
+  {
+    "id": "n05_cmd",
+    "type": "mavlink-ai-command",
+    "z": "flow05",
+    "name": "Request Message",
+    "profile": "ai_profile_copter",
+    "command": "request_message",
+    "x": 380,
+    "y": 100,
+    "wires": [
+      [
+        "n05_out"
+      ]
+    ]
+  },
+  {
+    "id": "n05_out",
+    "type": "mavlink-ai-out",
+    "z": "flow05",
+    "name": "Send",
+    "connection": "ai_conn_udp",
+    "x": 570,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "n05_in",
+    "type": "mavlink-ai-in",
+    "z": "flow05",
+    "name": "AUTOPILOT_VERSION",
+    "connection": "ai_conn_udp",
+    "messageNames": "AUTOPILOT_VERSION",
+    "messageIds": "",
+    "sysid": "",
+    "compid": "",
+    "profileFilter": "",
+    "rateLimitHz": 0,
+    "changedOnly": false,
+    "outputRaw": false,
+    "outputs": 1,
+    "x": 200,
+    "y": 180,
+    "wires": [
+      [
+        "n05_dbg"
+      ]
+    ]
+  },
+  {
+    "id": "n05_dbg",
+    "type": "debug",
+    "z": "flow05",
+    "name": "version",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 440,
+    "y": 180,
+    "wires": []
+  }
+]

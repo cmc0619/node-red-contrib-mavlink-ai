@@ -1,0 +1,109 @@
+[
+  {
+    "id": "flow07",
+    "type": "tab",
+    "label": "MAVLink AI - 07 Filter GLOBAL_POSITION_INT",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "ai_profile_copter",
+    "type": "mavlink-ai-profile",
+    "name": "AI Profile - Copter",
+    "profileType": "gcs",
+    "dialect": "ardupilotmega",
+    "customDialectPath": "",
+    "mavlinkVersion": "auto",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
+    "defaultTargetSystem": 1,
+    "defaultTargetComponent": 1,
+    "preferredMissionItemType": "MISSION_ITEM_INT",
+    "defaultMissionType": "mission",
+    "heartbeatType": "",
+    "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
+    "debugProtocol": false
+  },
+  {
+    "id": "ai_conn_udp",
+    "type": "mavlink-ai-connection",
+    "name": "AI Conn - Copter UDP 14550",
+    "profile": "ai_profile_copter",
+    "transport": "udp-peer",
+    "routingMode": "single-profile",
+    "bindAddress": "0.0.0.0",
+    "bindPort": 14550,
+    "remoteHost": "",
+    "remotePort": 14550,
+    "serialPath": "",
+    "serialBaud": 57600,
+    "reconnect": true,
+    "heartbeat": true,
+    "heartbeatIntervalMs": 1000,
+    "acceptedSysids": "",
+    "acceptedCompids": "",
+    "unmatchedPolicy": "default",
+    "routeTable": "",
+    "outboundQueue": true
+  },
+  {
+    "id": "n07_in",
+    "type": "mavlink-ai-in",
+    "z": "flow07",
+    "name": "All",
+    "connection": "ai_conn_udp",
+    "messageNames": "",
+    "messageIds": "",
+    "sysid": "",
+    "compid": "",
+    "profileFilter": "",
+    "rateLimitHz": 0,
+    "changedOnly": false,
+    "outputRaw": false,
+    "outputs": 1,
+    "x": 150,
+    "y": 120,
+    "wires": [
+      [
+        "n07_filter"
+      ]
+    ]
+  },
+  {
+    "id": "n07_filter",
+    "type": "mavlink-ai-filter",
+    "z": "flow07",
+    "name": "GPI @5Hz from sysid 1",
+    "messageNames": "GLOBAL_POSITION_INT",
+    "messageIds": "",
+    "profileFilter": "",
+    "sysid": "1",
+    "compid": "",
+    "targetSystem": "",
+    "targetComponent": "",
+    "fieldName": "",
+    "fieldValue": "",
+    "fieldExists": false,
+    "rateLimitHz": 5,
+    "changedOnly": false,
+    "x": 380,
+    "y": 120,
+    "wires": [
+      [
+        "n07_dbg"
+      ]
+    ]
+  },
+  {
+    "id": "n07_dbg",
+    "type": "debug",
+    "z": "flow07",
+    "name": "position",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 600,
+    "y": 120,
+    "wires": []
+  }
+]

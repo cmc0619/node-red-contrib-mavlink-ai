@@ -5,8 +5,17 @@
     defaults: {
       name: { value: '' },
       messageNames: { value: '' },
+      messageIds: { value: '' },
+      profileFilter: { value: '' },
       sysid: { value: '' },
-      compid: { value: '' }
+      compid: { value: '' },
+      targetSystem: { value: '' },
+      targetComponent: { value: '' },
+      fieldName: { value: '' },
+      fieldValue: { value: '' },
+      fieldExists: { value: false },
+      rateLimitHz: { value: 0 },
+      changedOnly: { value: false }
     },
     inputs: 1,
     outputs: 1,
@@ -27,15 +36,52 @@
     <input type="text" id="node-input-messageNames" placeholder="HEARTBEAT,GLOBAL_POSITION_INT">
   </div>
   <div class="form-row">
+    <label for="node-input-messageIds">Message IDs</label>
+    <input type="text" id="node-input-messageIds" placeholder="0,33">
+  </div>
+  <div class="form-row">
+    <label for="node-input-profileFilter">Profile</label>
+    <input type="text" id="node-input-profileFilter" placeholder="any">
+  </div>
+  <div class="form-row">
     <label for="node-input-sysid">SysID</label>
-    <input type="number" id="node-input-sysid" placeholder="any">
+    <input type="text" id="node-input-sysid" placeholder="any">
   </div>
   <div class="form-row">
     <label for="node-input-compid">CompID</label>
-    <input type="number" id="node-input-compid" placeholder="any">
+    <input type="text" id="node-input-compid" placeholder="any">
+  </div>
+  <div class="form-row">
+    <label for="node-input-targetSystem">Target Sys</label>
+    <input type="text" id="node-input-targetSystem" placeholder="any">
+  </div>
+  <div class="form-row">
+    <label for="node-input-targetComponent">Target Comp</label>
+    <input type="text" id="node-input-targetComponent" placeholder="any">
+  </div>
+  <div class="form-row">
+    <label for="node-input-fieldName">Field</label>
+    <input type="text" id="node-input-fieldName" placeholder="e.g. custom_mode">
+  </div>
+  <div class="form-row">
+    <label for="node-input-fieldValue">Field =</label>
+    <input type="text" id="node-input-fieldValue" placeholder="value to match">
+  </div>
+  <div class="form-row">
+    <label for="node-input-fieldExists">Field exists</label>
+    <input type="checkbox" id="node-input-fieldExists" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
+  <div class="form-row">
+    <label for="node-input-rateLimitHz">Rate limit Hz</label>
+    <input type="number" id="node-input-rateLimitHz" placeholder="0 = unlimited">
+  </div>
+  <div class="form-row">
+    <label for="node-input-changedOnly">Changed only</label>
+    <input type="checkbox" id="node-input-changedOnly" style="display: inline-block; width: auto; vertical-align: top;">
   </div>
 </script>
 
 <script type="text/html" data-help-name="mavlink-ai-filter">
-  <p>Filters decoded MAVLink messages by message name, system ID, and component ID.</p>
+  <p>Filters decoded MAVLink messages by name, id, profile, system/component, target, or field value, with optional rate limiting and changed-only passing.</p>
+  <p>Rate limiting is keyed per message name + sysid + compid, so high-rate telemetry can be throttled without starving other streams.</p>
 </script>

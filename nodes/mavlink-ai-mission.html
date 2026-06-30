@@ -47,5 +47,19 @@
 </script>
 
 <script type="text/html" data-help-name="mavlink-ai-mission">
-  <p>Mission workflow node. The state machine is intentionally not implemented in this skeleton.</p>
+  <p>Runs the MAVLink mission protocol against the vehicle on a shared <b>MAVLink AI Connection</b>. Only one workflow runs per connection/profile/mission-type at a time (it is locked); a second concurrent request fails clearly.</p>
+  <h3>Actions</h3>
+  <ul>
+    <li><b>Download</b> — request the mission and assemble all items.</li>
+    <li><b>Upload</b> — send <code>msg.payload.items</code> to the vehicle.</li>
+    <li><b>Clear</b> — clear the mission of the selected type.</li>
+  </ul>
+  <h3>Inputs</h3>
+  <p><code>msg.payload</code> may set <code>target_system</code>, <code>target_component</code>, <code>mission_type</code> (mission/fence/rally/all), and for upload an <code>items</code> array.</p>
+  <h3>Outputs</h3>
+  <ol class="node-ports">
+    <li>Completed mission object.</li>
+    <li>Progress events.</li>
+    <li>Errors / timeouts.</li>
+  </ol>
 </script>

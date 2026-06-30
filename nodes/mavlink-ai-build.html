@@ -4,8 +4,10 @@
     color: '#D7E8FF',
     defaults: {
       name: { value: '' },
-      profile: { value: '', type: 'mavlink-ai-profile', required: false },
-      messageName: { value: 'HEARTBEAT', required: true }
+      profile: { value: '', type: 'mavlink-ai-profile', required: true },
+      messageName: { value: 'HEARTBEAT', required: true },
+      fields: { value: '' },
+      applyDefaults: { value: true }
     },
     inputs: 1,
     outputs: 1,
@@ -29,8 +31,17 @@
     <label for="node-input-messageName">Message</label>
     <input type="text" id="node-input-messageName" placeholder="COMMAND_LONG">
   </div>
+  <div class="form-row">
+    <label for="node-input-fields">Fields (JSON)</label>
+    <input type="text" id="node-input-fields" placeholder='{"type":"MAV_TYPE_GCS"}'>
+  </div>
+  <div class="form-row">
+    <label for="node-input-applyDefaults">Apply defaults</label>
+    <input type="checkbox" id="node-input-applyDefaults" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
 </script>
 
 <script type="text/html" data-help-name="mavlink-ai-build">
-  <p>Builds a normalized outbound MAVLink message object. Encoding is not implemented yet.</p>
+  <p>Builds a normalized outbound MAVLink message object (without sending it) for a downstream <b>MAVLink AI Out</b> node.</p>
+  <p>The message name can come from config, <code>msg.messageName</code>, or <code>msg.payload.name</code>. Field values may be supplied as config JSON and/or <code>msg.payload</code> (payload wins). Enum-name strings such as <code>MAV_TYPE_GCS</code> are resolved against the profile dialect.</p>
 </script>
