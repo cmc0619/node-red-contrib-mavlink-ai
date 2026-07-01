@@ -29,6 +29,7 @@
       ];
       const $command = $('#node-input-command');
       const $params = $('#mav-cmd-params');
+      let commands = {}; // MAV_CMD_NAME -> { params:[{index,name,description,units}] }
 
       let savedParams = {};
       try {
@@ -46,24 +47,41 @@
         return /^MAV_CMD_/.test(value);
       }
 
-      // Show param1..7 inputs only for a raw MAV_CMD selection.
+      // Render one input per param for a raw MAV_CMD selection. When the dialect
+      // metadata knows the command (e.g. NAV_WAYPOINT), show its named params
+      // (hold, acceptRadius, latitude, …) with units/description; otherwise fall
+      // back to generic param1..7. Values are always stored as paramN.
+      function paramRow(key, labelText, title) {
+        const $row = $('<div class="form-row" style="margin-bottom:4px;"></div>');
+        $('<label></label>').css({ width: '140px' }).text(labelText).attr('title', title || '').appendTo($row);
+        $('<input type="number" step="any">')
+          .attr('id', 'mav-cmd-' + key)
+          .attr('data-param', key)
+          .css({ width: '55%' })
+          .attr('title', title || '')
+          .val(savedParams[key] !== undefined ? savedParams[key] : '')
+          .appendTo($row);
+        return $row;
+      }
+
       function renderParams() {
         $params.empty();
-        if (!isRaw($command.val())) {
+        const selected = $command.val();
+        if (!isRaw(selected)) {
           return;
         }
-        $('<div style="color:#888;margin:4px 0;">Raw command params (leave blank for 0):</div>').appendTo($params);
-        for (let i = 1; i <= 7; i += 1) {
-          const key = 'param' + i;
-          const $row = $('<div class="form-row" style="margin-bottom:4px;"></div>');
-          $('<label></label>').css({ width: '120px' }).text(key).appendTo($row);
-          $('<input type="number" step="any">')
-            .attr('id', 'mav-cmd-' + key)
-            .attr('data-param', key)
-            .css({ width: '60%' })
-            .val(savedParams[key] !== undefined ? savedParams[key] : '')
-            .appendTo($row);
-          $row.appendTo($params);
+        const def = commands[selected];
+        if (def && def.params && def.params.length) {
+          $('<div style="color:#888;margin:4px 0;">Parameters (leave blank for 0):</div>').appendTo($params);
+          def.params.forEach(function (p) {
+            const label = p.name + (p.units ? ' (' + p.units + ')' : '');
+            paramRow('param' + p.index, label, p.description || '').appendTo($params);
+          });
+        } else {
+          $('<div style="color:#888;margin:4px 0;">Raw command params (leave blank for 0):</div>').appendTo($params);
+          for (let i = 1; i <= 7; i += 1) {
+            paramRow('param' + i, 'param' + i, '').appendTo($params);
+          }
         }
       }
 
@@ -103,12 +121,14 @@
             if (requestId !== metadataRequestId) {
               return; // a newer request superseded this response
             }
+            commands = (data && data.commands) || {};
             buildOptions((data && data.enums && data.enums.MAV_CMD) || []);
           })
           .fail(function () {
             if (requestId !== metadataRequestId) {
               return;
             }
+            commands = {};
             buildOptions([]); // presets only if metadata unavailable
           });
       }

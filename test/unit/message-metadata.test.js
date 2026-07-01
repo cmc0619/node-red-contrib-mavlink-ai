@@ -35,6 +35,29 @@ test('enum tables carry readable full names and values', () => {
   assert.strictEqual(quad.value, 2);
 });
 
+test('exposes command-specific param labels (MAV_CMD -> named params)', () => {
+  const md = buildMetadata('ardupilotmega');
+  const wp = md.commands.MAV_CMD_NAV_WAYPOINT;
+  assert.ok(wp, 'NAV_WAYPOINT command metadata present');
+  assert.deepStrictEqual(
+    wp.params.map((p) => p.index + ':' + p.name),
+    ['1:hold', '2:acceptRadius', '3:passRadius', '4:yaw', '5:latitude', '6:longitude', '7:altitude']
+  );
+  assert.strictEqual(wp.params[0].units, 's');
+  assert.match(wp.params[0].description, /Hold time/);
+});
+
+test('resolves real param indices for commands with gaps', () => {
+  const md = buildMetadata('ardupilotmega');
+  // NAV_TAKEOFF: pitch=param1, yaw=param4 (params 2/3 unused) — must not be
+  // renumbered sequentially.
+  const takeoff = md.commands.MAV_CMD_NAV_TAKEOFF;
+  const yaw = takeoff.params.find((p) => p.name === 'yaw');
+  assert.strictEqual(yaw.index, 4);
+  assert.strictEqual(takeoff.params[0].name, 'pitch');
+  assert.strictEqual(takeoff.params[0].index, 1);
+});
+
 test('invalid dialect yields an invalid metadata object (no throw)', () => {
   const md = buildMetadata('nope-not-a-dialect');
   assert.strictEqual(md.valid, false);
