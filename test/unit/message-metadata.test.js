@@ -62,4 +62,7 @@ test('invalid dialect yields an invalid metadata object (no throw)', () => {
   const md = buildMetadata('nope-not-a-dialect');
   assert.strictEqual(md.valid, false);
   assert.deepStrictEqual(md.messages, {});
+  // Invalid metadata keeps the same shape as valid so callers can rely on it.
+  assert.deepStrictEqual(md.enums, {});
+  assert.deepStrictEqual(md.commands, {});
 });
