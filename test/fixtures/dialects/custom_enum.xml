@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<mavlink>
+  <version>3</version>
+  <enums>
+    <enum name="CUSTOM_COLOR">
+      <entry value="0" name="CUSTOM_COLOR_RED">
+        <description>Red.</description>
+      </entry>
+      <entry value="1" name="CUSTOM_COLOR_GREEN">
+        <description>Green.</description>
+      </entry>
+      <entry value="7" name="CUSTOM_COLOR_WHITE">
+        <description>White.</description>
+      </entry>
+    </enum>
+  </enums>
+  <messages>
+    <message id="9500" name="CUSTOM_LAMP">
+      <description>A lamp with an enum-typed colour field.</description>
+      <field type="uint8_t" name="color" enum="CUSTOM_COLOR">Lamp colour.</field>
+      <field type="uint16_t" name="brightness">Brightness.</field>
+    </message>
+  </messages>
+</mavlink>
