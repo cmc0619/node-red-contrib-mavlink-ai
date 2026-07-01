@@ -2,6 +2,18 @@
 
 const { errorPayload } = require('../lib/util/errors');
 const { firstDefined } = require('../lib/util/validation');
+const { registerEditorApi } = require('../lib/editor-api');
+
+/**
+ * True if `value` looks like a raw MAV_CMD reference (enum name or number)
+ * rather than one of the friendly presets.
+ *
+ * @param {*} value
+ * @returns {boolean}
+ */
+function isRawCommand(value) {
+  return /^MAV_CMD_[A-Z0-9_]+$/.test(String(value)) || /^\d+$/.test(String(value));
+}
 
 /**
  * mavlink-ai-command (DESIGN.md §13.5).
@@ -11,6 +23,9 @@ const { firstDefined } = require('../lib/util/validation');
  * this node only builds — wire it into a mavlink-ai-out node to send.
  */
 module.exports = function registerMavlinkAiCommand(RED) {
+  // Serve message/enum metadata to the editor's MAV_CMD picker.
+  registerEditorApi(RED);
+
   // Each builder returns a flat object: { command, param1..param7 } (only the
   // params it sets). These are merged into the COMMAND_LONG fields.
   const COMMANDS = {
@@ -45,18 +60,35 @@ module.exports = function registerMavlinkAiCommand(RED) {
     node.profile = RED.nodes.getNode(config.profile);
     node.command = config.command || 'arm';
 
+    // Static param values for a raw MAV_CMD selection (written by the editor).
+    let configParams = {};
+    if (config.fields) {
+      try {
+        configParams = JSON.parse(config.fields);
+      } catch (e) {
+        node.warn(`mavlink-ai-command: invalid fields JSON, ignoring (${e.message})`);
+      }
+    }
+
     node.on('input', (msg, send, done) => {
       const incoming = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
       const selected = msg.command || incoming.command || node.command;
       const builder = COMMANDS[selected];
 
-      if (!builder) {
+      // Presets use their builder; anything shaped like a MAV_CMD (enum name or
+      // number) is sent as a raw COMMAND_LONG with the given params.
+      let built;
+      if (builder) {
+        built = builder(incoming);
+      } else if (isRawCommand(selected)) {
+        built = { command: selected };
+      } else {
         node.status({ fill: 'red', shape: 'ring', text: 'unknown command' });
         msg.topic = 'mavlink/error';
         msg.payload = errorPayload({
           node: 'mavlink-ai-command',
           code: 'UNKNOWN_COMMAND',
-          message: `Unknown command '${selected}'. Known: ${Object.keys(COMMANDS).join(', ')}.`
+          message: `Unknown command '${selected}'. Use a preset (${Object.keys(COMMANDS).join(', ')}) or a MAV_CMD_* name.`
         });
         send(msg);
         return done();
@@ -75,10 +107,12 @@ module.exports = function registerMavlinkAiCommand(RED) {
       }
 
       const defaults = node.profile.getDefaults ? node.profile.getDefaults() : {};
-      const built = builder(incoming);
 
+      // Base zeros, then static config params (raw MAV_CMD mode), then the
+      // builder output (preset semantics win over config params).
       const fields = Object.assign(
         { confirmation: 0, param1: 0, param2: 0, param3: 0, param4: 0, param5: 0, param6: 0, param7: 0 },
+        configParams,
         built
       );
       // Allow explicit param overrides from the incoming payload, but never

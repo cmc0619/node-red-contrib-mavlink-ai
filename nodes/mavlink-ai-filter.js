@@ -1,6 +1,7 @@
 'use strict';
 
 const { parseList, parseIdList, toInt, toBool, idAccepted } = require('../lib/util/validation');
+const { registerEditorApi } = require('../lib/editor-api');
 
 /**
  * mavlink-ai-filter (DESIGN.md §13.4).
@@ -10,6 +11,9 @@ const { parseList, parseIdList, toInt, toBool, idAccepted } = require('../lib/ut
  * flood Node-RED, so rate limiting here is survival, not decoration.
  */
 module.exports = function registerMavlinkAiFilter(RED) {
+  // Serve message/field/enum metadata to the editor's message/field pickers.
+  registerEditorApi(RED);
+
   function MavlinkAiFilterNode(config) {
     RED.nodes.createNode(this, config);
     const node = this;

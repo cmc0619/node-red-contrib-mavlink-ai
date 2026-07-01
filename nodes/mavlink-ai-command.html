@@ -5,13 +5,122 @@
     defaults: {
       name: { value: '' },
       profile: { value: '', type: 'mavlink-ai-profile', required: true },
-      command: { value: 'arm', required: true }
+      command: { value: 'arm', required: true },
+      fields: { value: '' }
     },
     inputs: 1,
     outputs: 1,
     icon: 'font-awesome/fa-bolt',
     label: function () {
-      return this.name || 'mavlink ai command';
+      return this.name || (this.command ? 'cmd ' + this.command : 'mavlink ai command');
+    },
+    oneditprepare: function () {
+      const node = this;
+      const PRESETS = [
+        ['arm', 'Arm'],
+        ['disarm', 'Disarm'],
+        ['set_mode', 'Set Mode'],
+        ['takeoff', 'Takeoff'],
+        ['land', 'Land'],
+        ['rtl', 'RTL'],
+        ['reboot', 'Reboot Autopilot'],
+        ['request_message', 'Request Message'],
+        ['set_message_interval', 'Set Message Interval']
+      ];
+      const $command = $('#node-input-command');
+      const $params = $('#mav-cmd-params');
+
+      let savedParams = {};
+      try {
+        savedParams = node.fields ? JSON.parse(node.fields) : {};
+      } catch (e) {
+        savedParams = {};
+      }
+
+      function currentDialect() {
+        const p = RED.nodes.node($('#node-input-profile').val());
+        return (p && p.dialect) || 'ardupilotmega';
+      }
+
+      function isRaw(value) {
+        return /^MAV_CMD_/.test(value);
+      }
+
+      // Show param1..7 inputs only for a raw MAV_CMD selection.
+      function renderParams() {
+        $params.empty();
+        if (!isRaw($command.val())) {
+          return;
+        }
+        $('<div style="color:#888;margin:4px 0;">Raw command params (leave blank for 0):</div>').appendTo($params);
+        for (let i = 1; i <= 7; i += 1) {
+          const key = 'param' + i;
+          const $row = $('<div class="form-row" style="margin-bottom:4px;"></div>');
+          $('<label></label>').css({ width: '120px' }).text(key).appendTo($row);
+          $('<input type="number" step="any">')
+            .attr('id', 'mav-cmd-' + key)
+            .attr('data-param', key)
+            .css({ width: '60%' })
+            .val(savedParams[key] !== undefined ? savedParams[key] : '')
+            .appendTo($row);
+          $row.appendTo($params);
+        }
+      }
+
+      function buildOptions(mavCmds) {
+        $command.empty();
+        const $presets = $('<optgroup label="Presets"></optgroup>');
+        PRESETS.forEach(function (p) {
+          $('<option></option>').val(p[0]).text(p[1]).appendTo($presets);
+        });
+        $presets.appendTo($command);
+        if (mavCmds && mavCmds.length) {
+          const $adv = $('<optgroup label="MAV_CMD (advanced)"></optgroup>');
+          mavCmds.forEach(function (e) {
+            $('<option></option>').val(e.name).text(e.name + ' (' + e.value + ')').appendTo($adv);
+          });
+          $adv.appendTo($command);
+        }
+        // Preserve the saved value even if it's a MAV_CMD not in the list.
+        if (node.command && $command.find('option[value="' + node.command + '"]').length === 0) {
+          $('<option></option>').val(node.command).text(node.command).appendTo($command);
+        }
+        $command.val(node.command || 'arm');
+        renderParams();
+      }
+
+      function loadDialect() {
+        $.getJSON('mavlink-ai/metadata', { dialect: currentDialect() })
+          .done(function (data) {
+            buildOptions((data && data.enums && data.enums.MAV_CMD) || []);
+          })
+          .fail(function () {
+            buildOptions([]); // presets only if metadata unavailable
+          });
+      }
+
+      $command.on('change', renderParams);
+      $('#node-input-profile').on('change', loadDialect);
+      loadDialect();
+
+      this._collectParams = function () {
+        if (!isRaw($command.val())) {
+          return '';
+        }
+        const out = {};
+        $params.find('[data-param]').each(function () {
+          const v = $(this).val();
+          if (v !== '' && v !== null && v !== undefined && !isNaN(Number(v))) {
+            out[$(this).attr('data-param')] = Number(v);
+          }
+        });
+        return JSON.stringify(out);
+      };
+    },
+    oneditsave: function () {
+      if (typeof this._collectParams === 'function') {
+        $('#node-input-fields').val(this._collectParams());
+      }
     }
   });
 </script>
@@ -27,20 +136,13 @@
   </div>
   <div class="form-row">
     <label for="node-input-command">Command</label>
-    <select id="node-input-command">
-      <option value="arm">Arm</option>
-      <option value="disarm">Disarm</option>
-      <option value="set_mode">Set Mode</option>
-      <option value="takeoff">Takeoff</option>
-      <option value="land">Land</option>
-      <option value="rtl">RTL</option>
-      <option value="reboot">Reboot Autopilot</option>
-      <option value="request_message">Request Message</option>
-      <option value="set_message_interval">Set Message Interval</option>
-    </select>
+    <select id="node-input-command" style="width:70%;"></select>
   </div>
+  <div id="mav-cmd-params" style="border-top:1px solid #eee; padding-top:6px;"></div>
+  <input type="hidden" id="node-input-fields">
 </script>
 
 <script type="text/html" data-help-name="mavlink-ai-command">
-  <p>Builds common MAVLink COMMAND_LONG messages. Transport send behavior belongs to MAVLink AI Out or a connection-backed direct-send mode later.</p>
+  <p>Builds a MAVLink <code>COMMAND_LONG</code> as a normalized outbound message for a downstream <b>MAVLink AI Out</b> node.</p>
+  <p>Pick a friendly <b>Preset</b> (arm, set mode, takeoff, …) or any <b>MAV_CMD</b> from the advanced list. For a raw MAV_CMD you can fill <code>param1</code>–<code>param7</code>; <code>msg.payload</code> may override params at runtime (presets keep their safety-critical params fixed, e.g. arm/disarm <code>param1</code>).</p>
 </script>
