@@ -133,6 +133,11 @@
             );
             $('#mav-fields-json').val(node.fields || '');
             metadata = { messages: {}, enums: {} };
+            // Preserve the saved message name so saving doesn't clear it.
+            if (node.messageName && $message.find('option').length === 0) {
+              $('<option></option>').val(node.messageName).text(node.messageName).appendTo($message);
+              $message.val(node.messageName);
+            }
           });
       }
 

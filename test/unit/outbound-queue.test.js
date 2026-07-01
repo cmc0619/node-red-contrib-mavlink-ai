@@ -55,6 +55,11 @@ test('clear rejects pending writes', async () => {
   const queued = queue.enqueue(Buffer.from([2]));
   queue.clear();
   await assert.rejects(() => queued, /cleared/);
-  // The in-flight one stays pending; just ensure clear didn't throw.
-  assert.ok(pending);
+  // The in-flight write should remain unsettled (neither resolved nor rejected)
+  // after clear(), since clear only drops queued items, not the active write.
+  const state = await Promise.race([
+    pending.then(() => 'settled', () => 'settled'),
+    new Promise((r) => setTimeout(() => r('pending'), 20))
+  ]);
+  assert.strictEqual(state, 'pending');
 });
