@@ -5,6 +5,7 @@ const normalizer = require('../lib/protocol/message-normalizer');
 const { validate } = require('../lib/protocol/message-validator');
 const { toBool, firstDefined } = require('../lib/util/validation');
 const { errorPayload } = require('../lib/util/errors');
+const { registerEditorApi } = require('../lib/editor-api');
 
 /**
  * mavlink-ai-build (DESIGN.md §13.3).
@@ -14,6 +15,9 @@ const { errorPayload } = require('../lib/util/errors');
  * and optionally applies profile target defaults.
  */
 module.exports = function registerMavlinkAiBuild(RED) {
+  // Serve message/field/enum metadata to the editor's dynamic field UI.
+  registerEditorApi(RED);
+
   function MavlinkAiBuildNode(config) {
     RED.nodes.createNode(this, config);
     const node = this;
