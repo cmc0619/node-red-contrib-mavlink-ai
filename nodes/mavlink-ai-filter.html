@@ -5,14 +5,135 @@
     defaults: {
       name: { value: '' },
       messageNames: { value: '' },
+      messageIds: { value: '' },
+      profileFilter: { value: '' },
       sysid: { value: '' },
-      compid: { value: '' }
+      compid: { value: '' },
+      targetSystem: { value: '' },
+      targetComponent: { value: '' },
+      fieldName: { value: '' },
+      fieldValue: { value: '' },
+      fieldExists: { value: false },
+      rateLimitHz: { value: 0 },
+      changedOnly: { value: false },
+      dialect: { value: 'ardupilotmega' }
     },
     inputs: 1,
     outputs: 1,
     icon: 'filter.svg',
     label: function () {
       return this.name || 'mavlink ai filter';
+    },
+    oneditprepare: function () {
+      // Editor-only helper pickers. The text inputs below remain authoritative;
+      // these dropdowns just make it easy to pick readable message/field/enum
+      // names for the chosen dialect. `dialect` is not used at runtime.
+      const node = this;
+      let metadata = { messages: {}, enums: {} };
+      const $dialect = $('#node-input-dialect');
+      const $msgPick = $('#mav-filter-msg-pick');
+      const $fieldPick = $('#mav-filter-field-pick');
+      const $names = $('#node-input-messageNames');
+      const $fieldName = $('#node-input-fieldName');
+      const $fieldValue = $('#node-input-fieldValue');
+
+      function focusMessage() {
+        const first = ($names.val() || '').split(',')[0];
+        return first ? first.trim().toUpperCase() : '';
+      }
+
+      function populateFieldPicker() {
+        $fieldPick.empty();
+        $('<option></option>').val('').text('(pick field)').appendTo($fieldPick);
+        const def = metadata.messages[focusMessage()];
+        if (!def) {
+          return;
+        }
+        def.fields.forEach(function (f) {
+          $('<option></option>').val(f.name).text(f.name + (f.enum ? ' [enum]' : '')).appendTo($fieldPick);
+        });
+      }
+
+      function refreshValueList() {
+        // Offer enum options for the chosen field via a datalist.
+        const def = metadata.messages[focusMessage()];
+        const field = def && def.fields.find(function (f) { return f.name === $fieldName.val(); });
+        const list = $('#mav-filter-value-list').empty();
+        if (field && field.enum && metadata.enums[field.enum]) {
+          metadata.enums[field.enum].forEach(function (e) {
+            $('<option></option>').val(e.name).appendTo(list);
+          });
+          $fieldValue.attr('list', 'mav-filter-value-list');
+        } else {
+          $fieldValue.removeAttr('list');
+        }
+      }
+
+      function populateMessagePicker() {
+        $msgPick.empty();
+        $('<option></option>').val('').text('(add message…)').appendTo($msgPick);
+        Object.keys(metadata.messages).sort().forEach(function (n) {
+          $('<option></option>').val(n).text(n).appendTo($msgPick);
+        });
+      }
+
+      let metadataRequestId = 0;
+      function loadMetadata() {
+        const requestId = ++metadataRequestId;
+        $.getJSON('mavlink-ai/metadata', { dialect: $dialect.val() || 'ardupilotmega' })
+          .done(function (data) {
+            if (requestId !== metadataRequestId) {
+              return; // a newer request superseded this response
+            }
+            metadata = data && data.messages ? data : { messages: {}, enums: {} };
+            populateMessagePicker();
+            populateFieldPicker();
+            refreshValueList();
+          })
+          .fail(function () {
+            if (requestId !== metadataRequestId) {
+              return;
+            }
+            metadata = { messages: {}, enums: {} };
+          });
+      }
+
+      $.getJSON('mavlink-ai/dialects')
+        .done(function (data) {
+          $dialect.empty();
+          (data.dialects || ['ardupilotmega']).forEach(function (d) {
+            $('<option></option>').val(d).text(d).appendTo($dialect);
+          });
+          $dialect.val(node.dialect || 'ardupilotmega');
+          loadMetadata();
+        })
+        .fail(loadMetadata);
+
+      $dialect.on('change', loadMetadata);
+      $msgPick.on('change', function () {
+        const v = $(this).val();
+        if (!v) {
+          return;
+        }
+        const list = ($names.val() || '')
+          .split(',')
+          .map(function (s) { return s.trim(); })
+          .filter(Boolean);
+        if (list.indexOf(v) === -1) {
+          list.push(v);
+          $names.val(list.join(','));
+        }
+        populateFieldPicker();
+        $(this).val('');
+      });
+      $fieldPick.on('change', function () {
+        if ($(this).val()) {
+          $fieldName.val($(this).val());
+          refreshValueList();
+        }
+      });
+      $names.on('change', populateFieldPicker);
+      $fieldName.on('change', refreshValueList);
     }
   });
 </script>
@@ -23,19 +144,70 @@
     <input type="text" id="node-input-name" placeholder="Filter MAVLink">
   </div>
   <div class="form-row">
+    <label for="node-input-dialect">Dialect (picker)</label>
+    <select id="node-input-dialect" style="width:60%;"></select>
+  </div>
+  <div class="form-row">
+    <label for="mav-filter-msg-pick">Add message</label>
+    <select id="mav-filter-msg-pick" style="width:60%;"></select>
+  </div>
+  <div class="form-row">
     <label for="node-input-messageNames">Messages</label>
     <input type="text" id="node-input-messageNames" placeholder="HEARTBEAT,GLOBAL_POSITION_INT">
   </div>
   <div class="form-row">
+    <label for="node-input-messageIds">Message IDs</label>
+    <input type="text" id="node-input-messageIds" placeholder="0,33">
+  </div>
+  <div class="form-row">
+    <label for="node-input-profileFilter">Profile</label>
+    <input type="text" id="node-input-profileFilter" placeholder="any">
+  </div>
+  <div class="form-row">
     <label for="node-input-sysid">SysID</label>
-    <input type="number" id="node-input-sysid" placeholder="any">
+    <input type="text" id="node-input-sysid" placeholder="any">
   </div>
   <div class="form-row">
     <label for="node-input-compid">CompID</label>
-    <input type="number" id="node-input-compid" placeholder="any">
+    <input type="text" id="node-input-compid" placeholder="any">
+  </div>
+  <div class="form-row">
+    <label for="node-input-targetSystem">Target Sys</label>
+    <input type="text" id="node-input-targetSystem" placeholder="any">
+  </div>
+  <div class="form-row">
+    <label for="node-input-targetComponent">Target Comp</label>
+    <input type="text" id="node-input-targetComponent" placeholder="any">
+  </div>
+  <div class="form-row">
+    <label for="mav-filter-field-pick">Pick field</label>
+    <select id="mav-filter-field-pick" style="width:60%;"></select>
+  </div>
+  <div class="form-row">
+    <label for="node-input-fieldName">Field</label>
+    <input type="text" id="node-input-fieldName" placeholder="e.g. custom_mode">
+  </div>
+  <div class="form-row">
+    <label for="node-input-fieldValue">Field =</label>
+    <input type="text" id="node-input-fieldValue" placeholder="value to match" list="">
+    <datalist id="mav-filter-value-list"></datalist>
+  </div>
+  <div class="form-row">
+    <label for="node-input-fieldExists">Field exists</label>
+    <input type="checkbox" id="node-input-fieldExists" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
+  <div class="form-row">
+    <label for="node-input-rateLimitHz">Rate limit Hz</label>
+    <input type="number" id="node-input-rateLimitHz" min="0" placeholder="0 = unlimited">
+  </div>
+  <div class="form-row">
+    <label for="node-input-changedOnly">Changed only</label>
+    <input type="checkbox" id="node-input-changedOnly" style="display: inline-block; width: auto; vertical-align: top;">
   </div>
 </script>
 
 <script type="text/html" data-help-name="mavlink-ai-filter">
-  <p>Filters decoded MAVLink messages by message name, system ID, and component ID.</p>
+  <p>Filters decoded MAVLink messages by name, id, profile, system/component, target, or field value, with optional rate limiting and changed-only passing.</p>
+  <p>Use the <b>Dialect</b>/<b>Add message</b>/<b>Pick field</b> helpers to fill the fields below with readable names; when a picked field is enum-backed, the <b>Field =</b> box offers those enum names. The text fields remain authoritative (multiple messages are comma-separated).</p>
+  <p>Rate limiting is keyed per message name + sysid + compid, so high-rate telemetry can be throttled without starving other streams.</p>
 </script>

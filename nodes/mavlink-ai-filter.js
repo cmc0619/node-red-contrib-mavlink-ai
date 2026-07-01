@@ -1,32 +1,107 @@
+'use strict';
+
+const { parseList, parseIdList, toInt, toBool, idAccepted } = require('../lib/util/validation');
+const { registerEditorApi } = require('../lib/editor-api');
+
+/**
+ * mavlink-ai-filter (DESIGN.md §13.4).
+ *
+ * Filters decoded MAVLink messages by name/id/profile/identity/target/field,
+ * with optional rate limiting and changed-only passing. High-rate telemetry can
+ * flood Node-RED, so rate limiting here is survival, not decoration.
+ */
 module.exports = function registerMavlinkAiFilter(RED) {
+  // Serve message/field/enum metadata to the editor's message/field pickers.
+  registerEditorApi(RED);
+
   function MavlinkAiFilterNode(config) {
     RED.nodes.createNode(this, config);
+    const node = this;
 
-    this.name = config.name;
-    this.messageNames = (config.messageNames || '')
-      .split(',')
-      .map((name) => name.trim())
-      .filter(Boolean);
-    this.sysid = config.sysid === '' || config.sysid == null ? null : Number(config.sysid);
-    this.compid = config.compid === '' || config.compid == null ? null : Number(config.compid);
+    node.name = config.name;
+    node.messageNames = parseList(config.messageNames).map((n) => n.toUpperCase());
+    node.messageIds = parseIdList(config.messageIds);
+    node.profileFilter = config.profileFilter || '';
+    node.sysids = parseIdList(config.sysid);
+    node.compids = parseIdList(config.compid);
+    node.targetSystems = parseIdList(config.targetSystem);
+    node.targetComponents = parseIdList(config.targetComponent);
+    node.fieldName = config.fieldName || '';
+    node.fieldValue = config.fieldValue === '' ? undefined : config.fieldValue;
+    node.fieldExists = toBool(config.fieldExists, false);
+    node.rateLimitHz = toInt(config.rateLimitHz, 0);
+    node.changedOnly = toBool(config.changedOnly, false);
 
-    this.on('input', (msg, send, done) => {
+    const lastDelivered = new Map(); // key -> timestamp
+    const lastSignature = new Map(); // key -> JSON of fields
+
+    node.on('input', (msg, send, done) => {
       const payload = msg.payload || {};
-      const name = payload.name;
+      const fields = payload.fields || {};
 
-      if (this.messageNames.length && !this.messageNames.includes(name)) {
-        done();
-        return;
+      if (node.messageNames.length && !node.messageNames.includes(String(payload.name).toUpperCase())) {
+        return done();
+      }
+      if (node.messageIds.length && !node.messageIds.includes(Number(payload.id))) {
+        return done();
+      }
+      if (node.profileFilter && payload.profile !== node.profileFilter) {
+        return done();
+      }
+      if (!idAccepted(payload.sysid, node.sysids)) {
+        return done();
+      }
+      if (!idAccepted(payload.compid, node.compids)) {
+        return done();
+      }
+      // target_* may legitimately be absent; treat "missing" as a pass-through
+      // so broadcast messages are not dropped by a target filter.
+      if (node.targetSystems.length && fields.target_system !== undefined) {
+        if (!node.targetSystems.includes(Number(fields.target_system))) {
+          return done();
+        }
+      }
+      if (node.targetComponents.length && fields.target_component !== undefined) {
+        if (!node.targetComponents.includes(Number(fields.target_component))) {
+          return done();
+        }
+      }
+      if (node.fieldName) {
+        const has = Object.prototype.hasOwnProperty.call(fields, node.fieldName);
+        if (node.fieldExists && !has) {
+          return done();
+        }
+        if (node.fieldValue !== undefined) {
+          if (!has || String(fields[node.fieldName]) !== String(node.fieldValue)) {
+            return done();
+          }
+        }
       }
 
-      if (this.sysid != null && Number(payload.sysid) !== this.sysid) {
-        done();
-        return;
+      const key = `${payload.name}:${payload.sysid}:${payload.compid}`;
+      const now = Date.now();
+
+      // Check the rate-limit window, but don't advance the clock until the
+      // message clears every filter below — otherwise a message dropped by
+      // changedOnly would still consume the delivery window and wrongly
+      // suppress the next genuinely-new value.
+      if (node.rateLimitHz > 0) {
+        const minInterval = 1000 / node.rateLimitHz;
+        if (now - (lastDelivered.get(key) || 0) < minInterval) {
+          return done();
+        }
       }
 
-      if (this.compid != null && Number(payload.compid) !== this.compid) {
-        done();
-        return;
+      if (node.changedOnly) {
+        const sig = JSON.stringify(fields);
+        if (lastSignature.get(key) === sig) {
+          return done();
+        }
+        lastSignature.set(key, sig);
+      }
+
+      if (node.rateLimitHz > 0) {
+        lastDelivered.set(key, now);
       }
 
       send(msg);

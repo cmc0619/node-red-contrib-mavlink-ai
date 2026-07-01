@@ -1,0 +1,172 @@
+[
+  {
+    "id": "flow11",
+    "type": "tab",
+    "label": "MAVLink AI - 11 Telemetry Stream",
+    "disabled": false,
+    "info": "Start and stop an ATTITUDE (id 30) stream with SET_MESSAGE_INTERVAL presets.\nStart requests 10 Hz (100000 us); Stop disables the stream (interval -1)."
+  },
+  {
+    "id": "ai_profile_copter",
+    "type": "mavlink-ai-profile",
+    "name": "AI Profile - Copter",
+    "profileType": "gcs",
+    "dialect": "ardupilotmega",
+    "customDialectPath": "",
+    "mavlinkVersion": "auto",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
+    "defaultTargetSystem": 1,
+    "defaultTargetComponent": 1,
+    "preferredMissionItemType": "MISSION_ITEM_INT",
+    "defaultMissionType": "mission",
+    "heartbeatType": "",
+    "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
+    "debugProtocol": false
+  },
+  {
+    "id": "ai_conn_udp",
+    "type": "mavlink-ai-connection",
+    "name": "AI Conn - Copter UDP 14550",
+    "profile": "ai_profile_copter",
+    "transport": "udp-peer",
+    "routingMode": "single-profile",
+    "bindAddress": "0.0.0.0",
+    "bindPort": 14550,
+    "remoteHost": "",
+    "remotePort": 14550,
+    "serialPath": "",
+    "serialBaud": 57600,
+    "reconnect": true,
+    "heartbeat": true,
+    "heartbeatIntervalMs": 1000,
+    "acceptedSysids": "",
+    "acceptedCompids": "",
+    "unmatchedPolicy": "default",
+    "routeTable": "",
+    "outboundQueue": true
+  },
+  {
+    "id": "n11_start_inj",
+    "type": "inject",
+    "z": "flow11",
+    "name": "Start ATTITUDE @ 10 Hz",
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"message_id\":30,\"interval_us\":100000}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 190,
+    "y": 80,
+    "wires": [
+      [
+        "n11_start_cmd"
+      ]
+    ]
+  },
+  {
+    "id": "n11_start_cmd",
+    "type": "mavlink-ai-command",
+    "z": "flow11",
+    "name": "Set Message Interval",
+    "profile": "ai_profile_copter",
+    "command": "set_message_interval",
+    "fields": "",
+    "x": 450,
+    "y": 80,
+    "wires": [
+      [
+        "n11_out"
+      ]
+    ]
+  },
+  {
+    "id": "n11_stop_inj",
+    "type": "inject",
+    "z": "flow11",
+    "name": "Stop ATTITUDE",
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"message_id\":30}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 160,
+    "y": 140,
+    "wires": [
+      [
+        "n11_stop_cmd"
+      ]
+    ]
+  },
+  {
+    "id": "n11_stop_cmd",
+    "type": "mavlink-ai-command",
+    "z": "flow11",
+    "name": "Stop Message Interval",
+    "profile": "ai_profile_copter",
+    "command": "stop_message_interval",
+    "fields": "",
+    "x": 450,
+    "y": 140,
+    "wires": [
+      [
+        "n11_out"
+      ]
+    ]
+  },
+  {
+    "id": "n11_out",
+    "type": "mavlink-ai-out",
+    "z": "flow11",
+    "name": "Send",
+    "connection": "ai_conn_udp",
+    "x": 690,
+    "y": 110,
+    "wires": []
+  },
+  {
+    "id": "n11_in",
+    "type": "mavlink-ai-in",
+    "z": "flow11",
+    "name": "ATTITUDE",
+    "connection": "ai_conn_udp",
+    "messageNames": "ATTITUDE",
+    "messageIds": "",
+    "sysid": "",
+    "compid": "",
+    "profileFilter": "",
+    "rateLimitHz": 0,
+    "changedOnly": false,
+    "outputRaw": false,
+    "outputs": 1,
+    "x": 180,
+    "y": 220,
+    "wires": [
+      [
+        "n11_dbg"
+      ]
+    ]
+  },
+  {
+    "id": "n11_dbg",
+    "type": "debug",
+    "z": "flow11",
+    "name": "attitude",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 420,
+    "y": 220,
+    "wires": []
+  }
+]

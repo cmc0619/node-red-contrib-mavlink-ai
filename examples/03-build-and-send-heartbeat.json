@@ -1,0 +1,98 @@
+[
+  {
+    "id": "flow03",
+    "type": "tab",
+    "label": "MAVLink AI - 03 Build & Send Heartbeat",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "ai_profile_copter",
+    "type": "mavlink-ai-profile",
+    "name": "AI Profile - Copter",
+    "profileType": "gcs",
+    "dialect": "ardupilotmega",
+    "customDialectPath": "",
+    "mavlinkVersion": "auto",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
+    "defaultTargetSystem": 1,
+    "defaultTargetComponent": 1,
+    "preferredMissionItemType": "MISSION_ITEM_INT",
+    "defaultMissionType": "mission",
+    "heartbeatType": "",
+    "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
+    "debugProtocol": false
+  },
+  {
+    "id": "ai_conn_udp",
+    "type": "mavlink-ai-connection",
+    "name": "AI Conn - Copter UDP 14550",
+    "profile": "ai_profile_copter",
+    "transport": "udp-peer",
+    "routingMode": "single-profile",
+    "bindAddress": "0.0.0.0",
+    "bindPort": 14550,
+    "remoteHost": "",
+    "remotePort": 14550,
+    "serialPath": "",
+    "serialBaud": 57600,
+    "reconnect": true,
+    "heartbeat": true,
+    "heartbeatIntervalMs": 1000,
+    "acceptedSysids": "",
+    "acceptedCompids": "",
+    "unmatchedPolicy": "default",
+    "routeTable": "",
+    "outboundQueue": true
+  },
+  {
+    "id": "n03_inj",
+    "type": "inject",
+    "z": "flow03",
+    "name": "every 1s",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "1",
+    "crontab": "",
+    "once": false,
+    "payloadType": "date",
+    "x": 150,
+    "y": 120,
+    "wires": [
+      [
+        "n03_build"
+      ]
+    ]
+  },
+  {
+    "id": "n03_build",
+    "type": "mavlink-ai-build",
+    "z": "flow03",
+    "name": "HEARTBEAT",
+    "profile": "ai_profile_copter",
+    "messageName": "HEARTBEAT",
+    "fields": "{\"type\":\"MAV_TYPE_GCS\",\"autopilot\":\"MAV_AUTOPILOT_INVALID\",\"base_mode\":0,\"custom_mode\":0,\"system_status\":\"MAV_STATE_ACTIVE\"}",
+    "applyDefaults": false,
+    "x": 340,
+    "y": 120,
+    "wires": [
+      [
+        "n03_out"
+      ]
+    ]
+  },
+  {
+    "id": "n03_out",
+    "type": "mavlink-ai-out",
+    "z": "flow03",
+    "name": "Send",
+    "connection": "ai_conn_udp",
+    "x": 520,
+    "y": 120,
+    "wires": []
+  }
+]

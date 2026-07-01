@@ -1,0 +1,179 @@
+[
+  {
+    "id": "flow10",
+    "type": "tab",
+    "label": "MAVLink AI - 10 Param Read/Write",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "ai_profile_copter",
+    "type": "mavlink-ai-profile",
+    "name": "AI Profile - Copter",
+    "profileType": "gcs",
+    "dialect": "ardupilotmega",
+    "customDialectPath": "",
+    "mavlinkVersion": "auto",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
+    "defaultTargetSystem": 1,
+    "defaultTargetComponent": 1,
+    "preferredMissionItemType": "MISSION_ITEM_INT",
+    "defaultMissionType": "mission",
+    "heartbeatType": "",
+    "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
+    "debugProtocol": false
+  },
+  {
+    "id": "ai_conn_udp",
+    "type": "mavlink-ai-connection",
+    "name": "AI Conn - Copter UDP 14550",
+    "profile": "ai_profile_copter",
+    "transport": "udp-peer",
+    "routingMode": "single-profile",
+    "bindAddress": "0.0.0.0",
+    "bindPort": 14550,
+    "remoteHost": "",
+    "remotePort": 14550,
+    "serialPath": "",
+    "serialBaud": 57600,
+    "reconnect": true,
+    "heartbeat": true,
+    "heartbeatIntervalMs": 1000,
+    "acceptedSysids": "",
+    "acceptedCompids": "",
+    "unmatchedPolicy": "default",
+    "routeTable": "",
+    "outboundQueue": true
+  },
+  {
+    "id": "n10_read_inj",
+    "type": "inject",
+    "z": "flow10",
+    "name": "Read RC1_MIN",
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"param_id\":\"RC1_MIN\"}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 160,
+    "y": 80,
+    "wires": [
+      [
+        "n10_param"
+      ]
+    ]
+  },
+  {
+    "id": "n10_set_inj",
+    "type": "inject",
+    "z": "flow10",
+    "name": "Set RC1_MIN = 1100",
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"action\":\"set\",\"param_id\":\"RC1_MIN\",\"param_value\":1100}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 180,
+    "y": 140,
+    "wires": [
+      [
+        "n10_param"
+      ]
+    ]
+  },
+  {
+    "id": "n10_list_inj",
+    "type": "inject",
+    "z": "flow10",
+    "name": "Request full list",
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"action\":\"list\"}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 170,
+    "y": 200,
+    "wires": [
+      [
+        "n10_param"
+      ]
+    ]
+  },
+  {
+    "id": "n10_param",
+    "type": "mavlink-ai-param",
+    "z": "flow10",
+    "name": "PARAM",
+    "connection": "ai_conn_udp",
+    "action": "read",
+    "paramId": "RC1_MIN",
+    "paramType": "MAV_PARAM_TYPE_REAL32",
+    "timeoutMs": 3000,
+    "maxRetries": 3,
+    "x": 420,
+    "y": 140,
+    "wires": [
+      [
+        "n10_result"
+      ],
+      [
+        "n10_progress"
+      ],
+      [
+        "n10_error"
+      ]
+    ]
+  },
+  {
+    "id": "n10_result",
+    "type": "debug",
+    "z": "flow10",
+    "name": "result",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 620,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "n10_progress",
+    "type": "debug",
+    "z": "flow10",
+    "name": "progress",
+    "active": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 620,
+    "y": 140,
+    "wires": []
+  },
+  {
+    "id": "n10_error",
+    "type": "debug",
+    "z": "flow10",
+    "name": "error",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 620,
+    "y": 180,
+    "wires": []
+  }
+]

@@ -1,0 +1,84 @@
+[
+  {
+    "id": "flow01",
+    "type": "tab",
+    "label": "MAVLink AI - 01 Heartbeat Listener",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "ai_profile_copter",
+    "type": "mavlink-ai-profile",
+    "name": "AI Profile - Copter",
+    "profileType": "gcs",
+    "dialect": "ardupilotmega",
+    "customDialectPath": "",
+    "mavlinkVersion": "auto",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
+    "defaultTargetSystem": 1,
+    "defaultTargetComponent": 1,
+    "preferredMissionItemType": "MISSION_ITEM_INT",
+    "defaultMissionType": "mission",
+    "heartbeatType": "",
+    "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
+    "debugProtocol": false
+  },
+  {
+    "id": "ai_conn_udp",
+    "type": "mavlink-ai-connection",
+    "name": "AI Conn - Copter UDP 14550",
+    "profile": "ai_profile_copter",
+    "transport": "udp-peer",
+    "routingMode": "single-profile",
+    "bindAddress": "0.0.0.0",
+    "bindPort": 14550,
+    "remoteHost": "",
+    "remotePort": 14550,
+    "serialPath": "",
+    "serialBaud": 57600,
+    "reconnect": true,
+    "heartbeat": true,
+    "heartbeatIntervalMs": 1000,
+    "acceptedSysids": "",
+    "acceptedCompids": "",
+    "unmatchedPolicy": "default",
+    "routeTable": "",
+    "outboundQueue": true
+  },
+  {
+    "id": "n01_in",
+    "type": "mavlink-ai-in",
+    "z": "flow01",
+    "name": "Heartbeats",
+    "connection": "ai_conn_udp",
+    "messageNames": "HEARTBEAT",
+    "messageIds": "",
+    "sysid": "",
+    "compid": "",
+    "profileFilter": "",
+    "rateLimitHz": 1,
+    "changedOnly": false,
+    "outputRaw": false,
+    "outputs": 1,
+    "x": 180,
+    "y": 120,
+    "wires": [
+      [
+        "n01_dbg"
+      ]
+    ]
+  },
+  {
+    "id": "n01_dbg",
+    "type": "debug",
+    "z": "flow01",
+    "name": "HEARTBEAT",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 420,
+    "y": 120,
+    "wires": []
+  }
+]

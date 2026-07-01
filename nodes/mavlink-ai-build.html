@@ -4,14 +4,194 @@
     color: '#D7E8FF',
     defaults: {
       name: { value: '' },
-      profile: { value: '', type: 'mavlink-ai-profile', required: false },
-      messageName: { value: 'HEARTBEAT', required: true }
+      profile: { value: '', type: 'mavlink-ai-profile', required: true },
+      messageName: { value: 'HEARTBEAT', required: true },
+      fields: { value: '' },
+      applyDefaults: { value: true }
     },
     inputs: 1,
     outputs: 1,
     icon: 'function.svg',
     label: function () {
-      return this.name || 'mavlink ai build';
+      return this.name || (this.messageName ? 'build ' + this.messageName : 'mavlink ai build');
+    },
+    oneditprepare: function () {
+      const node = this;
+      let metadata = { messages: {}, enums: {} };
+
+      const $message = $('#node-input-messageName');
+      const $fieldsHost = $('#mav-fields');
+      const $status = $('#mav-fields-status');
+
+      // Parse the saved field values ({ snake_field: value }).
+      let savedFields = {};
+      try {
+        savedFields = node.fields ? JSON.parse(node.fields) : {};
+      } catch (e) {
+        savedFields = {};
+      }
+
+      // Resolve the dialect from the selected profile config node.
+      function currentDialect() {
+        const p = RED.nodes.node($('#node-input-profile').val());
+        return (p && p.dialect) || 'ardupilotmega';
+      }
+
+      function isNumericType(type) {
+        return /^(u?int(8|16|32|64)_t|float|double|char)/.test(type);
+      }
+
+      // Render one labeled input per field of the selected message.
+      function renderFields(msgName, prefill) {
+        $fieldsHost.empty();
+        const def = metadata.messages[msgName];
+        if (!def) {
+          return;
+        }
+        def.fields.forEach(function (field) {
+          if (field.name === 'target_system' || field.name === 'target_component') {
+            return; // handled by "Apply defaults" / profile
+          }
+          const id = 'mav-field-' + field.name;
+          const $row = $('<div class="form-row" style="margin-bottom:6px;"></div>');
+          const labelText = field.name + (field.units ? ' (' + field.units + ')' : '');
+          $('<label></label>')
+            .attr('for', id)
+            .css({ width: '120px' })
+            .text(labelText)
+            .attr('title', field.type + (field.enum ? ' [' + field.enum + ']' : ''))
+            .appendTo($row);
+
+          const saved = prefill && Object.prototype.hasOwnProperty.call(prefill, field.name) ? prefill[field.name] : undefined;
+          let $input;
+
+          if (field.enum && metadata.enums[field.enum]) {
+            $input = $('<select></select>').attr('id', id).attr('data-field', field.name);
+            $('<option></option>').val('').text('(default)').appendTo($input);
+            let matched = false;
+            metadata.enums[field.enum].forEach(function (e) {
+              const opt = $('<option></option>').val(e.name).text(e.name + ' (' + e.value + ')');
+              if (saved !== undefined && (String(saved) === e.name || Number(saved) === e.value)) {
+                opt.prop('selected', true);
+                matched = true;
+              }
+              opt.appendTo($input);
+            });
+            if (saved !== undefined && !matched) {
+              $('<option></option>').val(String(saved)).text(String(saved)).prop('selected', true).appendTo($input);
+            }
+          } else if (field.array) {
+            $input = $('<input type="text">')
+              .attr('id', id)
+              .attr('data-field', field.name)
+              .attr('placeholder', 'comma-separated ' + field.type)
+              .val(Array.isArray(saved) ? saved.join(',') : saved !== undefined ? String(saved) : '');
+          } else if (isNumericType(field.type)) {
+            $input = $('<input type="number" step="any">')
+              .attr('id', id)
+              .attr('data-field', field.name)
+              .val(saved !== undefined ? saved : '');
+          } else {
+            $input = $('<input type="text">')
+              .attr('id', id)
+              .attr('data-field', field.name)
+              .val(saved !== undefined ? saved : '');
+          }
+          $input.css({ width: '70%' }).appendTo($row);
+          $row.appendTo($fieldsHost);
+        });
+      }
+
+      function populateMessages(selectName) {
+        const names = Object.keys(metadata.messages).sort();
+        $message.empty();
+        names.forEach(function (n) {
+          $('<option></option>').val(n).text(n + ' (' + metadata.messages[n].id + ')').appendTo($message);
+        });
+        // Keep the saved value even if the metadata failed to include it.
+        if (selectName && names.indexOf(selectName) === -1) {
+          $('<option></option>').val(selectName).text(selectName).appendTo($message);
+        }
+        $message.val(selectName || names[0] || '');
+      }
+
+      let metadataRequestId = 0;
+      function loadDialect(dialect, selectName, prefill) {
+        $status.text('Loading ' + dialect + ' definitions...');
+        const requestId = ++metadataRequestId;
+        $.getJSON('mavlink-ai/metadata', { dialect: dialect })
+          .done(function (data) {
+            if (requestId !== metadataRequestId) {
+              return; // a newer request superseded this response
+            }
+            metadata = data && data.messages ? data : { messages: {}, enums: {} };
+            populateMessages(selectName);
+            renderFields($message.val(), prefill);
+            $status.text('');
+          })
+          .fail(function () {
+            if (requestId !== metadataRequestId) {
+              return;
+            }
+            // Fallback: no admin endpoint (older runtime). Let the user type a
+            // message name and edit fields as JSON.
+            $status.html(
+              'Dynamic field metadata unavailable — enter fields as JSON below.' +
+                '<br><textarea id="mav-fields-json" rows="4" style="width:100%;"></textarea>'
+            );
+            $('#mav-fields-json').val(node.fields || '');
+            metadata = { messages: {}, enums: {} };
+            // Preserve the saved message name so saving doesn't clear it.
+            if (node.messageName && $message.find('option').length === 0) {
+              $('<option></option>').val(node.messageName).text(node.messageName).appendTo($message);
+              $message.val(node.messageName);
+            }
+          });
+      }
+
+      $message.on('change', function () {
+        renderFields($(this).val(), savedFields);
+      });
+      $('#node-input-profile').on('change', function () {
+        loadDialect(currentDialect(), $message.val(), savedFields);
+      });
+
+      loadDialect(currentDialect(), node.messageName, savedFields);
+
+      // Expose a collector for oneditsave.
+      this._collectFields = function () {
+        const jsonBox = $('#mav-fields-json');
+        if (jsonBox.length) {
+          return jsonBox.val(); // fallback JSON mode
+        }
+        const out = {};
+        $fieldsHost.find('[data-field]').each(function () {
+          const name = $(this).attr('data-field');
+          let val = $(this).val();
+          if (val === '' || val === null || val === undefined) {
+            return; // omit blanks so protocol zero-fill applies
+          }
+          const def = metadata.messages[$message.val()];
+          const field = def && def.fields.find(function (f) { return f.name === name; });
+          if (field && field.array) {
+            out[name] = String(val)
+              .split(',')
+              .map(function (s) { return s.trim(); })
+              .filter(function (s) { return s !== ''; })
+              .map(function (s) { return isNaN(Number(s)) ? s : Number(s); });
+          } else if (field && !field.enum && /^(u?int|float|double)/.test(field.type) && !isNaN(Number(val))) {
+            out[name] = Number(val);
+          } else {
+            out[name] = val;
+          }
+        });
+        return JSON.stringify(out);
+      };
+    },
+    oneditsave: function () {
+      if (typeof this._collectFields === 'function') {
+        $('#node-input-fields').val(this._collectFields());
+      }
     }
   });
 </script>
@@ -27,10 +207,19 @@
   </div>
   <div class="form-row">
     <label for="node-input-messageName">Message</label>
-    <input type="text" id="node-input-messageName" placeholder="COMMAND_LONG">
+    <select id="node-input-messageName" style="width:70%;"></select>
   </div>
+  <div class="form-row">
+    <label for="node-input-applyDefaults">Apply defaults</label>
+    <input type="checkbox" id="node-input-applyDefaults" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
+  <div id="mav-fields-status" style="color:#888; margin:4px 0;"></div>
+  <div id="mav-fields" style="border-top:1px solid #eee; padding-top:6px;"></div>
+  <input type="hidden" id="node-input-fields">
 </script>
 
 <script type="text/html" data-help-name="mavlink-ai-build">
-  <p>Builds a normalized outbound MAVLink message object. Encoding is not implemented yet.</p>
+  <p>Builds a normalized outbound MAVLink message object (without sending it) for a downstream <b>MAVLink AI Out</b> node.</p>
+  <p>Pick a <b>Message</b> and the editor renders a labeled input for each of its fields; fields backed by a MAVLink enum become dropdowns of readable names (e.g. <code>MAV_CMD_COMPONENT_ARM_DISARM</code>). The field list updates when you change the message or the profile's dialect.</p>
+  <p>Leave a field blank to let it zero-fill. <code>msg.payload</code> may still override fields at runtime, and enum-name strings are resolved against the profile dialect.</p>
 </script>

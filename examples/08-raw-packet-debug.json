@@ -1,0 +1,99 @@
+[
+  {
+    "id": "flow08",
+    "type": "tab",
+    "label": "MAVLink AI - 08 Raw Packet Debug",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "ai_profile_copter",
+    "type": "mavlink-ai-profile",
+    "name": "AI Profile - Copter",
+    "profileType": "gcs",
+    "dialect": "ardupilotmega",
+    "customDialectPath": "",
+    "mavlinkVersion": "auto",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
+    "defaultTargetSystem": 1,
+    "defaultTargetComponent": 1,
+    "preferredMissionItemType": "MISSION_ITEM_INT",
+    "defaultMissionType": "mission",
+    "heartbeatType": "",
+    "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
+    "debugProtocol": false
+  },
+  {
+    "id": "ai_conn_udp",
+    "type": "mavlink-ai-connection",
+    "name": "AI Conn - Copter UDP 14550",
+    "profile": "ai_profile_copter",
+    "transport": "udp-peer",
+    "routingMode": "single-profile",
+    "bindAddress": "0.0.0.0",
+    "bindPort": 14550,
+    "remoteHost": "",
+    "remotePort": 14550,
+    "serialPath": "",
+    "serialBaud": 57600,
+    "reconnect": true,
+    "heartbeat": true,
+    "heartbeatIntervalMs": 1000,
+    "acceptedSysids": "",
+    "acceptedCompids": "",
+    "unmatchedPolicy": "default",
+    "routeTable": "",
+    "outboundQueue": true
+  },
+  {
+    "id": "n08_in",
+    "type": "mavlink-ai-in",
+    "z": "flow08",
+    "name": "Decoded + Raw",
+    "connection": "ai_conn_udp",
+    "messageNames": "",
+    "messageIds": "",
+    "sysid": "",
+    "compid": "",
+    "profileFilter": "",
+    "rateLimitHz": 0,
+    "changedOnly": false,
+    "outputRaw": true,
+    "outputs": 2,
+    "x": 180,
+    "y": 120,
+    "wires": [
+      [
+        "n08_dec"
+      ],
+      [
+        "n08_raw"
+      ]
+    ]
+  },
+  {
+    "id": "n08_dec",
+    "type": "debug",
+    "z": "flow08",
+    "name": "decoded",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 420,
+    "y": 90,
+    "wires": []
+  },
+  {
+    "id": "n08_raw",
+    "type": "debug",
+    "z": "flow08",
+    "name": "raw buffer",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 430,
+    "y": 160,
+    "wires": []
+  }
+]

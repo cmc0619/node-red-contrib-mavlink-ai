@@ -1,116 +1,144 @@
 # Roadmap
 
-This is the initial build order for `node-red-contrib-mavlink-ai`.
+Build order for `node-red-contrib-mavlink-ai`. Boxes checked below are
+implemented in the v2 baseline.
 
 ## Phase 0: Skeleton
 
-- [ ] package.json
-- [ ] Node-RED node registration
-- [ ] README
-- [ ] DESIGN.md
-- [ ] basic folder layout
-- [ ] no-op nodes that load in Node-RED
+- [x] package.json
+- [x] Node-RED node registration
+- [x] README
+- [x] DESIGN.md
+- [x] basic folder layout
+- [x] nodes that load in Node-RED
 
 ## Phase 1: Profile layer
 
-- [ ] `mavlink-ai-profile` config node
-- [ ] profile type selection
-- [ ] dialect selection
-- [ ] system/component defaults
-- [ ] mission defaults
-- [ ] heartbeat identity defaults
-- [ ] validation errors for invalid config
+- [x] `mavlink-ai-profile` config node
+- [x] profile type selection
+- [x] dialect selection
+- [x] system/component defaults
+- [x] mission defaults
+- [x] heartbeat identity defaults
+- [x] firmware abstraction field (generic | ardupilot | px4 | custom)
+- [x] validation errors for invalid config (loud dialect-load failure)
 
 ## Phase 2: Protocol layer
 
-- [ ] dialect loader
-- [ ] bundled dialect support
-- [ ] message definition lookup
-- [ ] enum lookup
-- [ ] encode wrapper
-- [ ] decode wrapper
-- [ ] message normalizer
-- [ ] clear errors for unknown message/dialect failures
+- [x] dialect loader
+- [x] bundled dialect support (minimal/common/standard/ardupilotmega/...)
+- [x] message definition lookup
+- [x] enum lookup (full-name and member-name resolution)
+- [x] encode wrapper
+- [x] decode wrapper
+- [x] message normalizer
+- [x] clear errors for unknown message/dialect failures
+- [ ] runtime XML loading of custom local/Docker dialect paths — see "Open 1.0 gaps"
+- [ ] dialect include-graph resolution (do not assume `common`) — see "Open 1.0 gaps"
+- [ ] dynamic bundled-dialect discovery in the editor UI — see "Open 1.0 gaps"
 
 ## Phase 3: Connection layer
 
-- [ ] `mavlink-ai-connection` config node
-- [ ] UDP peer transport
-- [ ] connection status
-- [ ] clean resource close on redeploy
-- [ ] inbound packet decode
-- [ ] outbound send queue
-- [ ] profile routing mode
-- [ ] sysid/compid route table
-- [ ] subscription API for regular nodes
+- [x] `mavlink-ai-connection` config node
+- [x] UDP peer transport (+ udp-in / udp-out)
+- [x] connection status
+- [x] clean resource close on redeploy
+- [x] inbound packet decode
+- [x] outbound send queue
+- [x] profile routing mode
+- [x] sysid/compid route table
+- [x] routed decode uses the matched profile's dialect (per-profile codec)
+- [x] structured decode error with raw packet metadata on undecodable packets
+- [x] subscription API for regular nodes
 
 ## Phase 4: Basic flow nodes
 
-- [ ] `mavlink-ai-in`
-- [ ] `mavlink-ai-out`
-- [ ] `mavlink-ai-build`
-- [ ] `mavlink-ai-filter`
-- [ ] HEARTBEAT decode example
-- [ ] COMMAND_LONG build/send example
+- [x] `mavlink-ai-in`
+- [x] `mavlink-ai-out`
+- [x] `mavlink-ai-build`
+- [x] `mavlink-ai-filter`
+- [x] HEARTBEAT decode example
+- [x] COMMAND_LONG build/send example
 
 ## Phase 5: Commands
 
-- [ ] `mavlink-ai-command`
-- [ ] arm
-- [ ] disarm
-- [ ] set mode
-- [ ] land
-- [ ] RTL
-- [ ] request message
-- [ ] set message interval
+- [x] `mavlink-ai-command`
+- [x] arm / disarm
+- [x] set mode
+- [x] takeoff / land / RTL
+- [x] reboot autopilot
+- [x] request message
+- [x] set message interval
+- [x] stop message interval
 
 ## Phase 6: Mission protocol
 
-- [ ] mission state machine
-- [ ] mission download
-- [ ] mission upload
-- [ ] mission clear
-- [ ] timeout handling
-- [ ] retry handling
-- [ ] mission lock per connection/profile/mission type
-- [ ] progress events
-- [ ] SITL test flow
+- [x] mission state machine
+- [x] mission download
+- [x] mission upload
+- [x] mission clear
+- [x] timeout handling
+- [x] retry handling
+- [x] mission lock per connection/profile/mission type
+- [x] progress events
+- [x] simulated-vehicle download integration test
 
 ## Phase 7: Optional transports
 
-- [ ] serial transport
-- [ ] lazy-load `serialport`
-- [ ] helpful error if serial selected but `serialport` missing
-- [ ] TCP client
-- [ ] TCP server
+- [x] serial transport
+- [x] lazy-load `serialport`
+- [x] helpful error if serial selected but `serialport` missing
+- [x] TCP client
+- [x] TCP server
 
 ## Phase 8: Testing
 
-- [ ] unit tests for profile validation
-- [ ] unit tests for route matching
-- [ ] unit tests for message contracts
-- [ ] UDP loopback integration test
-- [ ] missing-serialport test
-- [ ] recorded heartbeat fixture
-- [ ] recorded mission fixture
-- [ ] Node-RED manual example flows
+- [x] unit tests for validation/config coercion
+- [x] unit tests for route matching + wildcard priority
+- [x] unit tests for codec/dialect/enum/subscription/lock/mission-type
+- [x] UDP loopback integration test
+- [x] serial-without-path / lazy-load behavior test
+- [ ] recorded heartbeat/mission fixtures (synthetic harness used today)
 
 ## Phase 9: Polish
 
-- [ ] README install instructions
-- [ ] README Unraid/Docker dev loop
-- [ ] README examples
-- [ ] screenshots or flow exports
-- [ ] npm package readiness
+- [x] README install instructions
+- [x] README examples
+- [x] flow exports
+- [ ] screenshots
+- [ ] npm publish readiness pass
+
+## Phase 10: Parameters & telemetry
+
+- [x] `mavlink-ai-param` (read / set / list workflows)
+- [x] param progress + timeout/retry + gap refill on lossy links
+- [x] param read/write example flow
+- [x] `stop message interval` command preset
+- [x] telemetry start/stop stream example flow
+
+## Open 1.0 gaps (not yet implemented)
+
+These are stated 1.0 requirements in `RELEASE_SCOPE.md` that the current
+baseline does **not** meet. They are tracked as GitHub issues, not just prose.
+
+- [ ] **Custom local/Docker XML dialect loading** (RELEASE_SCOPE §7, issue #2).
+  Today `custom` only resolves to a *bundled* dialect basename; an arbitrary
+  local or mounted XML path fails loudly and is **not** compiled at runtime. The
+  loud failure is intentional, but this is not "done".
+- [ ] **Dialect include-graph resolution** (RELEASE_SCOPE §1, issue #3). The
+  loader uses fixed include chains and assumes `common` for vehicle dialects.
+  `common` is typical but not mandatory; a real include-graph resolver is needed.
+- [ ] **Dynamic bundled-dialect discovery in the UI** (RELEASE_SCOPE §7,
+  issue #4). The loader supports ~10 dialects, but the editor dropdown still
+  lists only a hand-maintained subset.
 
 ## Development rule
 
-Do not start by building mission handling.
-
-Build the stack in this order:
+Built in this order:
 
 ```text
 profile -> protocol -> connection -> in/out -> build/filter -> command -> mission
 ```
 
-Mission handling before the connection/subscription model is stable is how software goes to the cornfield.
+Mission handling before the connection/subscription model is stable is how
+software goes to the cornfield.

@@ -759,6 +759,31 @@ Output 3: errors/timeouts
 
 Mission protocol logic must not be buried in the transport layer.
 
+### 13.7 `mavlink-ai-param`
+
+Parameter protocol workflow node.
+
+Like the mission protocol, PARAM handling is stateful and timeout-driven, so it
+is kept isolated behind an explicit workflow (`lib/param`) and a per-target lock.
+
+Actions:
+
+```text
+read one parameter (by id or index)
+set one parameter (confirmed via echoed PARAM_VALUE)
+request full parameter list (missing items re-requested on a lossy link)
+```
+
+Outputs:
+
+```text
+Output 1: result (param/value, param/set, or param/list)
+Output 2: progress events
+Output 3: errors/timeouts
+```
+
+Parameter protocol logic must not be buried in the transport layer.
+
 ## 14. Message Contracts
 
 The module needs stable message contracts. Do not let every node invent its own payload shape.
