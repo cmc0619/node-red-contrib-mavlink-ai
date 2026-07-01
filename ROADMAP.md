@@ -125,15 +125,16 @@ implemented in the v2 baseline.
   `lib/dialects/xml-dialect-compiler.js` compiles an arbitrary local/mounted XML
   dialect (and its includes) into a runtime bundle; `custom` + an `.xml` path now
   compiles instead of failing. Loud failure preserved for invalid input.
+- [x] **Dynamic bundled-dialect discovery in the UI** (RELEASE_SCOPE §7,
+  issue #4). The profile editor discovers dialects from `/mavlink-ai/dialects`
+  and adds a `Dialect source` selector (bundled / local path / custom path).
 
 ## Open 1.0 gaps (not yet implemented)
 
 These are stated 1.0 requirements in `RELEASE_SCOPE.md` that the current
 baseline does **not** meet. They are tracked as GitHub issues, not just prose.
 
-- [ ] **Dynamic bundled-dialect discovery in the UI** (RELEASE_SCOPE §7,
-  issue #4). The loader supports ~10 dialects, but the editor dropdown still
-  lists only a hand-maintained subset.
+- _None currently tracked — the dialect gaps (#2/#3/#4) are implemented above._
 
 ## Development rule
 

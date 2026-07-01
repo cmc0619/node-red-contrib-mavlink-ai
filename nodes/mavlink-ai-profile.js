@@ -4,6 +4,7 @@ const { loadDialect, getMessageClass } = require('../lib/dialects/dialect-loader
 const enumResolver = require('../lib/protocol/enum-resolver');
 const normalizer = require('../lib/protocol/message-normalizer');
 const { toInt, toBool } = require('../lib/util/validation');
+const { registerEditorApi } = require('../lib/editor-api');
 
 /**
  * mavlink-ai-profile (DESIGN.md §6, §7).
@@ -26,6 +27,10 @@ const HEARTBEAT_TYPE_BY_PROFILE = {
 };
 
 module.exports = function registerMavlinkAiProfile(RED) {
+  // Serve the loader's dialect list to the profile editor's dialect dropdown
+  // (issue #4), so the UI discovers bundled dialects instead of hard-coding them.
+  registerEditorApi(RED);
+
   function MavlinkAiProfileNode(config) {
     RED.nodes.createNode(this, config);
     const node = this;
