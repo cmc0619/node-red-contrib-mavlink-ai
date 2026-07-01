@@ -1,5 +1,10 @@
 # MAVLink AI v2 Design
 
+> **Read this together with [`RELEASE_SCOPE.md`](RELEASE_SCOPE.md).** `DESIGN.md`
+> describes the core architecture and design principles; `RELEASE_SCOPE.md`
+> captures current 1.0 scope decisions, deferrals, and refinements. Read both
+> before making architectural or release-target changes.
+
 ## 1. Purpose
 
 `node-red-contrib-mavlink-ai` is a second-generation Node-RED MAVLink module.

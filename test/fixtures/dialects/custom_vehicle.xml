@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<mavlink>
+  <include>common.xml</include>
+  <version>3</version>
+  <messages>
+    <message id="9100" name="CUSTOM_VEHICLE_STATUS">
+      <description>A custom vehicle message on top of common.</description>
+      <field type="uint8_t" name="mode">Vehicle mode.</field>
+    </message>
+  </messages>
+</mavlink>

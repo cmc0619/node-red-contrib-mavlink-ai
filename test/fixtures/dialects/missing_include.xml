@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<mavlink>
+  <include>nope.xml</include>
+  <version>3</version>
+  <messages>
+    <message id="9200" name="CUSTOM_MISSING_BASE">
+      <description>Includes a file that does not exist.</description>
+      <field type="uint8_t" name="value">A value.</field>
+    </message>
+  </messages>
+</mavlink>

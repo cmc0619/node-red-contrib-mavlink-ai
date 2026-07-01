@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<mavlink>
+  <version>3</version>
+  <enums>
+    <enum name="MAV_STATE">
+      <entry value="0" name="MAV_STATE_UNINIT">
+        <description>Uninitialized system.</description>
+      </entry>
+    </enum>
+  </enums>
+  <messages>
+    <message id="0" name="HEARTBEAT">
+      <description>Heartbeat.</description>
+      <field type="uint8_t" name="type">Vehicle type.</field>
+      <field type="uint32_t" name="custom_mode">Custom mode.</field>
+    </message>
+  </messages>
+</mavlink>

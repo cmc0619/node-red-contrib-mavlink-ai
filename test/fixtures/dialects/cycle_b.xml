@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<mavlink>
+  <include>cycle_a.xml</include>
+  <version>3</version>
+  <messages>
+    <message id="9301" name="CUSTOM_CYCLE_B">
+      <description>Includes cycle_a, forming a cycle.</description>
+      <field type="uint8_t" name="value">A value.</field>
+    </message>
+  </messages>
+</mavlink>
