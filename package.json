@@ -21,7 +21,7 @@
   },
   "homepage": "https://github.com/cmc0619/node-red-contrib-mavlink-ai#readme",
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "dependencies": {
     "node-mavlink": "^2.3.0"
