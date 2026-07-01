@@ -115,16 +115,24 @@
         $message.val(selectName || names[0] || '');
       }
 
+      let metadataRequestId = 0;
       function loadDialect(dialect, selectName, prefill) {
         $status.text('Loading ' + dialect + ' definitions...');
+        const requestId = ++metadataRequestId;
         $.getJSON('mavlink-ai/metadata', { dialect: dialect })
           .done(function (data) {
+            if (requestId !== metadataRequestId) {
+              return; // a newer request superseded this response
+            }
             metadata = data && data.messages ? data : { messages: {}, enums: {} };
             populateMessages(selectName);
             renderFields($message.val(), prefill);
             $status.text('');
           })
           .fail(function () {
+            if (requestId !== metadataRequestId) {
+              return;
+            }
             // Fallback: no admin endpoint (older runtime). Let the user type a
             // message name and edit fields as JSON.
             $status.html(

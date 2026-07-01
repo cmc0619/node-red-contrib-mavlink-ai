@@ -77,15 +77,23 @@
         });
       }
 
+      let metadataRequestId = 0;
       function loadMetadata() {
+        const requestId = ++metadataRequestId;
         $.getJSON('mavlink-ai/metadata', { dialect: $dialect.val() || 'ardupilotmega' })
           .done(function (data) {
+            if (requestId !== metadataRequestId) {
+              return; // a newer request superseded this response
+            }
             metadata = data && data.messages ? data : { messages: {}, enums: {} };
             populateMessagePicker();
             populateFieldPicker();
             refreshValueList();
           })
           .fail(function () {
+            if (requestId !== metadataRequestId) {
+              return;
+            }
             metadata = { messages: {}, enums: {} };
           });
       }

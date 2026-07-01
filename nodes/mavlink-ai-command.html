@@ -68,6 +68,9 @@
       }
 
       function buildOptions(mavCmds) {
+        // Preserve an in-progress selection across metadata reloads (e.g. a
+        // profile change) instead of snapping back to the saved value.
+        const selected = $command.val() || node.command || 'arm';
         $command.empty();
         const $presets = $('<optgroup label="Presets"></optgroup>');
         PRESETS.forEach(function (p) {
@@ -81,20 +84,31 @@
           });
           $adv.appendTo($command);
         }
-        // Preserve the saved value even if it's a MAV_CMD not in the list.
-        if (node.command && $command.find('option[value="' + node.command + '"]').length === 0) {
-          $('<option></option>').val(node.command).text(node.command).appendTo($command);
+        // Preserve the current value even if it's a MAV_CMD not in the list.
+        if (
+          selected &&
+          $command.find('option').filter(function () { return this.value === selected; }).length === 0
+        ) {
+          $('<option></option>').val(selected).text(selected).appendTo($command);
         }
-        $command.val(node.command || 'arm');
+        $command.val(selected);
         renderParams();
       }
 
+      let metadataRequestId = 0;
       function loadDialect() {
+        const requestId = ++metadataRequestId;
         $.getJSON('mavlink-ai/metadata', { dialect: currentDialect() })
           .done(function (data) {
+            if (requestId !== metadataRequestId) {
+              return; // a newer request superseded this response
+            }
             buildOptions((data && data.enums && data.enums.MAV_CMD) || []);
           })
           .fail(function () {
+            if (requestId !== metadataRequestId) {
+              return;
+            }
             buildOptions([]); // presets only if metadata unavailable
           });
       }
