@@ -98,3 +98,45 @@ test('includeDirs lets a dialect find bases in a separate directory', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('an include resolving outside the root dir is rejected (allowOutsideRoot=false)', () => {
+  const os = require('os');
+  const fs = require('fs');
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mav-out-'));
+  try {
+    fs.mkdirSync(path.join(base, 'dialect'));
+    fs.mkdirSync(path.join(base, 'outside'));
+    fs.writeFileSync(path.join(base, 'outside', 'secret.xml'), '<mavlink></mavlink>');
+    const root = path.join(base, 'dialect', 'root.xml');
+    fs.writeFileSync(root, '<mavlink><include>../outside/secret.xml</include></mavlink>');
+    assert.throws(
+      () => resolveXmlIncludeGraph(root),
+      (e) => e.code === 'DIALECT_INCLUDE_NOT_FOUND' && /outside/.test(e.message)
+    );
+    // ...but permitted when explicitly allowed.
+    assert.doesNotThrow(() => resolveXmlIncludeGraph(root, { allowOutsideRoot: true }));
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('a symlink under the root pointing outside it is rejected', () => {
+  const os = require('os');
+  const fs = require('fs');
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mav-sym-'));
+  try {
+    fs.mkdirSync(path.join(base, 'dialect'));
+    fs.mkdirSync(path.join(base, 'outside'));
+    fs.writeFileSync(path.join(base, 'outside', 'real.xml'), '<mavlink></mavlink>');
+    // A symlink that lexically lives inside the dialect dir but resolves out.
+    fs.symlinkSync(path.join(base, 'outside', 'real.xml'), path.join(base, 'dialect', 'base.xml'));
+    const root = path.join(base, 'dialect', 'root.xml');
+    fs.writeFileSync(root, '<mavlink><include>base.xml</include></mavlink>');
+    assert.throws(
+      () => resolveXmlIncludeGraph(root),
+      (e) => e.code === 'DIALECT_INCLUDE_NOT_FOUND' && /outside/.test(e.message)
+    );
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});

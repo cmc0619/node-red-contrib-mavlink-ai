@@ -7,7 +7,18 @@
       firmware: { value: 'generic', required: true },
       dialect: { value: 'ardupilotmega', required: true },
       dialectSource: { value: 'bundled' },
-      customDialectPath: { value: '' },
+      customDialectPath: {
+        value: '',
+        // Require a path when the dialect source is a local/mounted XML file, so
+        // an empty path is caught in the editor instead of only at deploy time.
+        validate: function (v) {
+          const src = $('#node-config-input-dialectSource').val() || this.dialectSource;
+          if (src && src !== 'bundled') {
+            return !!(v && String(v).trim());
+          }
+          return true;
+        }
+      },
       mavlinkVersion: { value: 'auto', required: true },
       sourceSystemId: { value: 255, required: true, validate: RED.validators.number() },
       sourceComponentId: { value: 190, required: true, validate: RED.validators.number() },
