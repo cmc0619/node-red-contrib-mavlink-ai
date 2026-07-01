@@ -26,12 +26,12 @@ jobs:
         node-version: [18.x, 22.x]
     name: test (node ${{ matrix.node-version }})
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Don't leave GITHUB_TOKEN in .git/config for later steps (npm ci
           # runs third-party install scripts).
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
       # Install without optional deps: serialport is optional and lazy-loaded,
