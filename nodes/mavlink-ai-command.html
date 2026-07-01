@@ -79,7 +79,15 @@
             paramRow('param' + p.index, label, p.description || '').appendTo($params);
           });
         } else {
-          $('<div style="color:#888;margin:4px 0;">Raw command params (leave blank for 0):</div>').appendTo($params);
+          // Only fall back to raw param1..7 when the dialect metadata genuinely
+          // has no named params for this command — and say so, so it's clear the
+          // labels aren't just missing (#7).
+          const reason = Object.keys(commands).length
+            ? 'No parameter metadata for this command in the selected dialect'
+            : 'Command metadata unavailable';
+          $('<div style="color:#888;margin:4px 0;"></div>')
+            .text(reason + ' — using raw param1–7 (leave blank for 0):')
+            .appendTo($params);
           for (let i = 1; i <= 7; i += 1) {
             paramRow('param' + i, 'param' + i, '').appendTo($params);
           }

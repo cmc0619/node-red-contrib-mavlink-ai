@@ -52,6 +52,14 @@ test('metadata endpoint serves messages + enums + field enum mapping', async () 
   const cmd = body.messages.COMMAND_LONG.fields.find((f) => f.name === 'command');
   assert.strictEqual(cmd.enum, 'MAV_CMD');
   assert.ok(body.enums.MAV_CMD.some((e) => e.name === 'MAV_CMD_COMPONENT_ARM_DISARM' && e.value === 400));
+  // The endpoint must forward command-specific param metadata, or the command
+  // editor falls back to raw param1..7 for every MAV_CMD (#7).
+  assert.ok(body.commands, 'commands present in response');
+  const wp = body.commands.MAV_CMD_NAV_WAYPOINT;
+  assert.ok(wp && wp.params && wp.params.length, 'NAV_WAYPOINT has named params');
+  assert.strictEqual(wp.params[0].name, 'hold');
+  // The exact command from the UI report must also carry named params.
+  assert.ok(body.commands.MAV_CMD_DO_ILLUMINATOR_CONFIGURE, 'DO_ILLUMINATOR_CONFIGURE has named params');
 });
 
 test('metadata endpoint reports invalid dialect without throwing', async () => {
