@@ -27,11 +27,20 @@ test('routed connection decodes with the matched profile dialect', async (t) => 
     id: 'p_ardu', name: 'Ardu', profileType: 'copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
     sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
   });
+  // A second minimal profile, distinct from the default, to prove routed decode
+  // uses the *matched route's* profile rather than the default.
+  RED.create('mavlink-ai-profile', {
+    id: 'p_min2', name: 'Min2', profileType: 'gcs', dialect: 'minimal', mavlinkVersion: 'v2',
+    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
 
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c_routed', name: 'Routed UDP', profile: 'p_min',
     transport: 'udp-peer', routingMode: 'routed', unmatchedPolicy: 'default',
-    routeTable: JSON.stringify([{ sysid: 1, compid: '*', profile: 'p_ardu' }]),
+    routeTable: JSON.stringify([
+      { sysid: 1, compid: '*', profile: 'p_ardu' },
+      { sysid: 2, compid: '*', profile: 'p_min2' }
+    ]),
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
 
@@ -40,7 +49,7 @@ test('routed connection decodes with the matched profile dialect', async (t) => 
 
   const ardu = loadDialect('ardupilotmega');
   const fromSys1 = new MavlinkCodec({ bundle: ardu, version: 'v2', sysid: 1, compid: 1 });
-  const fromSys9 = new MavlinkCodec({ bundle: ardu, version: 'v2', sysid: 9, compid: 1 });
+  const fromSys2 = new MavlinkCodec({ bundle: ardu, version: 'v2', sysid: 2, compid: 1 });
   const sock = dgram.createSocket('udp4');
   t.after(async () => {
     await RED.close(conn);
@@ -76,17 +85,21 @@ test('routed connection decodes with the matched profile dialect', async (t) => 
   assert.strictEqual(attitude.payload.sysid, 1);
   assert.strictEqual(attitude.payload.profile, 'Ardu');
 
-  // Case 2: ATTITUDE from sysid 9 is unmatched, falls back to the minimal
-  // default profile, which cannot decode id 30 -> structured decode error.
+  // Case 2: ATTITUDE from sysid 2 is *matched by an explicit route* to the
+  // minimal profile, whose dialect cannot decode id 30. This proves the matched
+  // profile's dialect is used (the ardupilotmega default WOULD have decoded it)
+  // and that failure produces a structured decode error with packet metadata.
   const decodeError = await until(
     'decodeError',
     (done) => conn.emitter.on('decodeError', done),
-    () => sock.send(fromSys9.encode('ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }), port, '127.0.0.1'),
+    () => sock.send(fromSys2.encode('ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }), port, '127.0.0.1'),
     'decode error'
   );
   assert.strictEqual(decodeError.payload.code, 'DECODE_FAILED');
+  assert.strictEqual(decodeError.payload.context.sysid, 2);
   assert.strictEqual(decodeError.payload.context.msgid, 30);
   assert.strictEqual(decodeError.payload.context.dialect, 'minimal');
-  assert.strictEqual(decodeError.payload.context.profile, 'Min');
+  // The matched route's profile (Min2), not the default (Min), is attached.
+  assert.strictEqual(decodeError.payload.context.profile, 'Min2');
   assert.ok(decodeError.payload.context.raw.length > 0);
 });
