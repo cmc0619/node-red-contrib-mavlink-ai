@@ -31,3 +31,8 @@ test('missionTypeToNumber maps names, enums and numbers', () => {
   assert.strictEqual(missionTypeToNumber('MAV_MISSION_TYPE_FENCE', b.enums), 1);
   assert.strictEqual(missionTypeToNumber(2, b.enums), 2);
 });
+
+test('missionTypeToNumber rejects unknown strings (no silent default to 0)', () => {
+  const b = loadDialect('ardupilotmega');
+  assert.throws(() => missionTypeToNumber('fecnce', b.enums), /BAD_MISSION_TYPE|Unknown mission type/);
+});

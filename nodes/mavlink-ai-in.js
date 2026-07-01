@@ -55,6 +55,7 @@ module.exports = function registerMavlinkAiIn(RED) {
     });
 
     // Reflect connection status on the node badge.
+    /** @param {object} status  connection status payload */
     const onStatus = (status) => node.status(badgeForState(status.state, status.state));
     node.connection.emitter.on('status', onStatus);
     node.status(badgeForState(node.connection.statusState, node.connection.statusState));

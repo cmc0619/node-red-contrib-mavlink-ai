@@ -22,6 +22,12 @@ test('parse handles JSON strings', () => {
   assert.strictEqual(table.match(1, 1).profile, 'Copter');
 });
 
+test('parse is loud on malformed config', () => {
+  assert.strictEqual(RouteTable.parse('').size, 0); // empty is fine
+  assert.throws(() => RouteTable.parse('{not json'), /Invalid route table JSON/);
+  assert.throws(() => RouteTable.parse('{"sysid":1}'), /must be an array/);
+});
+
 test('routed mode rejects unmatched by default', () => {
   const router = new PacketRouter({
     mode: 'routed',

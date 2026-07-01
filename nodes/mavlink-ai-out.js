@@ -24,11 +24,17 @@ module.exports = function registerMavlinkAiOut(RED) {
     }
 
     node.status(badgeForState(node.connection.statusState, node.connection.statusState));
+    /** @param {object} status  connection status payload */
     const onStatus = (status) => node.status(badgeForState(status.state, status.state));
     node.connection.emitter.on('status', onStatus);
 
     let sent = 0;
     node.on('input', async (msg, send, done) => {
+      // Error/status envelopes (e.g. from an upstream build/command node) are
+      // not outbound MAVLink messages — don't try to encode and send them.
+      if (msg.topic === 'mavlink/error' || msg.topic === 'mavlink/status') {
+        return done();
+      }
       try {
         if (msg.topic === 'mavlink/raw' || Buffer.isBuffer(msg.payload)) {
           await node.connection.sendRaw(msg.payload, { msg });

@@ -13,6 +13,7 @@ const packageJson = require('../../package.json');
  * drive them, without pulling in the full Node-RED runtime.
  */
 class MockRED {
+  /** Create an empty mock runtime with node/type registries. */
   constructor() {
     this._types = new Map();
     this._nodes = new Map();
@@ -34,6 +35,14 @@ class MockRED {
     return this;
   }
 
+  /**
+   * Node-RED `createNode` stand-in: wires EventEmitter behavior plus
+   * status/error/send capture onto a node instance and registers it by id.
+   *
+   * @param {object} node
+   * @param {object} config
+   * @returns {void}
+   */
   _createNode(node, config) {
     node.id = config.id;
     node.type = config.type;

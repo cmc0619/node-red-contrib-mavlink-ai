@@ -8,7 +8,7 @@ const { SubscriptionRegistry } = require('../lib/runtime/subscription-registry')
 const { OutboundQueue } = require('../lib/runtime/outbound-queue');
 const { LockManager } = require('../lib/runtime/lock-manager');
 const { statusPayload } = require('../lib/util/status');
-const { toInt, toBool, parseIdList } = require('../lib/util/validation');
+const { toInt, toBool, parseIdList, firstDefined } = require('../lib/util/validation');
 const { MavlinkError, toMavlinkError, errorPayload } = require('../lib/util/errors');
 
 /**
@@ -36,18 +36,25 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node.serialBaud = toInt(config.serialBaud, 57600);
     node.reconnect = toBool(config.reconnect, true);
     node.heartbeatEnabled = toBool(config.heartbeat, false);
-    node.heartbeatIntervalMs = toInt(config.heartbeatIntervalMs, 1000);
+    // Floor the interval so an imported/edited flow can't create a tight loop
+    // that floods the outbound queue.
+    node.heartbeatIntervalMs = Math.max(100, toInt(config.heartbeatIntervalMs, 1000));
     node.acceptedSysids = parseIdList(config.acceptedSysids);
     node.acceptedCompids = parseIdList(config.acceptedCompids);
     node.unmatchedPolicy = config.unmatchedPolicy || (node.routingMode === 'routed' ? 'reject' : 'default');
 
     node.emitter = new EventEmitter();
     node.emitter.setMaxListeners(0);
-    // Default no-op 'error' listener: an EventEmitter throws if an 'error'
-    // event is emitted with no listeners, and transport/decode errors are
-    // emitted here whether or not a node is listening.
-    node.emitter.on('error', () => {});
+    // Default 'error' listener: an EventEmitter throws if an 'error' event is
+    // emitted with no listeners. Surface runtime errors through the Node-RED
+    // node log so they are observable instead of silently swallowed.
+    node.emitter.on('error', (err) => {
+      node.error(err && err.message ? err.message : err);
+    });
     node.subscriptions = new SubscriptionRegistry();
+    node.subscriptions.setErrorHandler((err) =>
+      node.emitter.emit('error', toMavlinkError(err, 'SUBSCRIBER_ERROR'))
+    );
     node.locks = new LockManager();
     node.statusState = 'idle';
     node.statusDetail = '';
@@ -63,6 +70,11 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node._codecByProfile = new Map();
 
     // --- status helpers ------------------------------------------------------
+    /**
+     * Current connection status payload (§14.4).
+     *
+     * @returns {object}
+     */
     node.getStatus = () =>
       statusPayload({
         node: 'mavlink-ai-connection',
@@ -152,6 +164,14 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     // --- routing -------------------------------------------------------------
+    /**
+     * Resolve a route's profile reference (config-node id, name, or object) to
+     * a profile. Falls back to a lightweight `{ name }` label for name-only
+     * references so routed messages still carry the profile name.
+     *
+     * @param {string|object} ref
+     * @returns {object} a profile node or `{ name }`
+     */
     node.resolveProfile = (ref) => {
       if (!ref) {
         return node.profile;
@@ -172,28 +192,71 @@ module.exports = function registerMavlinkAiConnection(RED) {
       return { name: ref };
     };
 
-    node._router = new PacketRouter({
-      mode: node.routingMode,
-      defaultProfile: node.profile,
-      acceptedSysids: node.acceptedSysids,
-      acceptedCompids: node.acceptedCompids,
-      unmatched: node.unmatchedPolicy,
-      routes: config.routeTable,
-      resolveProfile: (ref) => node.resolveProfile(ref)
-    });
+    try {
+      node._router = new PacketRouter({
+        mode: node.routingMode,
+        defaultProfile: node.profile,
+        acceptedSysids: node.acceptedSysids,
+        acceptedCompids: node.acceptedCompids,
+        unmatched: node.unmatchedPolicy,
+        routes: config.routeTable,
+        resolveProfile: (ref) => node.resolveProfile(ref)
+      });
+    } catch (err) {
+      fatal('ROUTE_TABLE_INVALID', err.message);
+      registerNoop(node);
+      return;
+    }
 
     // --- public runtime API (DESIGN.md §12) ---------------------------------
+    /**
+     * Subscribe to decoded messages. See SubscriptionRegistry for filter shape.
+     *
+     * @param {object} filter
+     * @param {function(object): void} callback
+     * @returns {number} subscription id
+     */
     node.subscribe = (filter, callback) => node.subscriptions.subscribe(filter, callback);
+    /**
+     * @param {number} id  subscription id from {@link subscribe}
+     * @returns {boolean}
+     */
     node.unsubscribe = (id) => node.subscriptions.unsubscribe(id);
 
+    /**
+     * Resolve which profile owns a packet identity, or null if rejected.
+     *
+     * @param {{sysid: number, compid: number}} packetOrHeader
+     * @returns {?object}
+     */
     node.getProfileForPacket = (packetOrHeader) => {
       const decision = node._router.route(packetOrHeader.sysid, packetOrHeader.compid);
       return decision.accepted ? decision.profile : null;
     };
 
+    /**
+     * Acquire a named runtime lock (e.g. mission workflow).
+     *
+     * @param {string} lockName
+     * @param {string} owner
+     * @returns {{release: function}}
+     */
     node.acquireLock = (lockName, owner) => node.locks.acquire(lockName, owner);
+    /**
+     * @param {string} lockName
+     * @param {string} owner
+     * @returns {boolean}
+     */
     node.releaseLock = (lockName, owner) => node.locks.release(lockName, owner);
 
+    /**
+     * Encode and enqueue a normalized outbound message (§14.2), filling target
+     * defaults from the profile.
+     *
+     * @param {object} message  { name, fields, target_system?, target_component? }
+     * @param {object} [options]  { priority }
+     * @returns {Promise<void>}
+     */
     node.send = (message, options = {}) => {
       if (!message || typeof message !== 'object') {
         return Promise.reject(new MavlinkError('BAD_OUTBOUND', 'Outbound message must be an object.'));
@@ -215,6 +278,13 @@ module.exports = function registerMavlinkAiConnection(RED) {
       return node._queue.enqueue(buffer, options.priority);
     };
 
+    /**
+     * Enqueue a pre-encoded raw buffer for sending.
+     *
+     * @param {Buffer} buffer
+     * @param {object} [options]  { priority }
+     * @returns {Promise<void>}
+     */
     node.sendRaw = (buffer, options = {}) => {
       if (!Buffer.isBuffer(buffer)) {
         return Promise.reject(new MavlinkError('BAD_RAW', 'Raw payload must be a Buffer.'));
@@ -314,6 +384,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (!node.heartbeatEnabled || node._heartbeatTimer) {
         return;
       }
+      /** Send one heartbeat; surface failures through the error emitter. */
       const tick = () => {
         node
           .send({ name: 'HEARTBEAT', fields: node.profile.getHeartbeatFields() }, { priority: 3 })
@@ -338,9 +409,17 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     // --- transport startup ---------------------------------------------------
-    node._queue = new OutboundQueue((buf) => node._transport.send(buf), {
-      enabled: toBool(config.outboundQueue, true)
-    });
+    node._queue = new OutboundQueue(
+      (buf) => {
+        // Guard against a failed/torn-down transport so sends reject cleanly
+        // instead of throwing a TypeError on a null transport.
+        if (!node._transport) {
+          return Promise.reject(new MavlinkError('TRANSPORT_NOT_READY', 'Transport is not started.'));
+        }
+        return node._transport.send(buf);
+      },
+      { enabled: toBool(config.outboundQueue, true) }
+    );
 
     /**
      * Create the transport, wire its events to the decoder/status/heartbeat,
@@ -363,6 +442,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
         });
       } catch (err) {
         fatal('TRANSPORT_INIT_FAILED', err.message);
+        node._transport = null;
         return;
       }
 
@@ -398,6 +478,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
         node._transport.start();
       } catch (err) {
         fatal('TRANSPORT_START_FAILED', err.message);
+        node._transport = null;
       }
     }
 
@@ -436,21 +517,6 @@ module.exports = function registerMavlinkAiConnection(RED) {
 };
 
 // --- helpers ----------------------------------------------------------------
-
-/**
- * Return the first argument that is neither undefined nor null.
- *
- * @param {...*} values
- * @returns {*}
- */
-function firstDefined(...values) {
-  for (const v of values) {
-    if (v !== undefined && v !== null) {
-      return v;
-    }
-  }
-  return undefined;
-}
 
 /**
  * Build a human-readable status detail describing what the transport bound to

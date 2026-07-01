@@ -75,14 +75,17 @@ module.exports = function registerMavlinkAiFilter(RED) {
       }
 
       const key = `${payload.name}:${payload.sysid}:${payload.compid}`;
+      const now = Date.now();
 
+      // Check the rate-limit window, but don't advance the clock until the
+      // message clears every filter below — otherwise a message dropped by
+      // changedOnly would still consume the delivery window and wrongly
+      // suppress the next genuinely-new value.
       if (node.rateLimitHz > 0) {
         const minInterval = 1000 / node.rateLimitHz;
-        const now = Date.now();
         if (now - (lastDelivered.get(key) || 0) < minInterval) {
           return done();
         }
-        lastDelivered.set(key, now);
       }
 
       if (node.changedOnly) {
@@ -91,6 +94,10 @@ module.exports = function registerMavlinkAiFilter(RED) {
           return done();
         }
         lastSignature.set(key, sig);
+      }
+
+      if (node.rateLimitHz > 0) {
+        lastDelivered.set(key, now);
       }
 
       send(msg);

@@ -1,6 +1,7 @@
 'use strict';
 
 const { errorPayload } = require('../lib/util/errors');
+const { firstDefined } = require('../lib/util/validation');
 
 /**
  * mavlink-ai-command (DESIGN.md §13.5).
@@ -10,7 +11,8 @@ const { errorPayload } = require('../lib/util/errors');
  * this node only builds — wire it into a mavlink-ai-out node to send.
  */
 module.exports = function registerMavlinkAiCommand(RED) {
-  // Each builder returns { command, params } where params maps param1..param7.
+  // Each builder returns a flat object: { command, param1..param7 } (only the
+  // params it sets). These are merged into the COMMAND_LONG fields.
   const COMMANDS = {
     arm: (p) => ({ command: 'MAV_CMD_COMPONENT_ARM_DISARM', param1: 1, param2: p.force ? 21196 : 0 }),
     disarm: (p) => ({ command: 'MAV_CMD_COMPONENT_ARM_DISARM', param1: 0, param2: p.force ? 21196 : 0 }),
@@ -60,17 +62,31 @@ module.exports = function registerMavlinkAiCommand(RED) {
         return done();
       }
 
-      const defaults = node.profile && node.profile.getDefaults ? node.profile.getDefaults() : {};
+      if (!node.profile) {
+        node.status({ fill: 'red', shape: 'ring', text: 'missing profile' });
+        msg.topic = 'mavlink/error';
+        msg.payload = errorPayload({
+          node: 'mavlink-ai-command',
+          code: 'MISSING_PROFILE',
+          message: 'Command node has no profile configured (deleted or disabled config node?).'
+        });
+        send(msg);
+        return done();
+      }
+
+      const defaults = node.profile.getDefaults ? node.profile.getDefaults() : {};
       const built = builder(incoming);
 
       const fields = Object.assign(
         { confirmation: 0, param1: 0, param2: 0, param3: 0, param4: 0, param5: 0, param6: 0, param7: 0 },
         built
       );
-      // Allow explicit param overrides from the incoming payload.
+      // Allow explicit param overrides from the incoming payload, but never
+      // clobber a param the builder set on purpose (e.g. arm/disarm param1),
+      // so an incoming override can't silently flip command semantics.
       for (let i = 1; i <= 7; i += 1) {
         const key = `param${i}`;
-        if (incoming[key] !== undefined) {
+        if (incoming[key] !== undefined && built[key] === undefined) {
           fields[key] = incoming[key];
         }
       }
@@ -92,18 +108,3 @@ module.exports = function registerMavlinkAiCommand(RED) {
 
   RED.nodes.registerType('mavlink-ai-command', MavlinkAiCommandNode);
 };
-
-/**
- * Return the first argument that is neither undefined nor null.
- *
- * @param {...*} values
- * @returns {*}
- */
-function firstDefined(...values) {
-  for (const v of values) {
-    if (v !== undefined && v !== null) {
-      return v;
-    }
-  }
-  return undefined;
-}

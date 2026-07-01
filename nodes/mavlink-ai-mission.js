@@ -3,7 +3,7 @@
 const { MissionDownload } = require('../lib/mission/mission-download');
 const { MissionUpload } = require('../lib/mission/mission-upload');
 const { missionTypeToNumber } = require('../lib/mission/mission-state-machine');
-const { toInt } = require('../lib/util/validation');
+const { toInt, firstDefined } = require('../lib/util/validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 
 /**
@@ -48,7 +48,20 @@ module.exports = function registerMavlinkAiMission(RED) {
       const targetComponent = firstDefined(payload.target_component, defaults.defaultTargetComponent, 1);
       const missionTypeName = payload.mission_type || defaults.defaultMissionType || 'mission';
       const bundle = profile && profile.getDialect ? profile.getDialect() : null;
-      const missionTypeNum = missionTypeToNumber(missionTypeName, bundle ? bundle.enums : null);
+      let missionTypeNum;
+      try {
+        missionTypeNum = missionTypeToNumber(missionTypeName, bundle ? bundle.enums : null);
+      } catch (err) {
+        const e = toMavlinkError(err, 'BAD_MISSION_TYPE');
+        node.status({ fill: 'red', shape: 'ring', text: e.code });
+        return finishError(node, send, done, errorPayload({
+          node: 'mavlink-ai-mission',
+          connection: node.connection.name,
+          code: e.code,
+          message: e.message,
+          context: e.context
+        }));
+      }
       const useInt = (defaults.preferredMissionItemType || 'MISSION_ITEM_INT') === 'MISSION_ITEM_INT';
 
       const lockKey = `mission:${node.connection.id}:${profile ? profile.id : 'default'}:${missionTypeNum}`;
@@ -148,19 +161,4 @@ async function clearMission(connection, targetSystem, targetComponent, missionTy
 function finishError(node, send, done, payload, rawErr) {
   send([null, null, { topic: 'mavlink/error', payload }]);
   done(rawErr);
-}
-
-/**
- * Return the first argument that is neither undefined nor null.
- *
- * @param {...*} values
- * @returns {*}
- */
-function firstDefined(...values) {
-  for (const v of values) {
-    if (v !== undefined && v !== null) {
-      return v;
-    }
-  }
-  return undefined;
 }

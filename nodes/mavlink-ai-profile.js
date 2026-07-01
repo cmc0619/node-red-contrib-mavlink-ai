@@ -58,10 +58,19 @@ module.exports = function registerMavlinkAiProfile(RED) {
       );
     }
 
+    /** @returns {boolean} whether the profile's dialect loaded successfully */
     node.isValid = () => node.bundle.valid;
+    /** @returns {?object} structured dialect-load error, or null */
     node.getError = () => node.bundle.error;
+    /** @returns {DialectBundle} the loaded dialect bundle */
     node.getDialect = () => node.bundle;
 
+    /**
+     * Profile defaults consumed by connection/flow nodes (targets, mission,
+     * identity, debug).
+     *
+     * @returns {object}
+     */
     node.getDefaults = () => ({
       profileType: node.profileType,
       firmware: node.firmware,
@@ -76,14 +85,23 @@ module.exports = function registerMavlinkAiProfile(RED) {
       debugProtocol: node.debugProtocol
     });
 
+    /**
+     * Protocol options used to construct a codec (version + source identity).
+     *
+     * @returns {{version: string, sysid: number, compid: number}}
+     */
     node.getProtocolOptions = () => ({
       version: node.mavlinkVersion,
       sysid: node.sourceSystemId,
       compid: node.sourceComponentId
     });
 
-    // Heartbeat identity values (§22). Identity is profile-owned; whether/how
-    // often to send is connection-owned.
+    /**
+     * Heartbeat identity fields (§22). Identity is profile-owned; whether/how
+     * often to send is connection-owned.
+     *
+     * @returns {object} HEARTBEAT field values
+     */
     node.getHeartbeatFields = () => ({
       type: node.heartbeatType || HEARTBEAT_TYPE_BY_PROFILE[node.profileType] || 'MAV_TYPE_GENERIC',
       autopilot: node.heartbeatAutopilot || 'MAV_AUTOPILOT_INVALID',
@@ -92,12 +110,34 @@ module.exports = function registerMavlinkAiProfile(RED) {
       system_status: 'MAV_STATE_ACTIVE'
     });
 
+    /**
+     * @param {string|number} nameOrId  message name or id
+     * @returns {?Function} the message class, or undefined
+     */
     node.getMessageDefinition = (nameOrId) => getMessageClass(node.bundle, nameOrId);
 
+    /**
+     * @param {string} name  enum export name (e.g. "MavCmd")
+     * @returns {?object} the enum object, or undefined
+     */
     node.getEnum = (name) => node.bundle.enums.enumsByName[name];
 
+    /**
+     * Resolve an enum-name string to its numeric value (pass-through otherwise).
+     *
+     * @param {*} value
+     * @returns {*}
+     */
     node.resolveEnumValue = (value) => enumResolver.resolveEnumValue(node.bundle.enums, value);
 
+    /**
+     * Normalize a fields object against a message definition (snake_case keys,
+     * enum names resolved).
+     *
+     * @param {string} messageName
+     * @param {object} fields
+     * @returns {object}
+     */
     node.normalizeFields = (messageName, fields) => {
       const clazz = getMessageClass(node.bundle, messageName);
       if (!clazz) {

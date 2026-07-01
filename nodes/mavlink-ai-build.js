@@ -3,7 +3,7 @@
 const { getMessageClass } = require('../lib/dialects/dialect-loader');
 const normalizer = require('../lib/protocol/message-normalizer');
 const { validate } = require('../lib/protocol/message-validator');
-const { toBool } = require('../lib/util/validation');
+const { toBool, firstDefined } = require('../lib/util/validation');
 const { errorPayload } = require('../lib/util/errors');
 
 /**
@@ -52,13 +52,18 @@ module.exports = function registerMavlinkAiBuild(RED) {
         return done();
       }
 
-      // Merge config fields with msg.payload fields (payload wins).
-      const payloadFields =
-        msg.payload && typeof msg.payload === 'object'
-          ? msg.payload.fields && typeof msg.payload.fields === 'object'
-            ? msg.payload.fields
-            : msg.payload
-          : {};
+      // Merge config fields with msg.payload fields (payload wins). When the
+      // payload is used directly as the field set, strip the reserved `name`/
+      // `fields` keys so they don't show up as spurious "unknown field" warnings.
+      let payloadFields = {};
+      if (msg.payload && typeof msg.payload === 'object') {
+        if (msg.payload.fields && typeof msg.payload.fields === 'object') {
+          payloadFields = msg.payload.fields;
+        } else {
+          const { name: _ignoredName, fields: _ignoredFields, ...rest } = msg.payload;
+          payloadFields = rest;
+        }
+      }
       const merged = Object.assign({}, configFields, payloadFields);
 
       const report = validate(bundle, name, merged);
@@ -75,8 +80,8 @@ module.exports = function registerMavlinkAiBuild(RED) {
         fields
       };
       if (node.applyDefaults) {
-        out.target_system = firstDefined(merged.target_system, defaults.defaultTargetSystem);
-        out.target_component = firstDefined(merged.target_component, defaults.defaultTargetComponent);
+        out.target_system = firstDefined(merged.target_system, defaults.defaultTargetSystem, 1);
+        out.target_component = firstDefined(merged.target_component, defaults.defaultTargetComponent, 1);
       }
 
       msg.topic = 'mavlink/send';
@@ -89,21 +94,6 @@ module.exports = function registerMavlinkAiBuild(RED) {
 
   RED.nodes.registerType('mavlink-ai-build', MavlinkAiBuildNode);
 };
-
-/**
- * Return the first argument that is neither undefined nor null.
- *
- * @param {...*} values
- * @returns {*}
- */
-function firstDefined(...values) {
-  for (const v of values) {
-    if (v !== undefined && v !== null) {
-      return v;
-    }
-  }
-  return undefined;
-}
 
 /**
  * Emit a structured `mavlink/error` message and set the node's error badge.
