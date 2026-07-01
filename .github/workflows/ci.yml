@@ -21,7 +21,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [18.x, 20.x, 22.x]
+        # Test the minimum supported Node version plus current/latest.
+        # Node 20 can be tested manually or re-added later if needed.
+        node-version: [18.x, 22.x]
     name: test (node ${{ matrix.node-version }})
     steps:
       - uses: actions/checkout@v4
