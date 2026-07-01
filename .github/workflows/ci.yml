@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Supersede in-progress runs for the same ref cleanly instead of leaving stale
+# jobs that end up "cancelled".
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
