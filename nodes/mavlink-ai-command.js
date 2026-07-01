@@ -49,6 +49,13 @@ module.exports = function registerMavlinkAiCommand(RED) {
       command: 'MAV_CMD_SET_MESSAGE_INTERVAL',
       param1: firstDefined(p.message_id, p.param1, 0),
       param2: firstDefined(p.interval_us, p.param2, 1000000)
+    }),
+    // Disable a stream: SET_MESSAGE_INTERVAL with interval -1 stops the message
+    // (0 would request the default rate, so we force -1 for a real stop).
+    stop_message_interval: (p) => ({
+      command: 'MAV_CMD_SET_MESSAGE_INTERVAL',
+      param1: firstDefined(p.message_id, p.param1, 0),
+      param2: -1
     })
   };
 

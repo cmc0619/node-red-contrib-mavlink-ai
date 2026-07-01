@@ -14,6 +14,8 @@ a file, or paste its contents.
 | `07-filter-global-position-int.json` | Filter GLOBAL_POSITION_INT from sysid 1, rate-limited to 5 Hz. |
 | `08-raw-packet-debug.json` | Decoded output plus raw packet buffers. |
 | `09-serial-connection.json` | Same idea over a serial transport. |
+| `10-param-read-write.json` | Read/set a single parameter and request the full list via the param node. |
+| `11-telemetry-stream-interval.json` | Start/stop an ATTITUDE stream with SET_MESSAGE_INTERVAL command presets. |
 
 All UDP examples assume a MAVLink source (SITL, a vehicle, or `mavlink-router`)
 sending to UDP `14550`. The shared config nodes (`AI Profile - Copter`,

@@ -55,6 +55,15 @@ test('raw MAV_CMD uses static config params (editor fields JSON)', async () => {
   assert.strictEqual(out.fields.param2, 1900);
 });
 
+test('stop_message_interval disables the stream (param2 = -1)', async () => {
+  const { RED, node } = setup({ command: 'stop_message_interval' });
+  const { collected } = await RED.inject(node, { payload: { message_id: 33 } });
+  const out = collected[0].payload;
+  assert.strictEqual(out.fields.command, 'MAV_CMD_SET_MESSAGE_INTERVAL');
+  assert.strictEqual(out.fields.param1, 33);
+  assert.strictEqual(out.fields.param2, -1);
+});
+
 test('unknown command yields a structured error', async () => {
   const { RED, node } = setup({ command: 'not_a_command' });
   const { collected } = await RED.inject(node, { payload: {} });

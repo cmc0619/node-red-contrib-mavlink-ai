@@ -59,8 +59,9 @@ mavlink-ai-in        subscribe to decoded messages from a connection
 mavlink-ai-out       send normalized messages or raw buffers
 mavlink-ai-build     build a normalized outbound message (no send)
 mavlink-ai-filter    filter decoded messages, with rate limiting
-mavlink-ai-command   build common commands (arm, mode, takeoff, ...)
+mavlink-ai-command   build common commands (arm, mode, takeoff, message interval, ...)
 mavlink-ai-mission   run mission download/upload/clear workflows
+mavlink-ai-param     read/set a parameter or request the full parameter list
 ```
 
 ## Quick start

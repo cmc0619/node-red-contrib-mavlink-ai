@@ -69,6 +69,7 @@ implemented in the v2 baseline.
 - [x] reboot autopilot
 - [x] request message
 - [x] set message interval
+- [x] stop message interval
 
 ## Phase 6: Mission protocol
 
@@ -106,6 +107,14 @@ implemented in the v2 baseline.
 - [x] flow exports
 - [ ] screenshots
 - [ ] npm publish readiness pass
+
+## Phase 10: Parameters & telemetry
+
+- [x] `mavlink-ai-param` (read / set / list workflows)
+- [x] param progress + timeout/retry + gap refill on lossy links
+- [x] param read/write example flow
+- [x] `stop message interval` command preset
+- [x] telemetry start/stop stream example flow
 
 ## Open 1.0 gaps (not yet implemented)
 

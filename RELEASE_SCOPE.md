@@ -100,6 +100,7 @@ mavlink-ai-build       visible: construct normalized messages
 mavlink-ai-filter      visible: filter/rate-limit messages
 mavlink-ai-command     visible: build common commands
 mavlink-ai-mission     visible: mission protocol workflow
+mavlink-ai-param       visible: parameter read/set/list workflow
 ```
 
 This is more node types, but not necessarily more nodes in a simple flow.
