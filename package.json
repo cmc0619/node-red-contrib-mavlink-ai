@@ -23,6 +23,9 @@
   "engines": {
     "node": ">=22"
   },
+  "peerDependencies": {
+    "node-red": ">=4.0.0"
+  },
   "dependencies": {
     "mavlink-mappings-gen": "^0.0.9",
     "node-mavlink": "^2.3.0",
