@@ -6,7 +6,19 @@
       profileType: { value: 'gcs', required: true },
       firmware: { value: 'generic', required: true },
       dialect: { value: 'ardupilotmega', required: true },
-      customDialectPath: { value: '' },
+      dialectSource: { value: 'bundled' },
+      customDialectPath: {
+        value: '',
+        // Require a path when the dialect source is a local/mounted XML file, so
+        // an empty path is caught in the editor instead of only at deploy time.
+        validate: function (v) {
+          const src = $('#node-config-input-dialectSource').val() || this.dialectSource;
+          if (src && src !== 'bundled') {
+            return !!(v && String(v).trim());
+          }
+          return true;
+        }
+      },
       mavlinkVersion: { value: 'auto', required: true },
       sourceSystemId: { value: 255, required: true, validate: RED.validators.number() },
       sourceComponentId: { value: 190, required: true, validate: RED.validators.number() },
@@ -20,6 +32,74 @@
     },
     label: function () {
       return this.name || 'MAVLink AI Profile';
+    },
+    oneditprepare: function () {
+      const node = this;
+      const $source = $('#node-config-input-dialectSource');
+      const $bundled = $('#mav-bundled-dialect');
+      const $dialect = $('#node-config-input-dialect'); // hidden, persisted value
+      const $path = $('#node-config-input-customDialectPath');
+      const FALLBACK = ['ardupilotmega', 'common', 'minimal'];
+
+      // Keep the persisted `dialect` in sync with the visible controls: a bundled
+      // source stores the chosen dialect name; a path source stores 'custom' and
+      // the loader compiles customDialectPath at runtime (#2).
+      // When the dropdown hasn't populated yet (the dialect list is fetched
+      // asynchronously), fall back to the node's saved dialect — never a
+      // hard-coded default, or a fast save would silently rewrite the dialect.
+      function bundledSelection() {
+        return (
+          $bundled.val() ||
+          (node.dialect && node.dialect !== 'custom' ? node.dialect : 'ardupilotmega')
+        );
+      }
+      function syncDialect() {
+        $dialect.val($source.val() === 'bundled' ? bundledSelection() : 'custom');
+      }
+      function toggleRows() {
+        const bundled = $source.val() === 'bundled';
+        $('.mav-dialect-bundled').toggle(bundled);
+        $('.mav-dialect-path').toggle(!bundled);
+        $path.attr(
+          'placeholder',
+          $source.val() === 'mounted' ? '/data/mavlink/dialects/custom.xml' : '/path/to/custom.xml'
+        );
+        syncDialect();
+      }
+
+      // Discover bundled dialects from the loader instead of a hard-coded list.
+      function populateBundled(list) {
+        $bundled.empty();
+        (list && list.length ? list : FALLBACK).forEach(function (d) {
+          $('<option></option>').val(d).text(d).appendTo($bundled);
+        });
+        const saved = node.dialect && node.dialect !== 'custom' ? node.dialect : 'ardupilotmega';
+        if ($bundled.find('option').filter(function () { return this.value === saved; }).length === 0) {
+          $('<option></option>').val(saved).text(saved).appendTo($bundled);
+        }
+        $bundled.val(saved);
+      }
+
+      // Restore the source; infer it for older configs saved before this field.
+      $source.val(node.dialectSource || (node.dialect === 'custom' ? 'local' : 'bundled'));
+
+      $.getJSON('mavlink-ai/dialects')
+        .done(function (data) { populateBundled(data && data.dialects); toggleRows(); })
+        .fail(function () { populateBundled(null); toggleRows(); });
+
+      $source.on('change', toggleRows);
+      $bundled.on('change', syncDialect);
+    },
+    oneditsave: function () {
+      // Re-derive the persisted dialect at save time so it is always correct
+      // regardless of change-event ordering. If the async dialect fetch hasn't
+      // populated the dropdown yet, keep the node's saved dialect instead of
+      // silently rewriting it to a default.
+      const source = $('#node-config-input-dialectSource').val();
+      const picked =
+        $('#mav-bundled-dialect').val() ||
+        (this.dialect && this.dialect !== 'custom' ? this.dialect : 'ardupilotmega');
+      $('#node-config-input-dialect').val(source === 'bundled' ? picked : 'custom');
     }
   });
 </script>
@@ -52,18 +132,22 @@
     </select>
   </div>
   <div class="form-row">
-    <label for="node-config-input-dialect">Dialect</label>
-    <select id="node-config-input-dialect">
-      <option value="ardupilotmega">ardupilotmega</option>
-      <option value="common">common</option>
-      <option value="minimal">minimal</option>
-      <option value="custom">custom</option>
+    <label for="node-config-input-dialectSource">Dialect source</label>
+    <select id="node-config-input-dialectSource">
+      <option value="bundled">Bundled</option>
+      <option value="local">Local path</option>
+      <option value="mounted">Custom path (mounted)</option>
     </select>
   </div>
-  <div class="form-row">
-    <label for="node-config-input-customDialectPath">Custom XML</label>
-    <input type="text" id="node-config-input-customDialectPath" placeholder="/data/mavlink/dialects/custom.xml">
+  <div class="form-row mav-dialect-bundled">
+    <label for="mav-bundled-dialect">Bundled dialect</label>
+    <select id="mav-bundled-dialect" style="width:60%;"></select>
   </div>
+  <div class="form-row mav-dialect-path">
+    <label for="node-config-input-customDialectPath">XML path</label>
+    <input type="text" id="node-config-input-customDialectPath" placeholder="/path/to/custom.xml">
+  </div>
+  <input type="hidden" id="node-config-input-dialect">
   <div class="form-row">
     <label for="node-config-input-mavlinkVersion">Version</label>
     <select id="node-config-input-mavlinkVersion">
@@ -120,4 +204,9 @@
 
 <script type="text/html" data-help-name="mavlink-ai-profile">
   <p>Shared MAVLink vehicle/protocol profile. This owns dialect, MAVLink identity defaults, and vehicle-type defaults. It does not own a transport.</p>
+  <h3>Dialect source</h3>
+  <ul>
+    <li><b>Bundled</b> — pick from the dialects the loader can serve (discovered dynamically, not hard-coded).</li>
+    <li><b>Local path</b> / <b>Custom path (mounted)</b> — point at a MAVLink XML dialect on disk (or a Docker-mounted path). Its <code>&lt;include&gt;</code> graph is resolved and the dialect is compiled at runtime. Invalid XML or a missing/circular include fails loudly (the profile marks itself invalid) rather than falling back.</li>
+  </ul>
 </script>

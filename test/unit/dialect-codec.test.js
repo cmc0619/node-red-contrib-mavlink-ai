@@ -19,8 +19,16 @@ test('unknown dialect fails loudly (no silent fallback)', () => {
   assert.strictEqual(b.error.code, 'DIALECT_LOAD_FAILED');
 });
 
-test('custom path that is not bundled fails loudly', () => {
+test('a nonexistent custom XML path fails loudly', () => {
+  // Custom XML is now compiled at runtime (#2); a missing file still fails
+  // loudly rather than falling back to a bundled dialect.
   const b = loadDialect('custom', { customDialectPath: '/data/mine.xml' });
+  assert.strictEqual(b.valid, false);
+  assert.strictEqual(b.error.code, 'DIALECT_XML_NOT_FOUND');
+});
+
+test('a custom value that is neither a bundled name nor an .xml path fails loudly', () => {
+  const b = loadDialect('custom', { customDialectPath: 'not-a-dialect' });
   assert.strictEqual(b.valid, false);
   assert.strictEqual(b.error.code, 'DIALECT_LOAD_FAILED');
 });

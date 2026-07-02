@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<mavlink>
+  <include>common.xml</include>
+  <include>minimal.xml</include>
+  <version>3</version>
+  <messages>
+    <message id="9400" name="CUSTOM_DIAMOND">
+      <description>Includes both common (which includes minimal) and minimal directly.</description>
+      <field type="uint8_t" name="value">A value.</field>
+    </message>
+  </messages>
+</mavlink>

@@ -116,21 +116,25 @@ implemented in the v2 baseline.
 - [x] `stop message interval` command preset
 - [x] telemetry start/stop stream example flow
 
+## Phase 11: Custom dialects
+
+- [x] **Dialect include-graph resolver** (RELEASE_SCOPE §1, issue #3).
+  `lib/dialects/xml-include-resolver.js` walks real `<include>` graphs
+  (dependency-first, dedup, cycle/missing detection); no forced `common`.
+- [x] **Custom local/Docker XML dialect loading** (RELEASE_SCOPE §7, issue #2).
+  `lib/dialects/xml-dialect-compiler.js` compiles an arbitrary local/mounted XML
+  dialect (and its includes) into a runtime bundle; `custom` + an `.xml` path now
+  compiles instead of failing. Loud failure preserved for invalid input.
+- [x] **Dynamic bundled-dialect discovery in the UI** (RELEASE_SCOPE §7,
+  issue #4). The profile editor discovers dialects from `/mavlink-ai/dialects`
+  and adds a `Dialect source` selector (bundled / local path / custom path).
+
 ## Open 1.0 gaps (not yet implemented)
 
 These are stated 1.0 requirements in `RELEASE_SCOPE.md` that the current
 baseline does **not** meet. They are tracked as GitHub issues, not just prose.
 
-- [ ] **Custom local/Docker XML dialect loading** (RELEASE_SCOPE §7, issue #2).
-  Today `custom` only resolves to a *bundled* dialect basename; an arbitrary
-  local or mounted XML path fails loudly and is **not** compiled at runtime. The
-  loud failure is intentional, but this is not "done".
-- [ ] **Dialect include-graph resolution** (RELEASE_SCOPE §1, issue #3). The
-  loader uses fixed include chains and assumes `common` for vehicle dialects.
-  `common` is typical but not mandatory; a real include-graph resolver is needed.
-- [ ] **Dynamic bundled-dialect discovery in the UI** (RELEASE_SCOPE §7,
-  issue #4). The loader supports ~10 dialects, but the editor dropdown still
-  lists only a hand-maintained subset.
+- _None currently tracked — the dialect gaps (#2/#3/#4) are implemented above._
 
 ## Development rule
 

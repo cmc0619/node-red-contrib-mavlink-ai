@@ -446,13 +446,46 @@ module.exports = function registerMavlinkAiConnection(RED) {
         return;
       }
 
-      node._decoder = node._codec.createDecoder(onPacket, (err) =>
-        node.emitter.emit('error', toMavlinkError(err, 'DECODE_ERROR'))
-      );
+      // The splitter validates CRC against a magic-number table before routing,
+      // so it must cover every routed profile's dialect — not just the default.
+      // Otherwise message ids defined only by a routed (e.g. custom XML) dialect
+      // are dropped silently inside the splitter. First profile wins on
+      // conflicting ids: the default dialect keeps canonical CRCs and routed
+      // custom dialects contribute only their new message ids (two dialects
+      // redefining the same id with different layouts cannot share a splitter).
+      // Built lazily on first data so route profiles registered after this
+      // connection during the same deploy still contribute their tables.
+      function buildMergedMagic() {
+        const merged = {};
+        for (const profile of node._router.profiles()) {
+          const bundle = profile && typeof profile.getDialect === 'function' ? profile.getDialect() : null;
+          if (!bundle || !bundle.valid) {
+            continue;
+          }
+          for (const [id, magic] of Object.entries(bundle.magicNumbers)) {
+            if (!(id in merged)) {
+              merged[id] = magic;
+            }
+          }
+        }
+        return merged;
+      }
+
+      /** Create the decoder on first use, with the merged CRC table. */
+      function ensureDecoder() {
+        if (!node._decoder) {
+          node._decoder = node._codec.createDecoder(
+            onPacket,
+            (err) => node.emitter.emit('error', toMavlinkError(err, 'DECODE_ERROR')),
+            { magicNumbers: buildMergedMagic() }
+          );
+        }
+        return node._decoder;
+      }
 
       node._transport.on('data', (buffer) => {
         try {
-          node._decoder.write(buffer);
+          ensureDecoder().write(buffer);
         } catch (err) {
           node.emitter.emit('error', toMavlinkError(err, 'DECODE_ERROR'));
         }

@@ -39,9 +39,15 @@
         savedParams = {};
       }
 
+      // Metadata query for the selected profile; a custom-XML profile forwards
+      // its path so the runtime-compiled dialect's metadata is served too.
       function currentDialect() {
         const p = RED.nodes.node($('#node-input-profile').val());
-        return (p && p.dialect) || 'ardupilotmega';
+        const query = { dialect: (p && p.dialect) || 'ardupilotmega' };
+        if (query.dialect === 'custom' && p && p.customDialectPath) {
+          query.customDialectPath = p.customDialectPath;
+        }
+        return query;
       }
 
       function isRaw(value) {
@@ -125,7 +131,7 @@
       let metadataRequestId = 0;
       function loadDialect() {
         const requestId = ++metadataRequestId;
-        $.getJSON('mavlink-ai/metadata', { dialect: currentDialect() })
+        $.getJSON('mavlink-ai/metadata', currentDialect())
           .done(function (data) {
             if (requestId !== metadataRequestId) {
               return; // a newer request superseded this response
