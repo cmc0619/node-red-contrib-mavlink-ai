@@ -33,9 +33,10 @@ implemented in the v2 baseline.
 - [x] decode wrapper
 - [x] message normalizer
 - [x] clear errors for unknown message/dialect failures
-- [ ] runtime XML loading of custom local/Docker dialect paths — see "Open 1.0 gaps"
-- [ ] dialect include-graph resolution (do not assume `common`) — see "Open 1.0 gaps"
-- [ ] dynamic bundled-dialect discovery in the editor UI — see "Open 1.0 gaps"
+- [x] runtime XML loading of custom local/Docker dialect paths
+- [x] dialect include-graph resolution (do not assume `common`)
+- [x] dynamic bundled-dialect discovery in the editor UI
+- [ ] MAVLink 2 signing capability / unsupported behavior documented and tested (#15)
 
 ## Phase 3: Connection layer
 
@@ -98,15 +99,15 @@ implemented in the v2 baseline.
 - [x] unit tests for codec/dialect/enum/subscription/lock/mission-type
 - [x] UDP loopback integration test
 - [x] serial-without-path / lazy-load behavior test
-- [ ] recorded heartbeat/mission fixtures (synthetic harness used today)
+- [ ] recorded heartbeat/mission fixtures (synthetic harness used today) (#12)
 
 ## Phase 9: Polish
 
 - [x] README install instructions
 - [x] README examples
 - [x] flow exports
-- [ ] screenshots
-- [ ] npm publish readiness pass
+- [ ] screenshots (#13)
+- [ ] npm publish readiness pass (#14)
 
 ## Phase 10: Parameters & telemetry
 
@@ -134,7 +135,18 @@ implemented in the v2 baseline.
 These are stated 1.0 requirements in `RELEASE_SCOPE.md` that the current
 baseline does **not** meet. They are tracked as GitHub issues, not just prose.
 
-- _None currently tracked — the dialect gaps (#2/#3/#4) are implemented above._
+- [ ] **MAVLink 2 signing capability / unsupported behavior** (#15). Confirm
+  what `node-mavlink` exposes, document the current support level, avoid UI
+  claims for unsupported behavior, and surface unsupported signing behavior
+  clearly where feasible.
+
+## Remaining release tasks
+
+These are practical release/readiness items, not architecture gaps.
+
+- [ ] recorded heartbeat/mission fixtures (#12)
+- [ ] screenshots (#13)
+- [ ] npm publish readiness pass (#14)
 
 ## Development rule
 
