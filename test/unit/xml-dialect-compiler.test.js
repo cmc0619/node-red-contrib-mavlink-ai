@@ -124,6 +124,14 @@ test('a plain Number is coerced to BigInt for uint64 fields (custom and bundled)
   assert.strictEqual(b.fields.time_unix_usec, 777n);
 });
 
+test('a numeric string for a uint64 field converts losslessly (no Number round-trip)', () => {
+  // uint64 max is not representable as a JS Number: a lossy Number() conversion
+  // would round it up to 2^64 and crash serialization out of range.
+  const bundle = loadDialect('custom', { customDialectPath: fixture('custom_hard_types.xml') });
+  const decoded = roundTrip(bundle, 'HARD_TYPES', { big: '18446744073709551615' });
+  assert.strictEqual(decoded.fields.big, 18446744073709551615n);
+});
+
 test('messages in a second <messages> section are not dropped', () => {
   const compiled = compileXmlDialect(fixture('custom_hard_types.xml'));
   const names = Object.values(compiled.module.REGISTRY).map((cl) => cl.MSG_NAME).sort();

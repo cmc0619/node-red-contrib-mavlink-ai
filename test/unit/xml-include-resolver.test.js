@@ -136,7 +136,14 @@ test('a symlink under the root pointing outside it is rejected', () => {
     fs.mkdirSync(path.join(base, 'outside'));
     fs.writeFileSync(path.join(base, 'outside', 'real.xml'), '<mavlink></mavlink>');
     // A symlink that lexically lives inside the dialect dir but resolves out.
-    fs.symlinkSync(path.join(base, 'outside', 'real.xml'), path.join(base, 'dialect', 'base.xml'));
+    try {
+      fs.symlinkSync(path.join(base, 'outside', 'real.xml'), path.join(base, 'dialect', 'base.xml'));
+    } catch (e) {
+      if (e.code === 'EPERM') {
+        return; // no symlink privilege on this platform (e.g. Windows without Developer Mode)
+      }
+      throw e;
+    }
     const root = path.join(base, 'dialect', 'root.xml');
     fs.writeFileSync(root, '<mavlink><include>base.xml</include></mavlink>');
     assert.throws(
