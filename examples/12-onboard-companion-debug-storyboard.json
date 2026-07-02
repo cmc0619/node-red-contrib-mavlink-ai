@@ -2,29 +2,112 @@
   {
     "id": "flow12",
     "type": "tab",
-    "label": "MAVLink AI - 12 Onboard Companion Debug Storyboard",
+    "label": "MAVLink AI - 12 Onboard Companion Debug Preview",
     "disabled": false,
-    "info": "Debug-only storyboard for an onboard companion computer running Node-RED on a Raspberry Pi. This flow does not include a MAVLink connection and does not send messages to a vehicle. It emits the planned routine to Debug only."
+    "info": "Debug-only companion-computer preview for Node-RED running onboard a Raspberry Pi. There is no MAVLink connection node and no mavlink-ai-out node. Command/build nodes emit normalized mavlink/send payloads to Debug only."
+  },
+  {
+    "id": "ai_profile_onboard_preview",
+    "type": "mavlink-ai-profile",
+    "name": "AI Profile - Onboard Preview",
+    "profileType": "gcs",
+    "dialectSource": "bundled",
+    "dialect": "ardupilotmega",
+    "customDialectPath": "",
+    "mavlinkVersion": "auto",
+    "sourceSystemId": 191,
+    "sourceComponentId": 191,
+    "defaultTargetSystem": 1,
+    "defaultTargetComponent": 1,
+    "preferredMissionItemType": "MISSION_ITEM_INT",
+    "defaultMissionType": "mission",
+    "heartbeatType": "MAV_TYPE_ONBOARD_CONTROLLER",
+    "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
+    "firmware": "ardupilot",
+    "vehicleType": "copter",
+    "debugProtocol": false
   },
   {
     "id": "n12_note",
     "type": "comment",
     "z": "flow12",
-    "name": "Debug-only onboard companion routine",
-    "info": "Assumes Node-RED is running onboard a Raspberry Pi or similar companion computer. This is a storyboard only: no mavlink-ai-connection node, no mavlink-ai-out node, no aircraft control output. The routine shown is: takeoff, circle, barrel roll, 360, tilt left/right/front/back, return, land.",
-    "x": 250,
+    "name": "Debug-only: no vehicle output",
+    "info": "This example uses mavlink-ai-command and mavlink-ai-build, but wires them only to Debug. It shows the payloads that would be sent if connected to mavlink-ai-out. No mavlink-ai-connection or mavlink-ai-out node is present.",
+    "x": 260,
     "y": 40,
     "wires": []
   },
   {
-    "id": "n12_start",
+    "id": "n12_cmd_debug",
+    "type": "debug",
+    "z": "flow12",
+    "name": "COMMAND_LONG previews",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 690,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "n12_att_debug",
+    "type": "debug",
+    "z": "flow12",
+    "name": "SET_ATTITUDE_TARGET previews",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 720,
+    "y": 420,
+    "wires": []
+  },
+  {
+    "id": "n12_command",
+    "type": "mavlink-ai-command",
+    "z": "flow12",
+    "name": "Build command preview",
+    "profile": "ai_profile_onboard_preview",
+    "command": "arm",
+    "fields": "",
+    "x": 450,
+    "y": 160,
+    "wires": [
+      [
+        "n12_cmd_debug"
+      ]
+    ]
+  },
+  {
+    "id": "n12_build_att",
+    "type": "mavlink-ai-build",
+    "z": "flow12",
+    "name": "Build attitude preview",
+    "profile": "ai_profile_onboard_preview",
+    "messageName": "SET_ATTITUDE_TARGET",
+    "fields": "",
+    "applyDefaults": true,
+    "x": 460,
+    "y": 420,
+    "wires": [
+      [
+        "n12_att_debug"
+      ]
+    ]
+  },
+  {
+    "id": "n12_guided",
     "type": "inject",
     "z": "flow12",
-    "name": "Emit routine storyboard",
+    "name": "Preview: set GUIDED",
     "props": [
       {
+        "p": "command",
+        "v": "MAV_CMD_DO_SET_MODE",
+        "vt": "str"
+      },
+      {
         "p": "payload",
-        "v": "{\"takeoff_alt_m\":20,\"circle_radius_m\":25}",
+        "v": "{\"param1\": 1, \"param2\": 4}",
         "vt": "json"
       }
     ],
@@ -32,43 +115,358 @@
     "once": false,
     "payloadType": "json",
     "x": 170,
-    "y": 120,
+    "y": 100,
     "wires": [
       [
-        "n12_storyboard"
+        "n12_command"
       ]
     ]
   },
   {
-    "id": "n12_storyboard",
-    "type": "function",
+    "id": "n12_arm",
+    "type": "inject",
     "z": "flow12",
-    "name": "Build debug-only routine",
-    "func": "const altitude = Number(msg.payload?.takeoff_alt_m || 20);\nconst radius = Number(msg.payload?.circle_radius_m || 25);\n\nmsg.topic = \"mavlink-ai/example/onboard-companion-storyboard\";\nmsg.payload = {\n    dry_run: true,\n    sends_mavlink: false,\n    onboard_device: \"Raspberry Pi / companion computer\",\n    note: \"Debug-only storyboard. This flow does not contain a MAVLink output node.\",\n    routine: [\n        { order: 1, phase: \"takeoff\", description: `take off to ${altitude} m` },\n        { order: 2, phase: \"circle\", description: `fly one circle at roughly ${radius} m radius` },\n        { order: 3, phase: \"barrel_roll\", description: \"barrel roll phase marker\" },\n        { order: 4, phase: \"yaw_360\", description: \"perform a 360 turn/spin marker\" },\n        { order: 5, phase: \"tilt_left\", description: \"tilt left marker\" },\n        { order: 6, phase: \"tilt_right\", description: \"tilt right marker\" },\n        { order: 7, phase: \"tilt_front\", description: \"tilt front marker\" },\n        { order: 8, phase: \"tilt_back\", description: \"tilt back marker\" },\n        { order: 9, phase: \"return\", description: \"return to launch/home marker\" },\n        { order: 10, phase: \"land\", description: \"land marker\" }\n    ]\n};\n\nnode.status({ fill: \"blue\", shape: \"dot\", text: \"storyboard emitted\" });\nreturn msg;",
-    "outputs": 1,
-    "timeout": 0,
-    "noerr": 0,
-    "initialize": "",
-    "finalize": "",
-    "libs": [],
-    "x": 410,
-    "y": 120,
+    "name": "Preview: arm",
+    "props": [
+      {
+        "p": "command",
+        "v": "arm",
+        "vt": "str"
+      },
+      {
+        "p": "payload",
+        "v": "{}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 170,
+    "y": 140,
     "wires": [
       [
-        "n12_debug"
+        "n12_command"
       ]
     ]
   },
   {
-    "id": "n12_debug",
-    "type": "debug",
+    "id": "n12_takeoff",
+    "type": "inject",
     "z": "flow12",
-    "name": "routine storyboard",
-    "active": true,
-    "complete": "payload",
-    "targetType": "msg",
-    "x": 650,
-    "y": 120,
-    "wires": []
+    "name": "Preview: takeoff",
+    "props": [
+      {
+        "p": "command",
+        "v": "takeoff",
+        "vt": "str"
+      },
+      {
+        "p": "payload",
+        "v": "{\"altitude\": 20}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 170,
+    "y": 180,
+    "wires": [
+      [
+        "n12_command"
+      ]
+    ]
+  },
+  {
+    "id": "n12_circle",
+    "type": "inject",
+    "z": "flow12",
+    "name": "Preview: circle once",
+    "props": [
+      {
+        "p": "command",
+        "v": "MAV_CMD_NAV_LOITER_TURNS",
+        "vt": "str"
+      },
+      {
+        "p": "payload",
+        "v": "{\"param1\": 1, \"param3\": 25, \"param7\": 20}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 170,
+    "y": 220,
+    "wires": [
+      [
+        "n12_command"
+      ]
+    ]
+  },
+  {
+    "id": "n12_rtl",
+    "type": "inject",
+    "z": "flow12",
+    "name": "Preview: return",
+    "props": [
+      {
+        "p": "command",
+        "v": "rtl",
+        "vt": "str"
+      },
+      {
+        "p": "payload",
+        "v": "{}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 170,
+    "y": 260,
+    "wires": [
+      [
+        "n12_command"
+      ]
+    ]
+  },
+  {
+    "id": "n12_land",
+    "type": "inject",
+    "z": "flow12",
+    "name": "Preview: land",
+    "props": [
+      {
+        "p": "command",
+        "v": "land",
+        "vt": "str"
+      },
+      {
+        "p": "payload",
+        "v": "{}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 170,
+    "y": 300,
+    "wires": [
+      [
+        "n12_command"
+      ]
+    ]
+  },
+  {
+    "id": "n12_roll90",
+    "type": "inject",
+    "z": "flow12",
+    "name": "Preview: barrel roll 90",
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"time_boot_ms\": 0, \"target_system\": 1, \"target_component\": 1, \"type_mask\": 7, \"q\": [0.707107, 0.707107, 0, 0], \"body_roll_rate\": 0, \"body_pitch_rate\": 0, \"body_yaw_rate\": 0, \"thrust\": 0.58}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 180,
+    "y": 360,
+    "wires": [
+      [
+        "n12_build_att"
+      ]
+    ]
+  },
+  {
+    "id": "n12_roll180",
+    "type": "inject",
+    "z": "flow12",
+    "name": "Preview: barrel roll 180",
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"time_boot_ms\": 0, \"target_system\": 1, \"target_component\": 1, \"type_mask\": 7, \"q\": [0, 1, 0, 0], \"body_roll_rate\": 0, \"body_pitch_rate\": 0, \"body_yaw_rate\": 0, \"thrust\": 0.58}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 180,
+    "y": 400,
+    "wires": [
+      [
+        "n12_build_att"
+      ]
+    ]
+  },
+  {
+    "id": "n12_roll270",
+    "type": "inject",
+    "z": "flow12",
+    "name": "Preview: barrel roll 270",
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"time_boot_ms\": 0, \"target_system\": 1, \"target_component\": 1, \"type_mask\": 7, \"q\": [-0.707107, 0.707107, 0, 0], \"body_roll_rate\": 0, \"body_pitch_rate\": 0, \"body_yaw_rate\": 0, \"thrust\": 0.58}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 180,
+    "y": 440,
+    "wires": [
+      [
+        "n12_build_att"
+      ]
+    ]
+  },
+  {
+    "id": "n12_yaw360",
+    "type": "inject",
+    "z": "flow12",
+    "name": "Preview: 360 yaw midpoint",
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"time_boot_ms\": 0, \"target_system\": 1, \"target_component\": 1, \"type_mask\": 7, \"q\": [0, 0, 0, 1], \"body_roll_rate\": 0, \"body_pitch_rate\": 0, \"body_yaw_rate\": 0, \"thrust\": 0.55}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 190,
+    "y": 480,
+    "wires": [
+      [
+        "n12_build_att"
+      ]
+    ]
+  },
+  {
+    "id": "n12_left",
+    "type": "inject",
+    "z": "flow12",
+    "name": "Preview: tilt left",
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"time_boot_ms\": 0, \"target_system\": 1, \"target_component\": 1, \"type_mask\": 7, \"q\": [0.991445, -0.130526, 0, 0], \"body_roll_rate\": 0, \"body_pitch_rate\": 0, \"body_yaw_rate\": 0, \"thrust\": 0.55}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 170,
+    "y": 520,
+    "wires": [
+      [
+        "n12_build_att"
+      ]
+    ]
+  },
+  {
+    "id": "n12_right",
+    "type": "inject",
+    "z": "flow12",
+    "name": "Preview: tilt right",
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"time_boot_ms\": 0, \"target_system\": 1, \"target_component\": 1, \"type_mask\": 7, \"q\": [0.991445, 0.130526, 0, 0], \"body_roll_rate\": 0, \"body_pitch_rate\": 0, \"body_yaw_rate\": 0, \"thrust\": 0.55}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 170,
+    "y": 560,
+    "wires": [
+      [
+        "n12_build_att"
+      ]
+    ]
+  },
+  {
+    "id": "n12_front",
+    "type": "inject",
+    "z": "flow12",
+    "name": "Preview: tilt front",
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"time_boot_ms\": 0, \"target_system\": 1, \"target_component\": 1, \"type_mask\": 7, \"q\": [0.991445, 0, 0.130526, 0], \"body_roll_rate\": 0, \"body_pitch_rate\": 0, \"body_yaw_rate\": 0, \"thrust\": 0.55}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 170,
+    "y": 600,
+    "wires": [
+      [
+        "n12_build_att"
+      ]
+    ]
+  },
+  {
+    "id": "n12_back",
+    "type": "inject",
+    "z": "flow12",
+    "name": "Preview: tilt back",
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"time_boot_ms\": 0, \"target_system\": 1, \"target_component\": 1, \"type_mask\": 7, \"q\": [0.991445, 0, -0.130526, 0], \"body_roll_rate\": 0, \"body_pitch_rate\": 0, \"body_yaw_rate\": 0, \"thrust\": 0.55}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 170,
+    "y": 640,
+    "wires": [
+      [
+        "n12_build_att"
+      ]
+    ]
+  },
+  {
+    "id": "n12_level",
+    "type": "inject",
+    "z": "flow12",
+    "name": "Preview: recover level",
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"time_boot_ms\": 0, \"target_system\": 1, \"target_component\": 1, \"type_mask\": 7, \"q\": [1, 0, 0, 0], \"body_roll_rate\": 0, \"body_pitch_rate\": 0, \"body_yaw_rate\": 0, \"thrust\": 0.55}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 180,
+    "y": 680,
+    "wires": [
+      [
+        "n12_build_att"
+      ]
+    ]
   }
 ]
