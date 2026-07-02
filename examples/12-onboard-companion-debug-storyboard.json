@@ -1,0 +1,74 @@
+[
+  {
+    "id": "flow12",
+    "type": "tab",
+    "label": "MAVLink AI - 12 Onboard Companion Debug Storyboard",
+    "disabled": false,
+    "info": "Debug-only storyboard for an onboard companion computer running Node-RED on a Raspberry Pi. This flow does not include a MAVLink connection and does not send messages to a vehicle. It emits the planned routine to Debug only."
+  },
+  {
+    "id": "n12_note",
+    "type": "comment",
+    "z": "flow12",
+    "name": "Debug-only onboard companion routine",
+    "info": "Assumes Node-RED is running onboard a Raspberry Pi or similar companion computer. This is a storyboard only: no mavlink-ai-connection node, no mavlink-ai-out node, no aircraft control output. The routine shown is: takeoff, circle, barrel roll, 360, tilt left/right/front/back, return, land.",
+    "x": 250,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "n12_start",
+    "type": "inject",
+    "z": "flow12",
+    "name": "Emit routine storyboard",
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"takeoff_alt_m\":20,\"circle_radius_m\":25}",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payloadType": "json",
+    "x": 170,
+    "y": 120,
+    "wires": [
+      [
+        "n12_storyboard"
+      ]
+    ]
+  },
+  {
+    "id": "n12_storyboard",
+    "type": "function",
+    "z": "flow12",
+    "name": "Build debug-only routine",
+    "func": "const altitude = Number(msg.payload?.takeoff_alt_m || 20);\nconst radius = Number(msg.payload?.circle_radius_m || 25);\n\nmsg.topic = \"mavlink-ai/example/onboard-companion-storyboard\";\nmsg.payload = {\n    dry_run: true,\n    sends_mavlink: false,\n    onboard_device: \"Raspberry Pi / companion computer\",\n    note: \"Debug-only storyboard. This flow does not contain a MAVLink output node.\",\n    routine: [\n        { order: 1, phase: \"takeoff\", description: `take off to ${altitude} m` },\n        { order: 2, phase: \"circle\", description: `fly one circle at roughly ${radius} m radius` },\n        { order: 3, phase: \"barrel_roll\", description: \"barrel roll phase marker\" },\n        { order: 4, phase: \"yaw_360\", description: \"perform a 360 turn/spin marker\" },\n        { order: 5, phase: \"tilt_left\", description: \"tilt left marker\" },\n        { order: 6, phase: \"tilt_right\", description: \"tilt right marker\" },\n        { order: 7, phase: \"tilt_front\", description: \"tilt front marker\" },\n        { order: 8, phase: \"tilt_back\", description: \"tilt back marker\" },\n        { order: 9, phase: \"return\", description: \"return to launch/home marker\" },\n        { order: 10, phase: \"land\", description: \"land marker\" }\n    ]\n};\n\nnode.status({ fill: \"blue\", shape: \"dot\", text: \"storyboard emitted\" });\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 410,
+    "y": 120,
+    "wires": [
+      [
+        "n12_debug"
+      ]
+    ]
+  },
+  {
+    "id": "n12_debug",
+    "type": "debug",
+    "z": "flow12",
+    "name": "routine storyboard",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 650,
+    "y": 120,
+    "wires": []
+  }
+]
