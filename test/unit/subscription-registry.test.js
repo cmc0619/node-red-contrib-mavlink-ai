@@ -39,6 +39,31 @@ test('rate limit drops bursts', () => {
   assert.strictEqual(count, 1);
 });
 
+test('rate limit is applied per message/sysid/compid, not per subscription (#30)', () => {
+  const reg = new SubscriptionRegistry();
+  const got = [];
+  // One subscription matching two message types: a burst of the fast one must
+  // not consume the delivery window of the slow one.
+  reg.subscribe({ messageNames: ['HEARTBEAT', 'ATTITUDE'], rateLimitHz: 2 }, (m) => got.push(m.payload.name));
+  reg.dispatch(msg('ATTITUDE'));
+  reg.dispatch(msg('ATTITUDE'));
+  reg.dispatch(msg('HEARTBEAT'));
+  reg.dispatch(msg('HEARTBEAT'));
+  // Different sysid gets its own window too.
+  reg.dispatch(msg('ATTITUDE', 2));
+  assert.deepStrictEqual(got, ['ATTITUDE', 'HEARTBEAT', 'ATTITUDE']);
+});
+
+test('fractional rate limits are honored (#29)', () => {
+  const reg = new SubscriptionRegistry();
+  let count = 0;
+  // 0.5 Hz => a 2s window; an immediate burst delivers only the first.
+  reg.subscribe({ rateLimitHz: 0.5 }, () => (count += 1));
+  reg.dispatch(msg('ATTITUDE'));
+  reg.dispatch(msg('ATTITUDE'));
+  assert.strictEqual(count, 1);
+});
+
 test('changedOnly suppresses identical payloads', () => {
   const reg = new SubscriptionRegistry();
   let count = 0;
