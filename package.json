@@ -7,9 +7,7 @@
     "mavlink",
     "ardupilot",
     "drone",
-    "robotics",
-    "udp",
-    "serial"
+    "robotics"
   ],
   "license": "MIT",
   "repository": {
