@@ -77,6 +77,8 @@ module.exports = function registerMavlinkAiParam(RED) {
         targetSystem,
         targetComponent,
         enums: bundle ? bundle.enums : null,
+        // 'px4' switches integer param values to the byte-union convention.
+        firmware: defaults.firmware,
         timeoutMs: node.timeoutMs,
         maxRetries: node.maxRetries,
         onProgress
