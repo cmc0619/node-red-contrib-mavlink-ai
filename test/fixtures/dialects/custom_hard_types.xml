@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<mavlink>
+  <!-- A commented-out include must be ignored, not resolved:
+       <include>does_not_exist.xml</include> -->
+  <version>3</version>
+  <enums>
+    <enum name="HARD_MODE">
+      <entry value="0" name="HARD_MODE_OFF">
+        <description>Off.</description>
+      </entry>
+    </enum>
+  </enums>
+  <messages>
+    <message id="9600" name="HARD_TYPES">
+      <description>64-bit, string, and array fields.</description>
+      <field type="uint64_t" name="big">A 64-bit value.</field>
+      <field type="char[10]" name="label">A string.</field>
+      <field type="uint16_t[4]" name="arr">An array.</field>
+      <field type="uint8_t" name="small">A small value.</field>
+    </message>
+  </messages>
+  <messages>
+    <message id="9601" name="SECOND_SECTION">
+      <description>Defined in a second messages section; must not be dropped.</description>
+      <field type="uint8_t" name="v">A value.</field>
+    </message>
+  </messages>
+</mavlink>

@@ -67,6 +67,19 @@ test('metadata endpoint reports invalid dialect without throwing', async () => {
   assert.strictEqual(body.ok, false);
 });
 
+test('metadata endpoint serves a custom-XML dialect via customDialectPath', async () => {
+  const path = require('path');
+  const customDialectPath = path.join(__dirname, '..', 'fixtures', 'dialects', 'custom_vehicle.xml');
+  const { body } = await invoke(routes['/mavlink-ai/metadata'], { dialect: 'custom', customDialectPath });
+  assert.strictEqual(body.ok, true);
+  // Messages come from the compiled registry (base + custom).
+  assert.ok(body.messages.HEARTBEAT);
+  assert.ok(body.messages.CUSTOM_VEHICLE_STATUS);
+  // Without the path, 'custom' alone is (correctly) not resolvable.
+  const bare = await invoke(routes['/mavlink-ai/metadata'], { dialect: 'custom' });
+  assert.strictEqual(bare.body.ok, false);
+});
+
 test('dialects endpoint lists all loader dialects (dynamic discovery, #4)', async () => {
   const { knownDialects } = require('../../lib/dialects/dialect-loader');
   const { body } = await invoke(routes['/mavlink-ai/dialects']);

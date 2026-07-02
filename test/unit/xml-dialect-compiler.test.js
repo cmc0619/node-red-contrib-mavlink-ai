@@ -102,3 +102,30 @@ test('a bare custom basename still resolves to a bundled dialect', () => {
   assert.strictEqual(bundle.valid, true);
   assert.strictEqual(bundle.name, 'common');
 });
+
+test('omitted string/array/64-bit fields zero-fill like generated classes', () => {
+  const bundle = loadDialect('custom', { customDialectPath: fixture('custom_hard_types.xml') });
+  const decoded = roundTrip(bundle, 'HARD_TYPES', {});
+  assert.strictEqual(decoded.fields.big, 0n);
+  assert.strictEqual(decoded.fields.label, '');
+  assert.deepStrictEqual(decoded.fields.arr, [0, 0, 0, 0]);
+  assert.strictEqual(decoded.fields.small, 0);
+});
+
+test('a plain Number is coerced to BigInt for uint64 fields (custom and bundled)', () => {
+  // Flow payloads come from JSON, which has no BigInt; a Number must not throw.
+  const custom = loadDialect('custom', { customDialectPath: fixture('custom_hard_types.xml') });
+  const c = roundTrip(custom, 'HARD_TYPES', { big: 12345, label: 'hi', arr: [1, 2], small: 9 });
+  assert.strictEqual(c.fields.big, 12345n);
+  assert.deepStrictEqual(c.fields.arr, [1, 2, 0, 0]); // short array pads
+
+  const bundled = loadDialect('common');
+  const b = roundTrip(bundled, 'SYSTEM_TIME', { time_unix_usec: 777, time_boot_ms: 1 });
+  assert.strictEqual(b.fields.time_unix_usec, 777n);
+});
+
+test('messages in a second <messages> section are not dropped', () => {
+  const compiled = compileXmlDialect(fixture('custom_hard_types.xml'));
+  const names = Object.values(compiled.module.REGISTRY).map((cl) => cl.MSG_NAME).sort();
+  assert.deepStrictEqual(names, ['HARD_TYPES', 'SECOND_SECTION']);
+});

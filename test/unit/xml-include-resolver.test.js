@@ -120,6 +120,13 @@ test('an include resolving outside the root dir is rejected (allowOutsideRoot=fa
   }
 });
 
+test('an <include> inside an XML comment is ignored', () => {
+  // custom_hard_types.xml carries a commented-out include of a missing file; if
+  // comments were scanned it would throw DIALECT_INCLUDE_NOT_FOUND.
+  const graph = resolveXmlIncludeGraph(fixture('custom_hard_types.xml'));
+  assert.deepStrictEqual(names(graph), ['custom_hard_types.xml']);
+});
+
 test('a symlink under the root pointing outside it is rejected', () => {
   const os = require('os');
   const fs = require('fs');

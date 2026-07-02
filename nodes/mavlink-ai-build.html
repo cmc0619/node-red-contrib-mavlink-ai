@@ -31,10 +31,16 @@
         savedFields = {};
       }
 
-      // Resolve the dialect from the selected profile config node.
+      // Resolve the metadata query from the selected profile config node. A
+      // custom-XML profile forwards its path so the runtime-compiled dialect's
+      // metadata can be served too.
       function currentDialect() {
         const p = RED.nodes.node($('#node-input-profile').val());
-        return (p && p.dialect) || 'ardupilotmega';
+        const query = { dialect: (p && p.dialect) || 'ardupilotmega' };
+        if (query.dialect === 'custom' && p && p.customDialectPath) {
+          query.customDialectPath = p.customDialectPath;
+        }
+        return query;
       }
 
       function isNumericType(type) {
@@ -116,10 +122,10 @@
       }
 
       let metadataRequestId = 0;
-      function loadDialect(dialect, selectName, prefill) {
-        $status.text('Loading ' + dialect + ' definitions...');
+      function loadDialect(query, selectName, prefill) {
+        $status.text('Loading ' + query.dialect + ' definitions...');
         const requestId = ++metadataRequestId;
-        $.getJSON('mavlink-ai/metadata', { dialect: dialect })
+        $.getJSON('mavlink-ai/metadata', query)
           .done(function (data) {
             if (requestId !== metadataRequestId) {
               return; // a newer request superseded this response

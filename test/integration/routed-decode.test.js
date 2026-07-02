@@ -3,10 +3,13 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const dgram = require('dgram');
+const path = require('path');
 
 const { MockRED } = require('../helpers/mock-red');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
+
+const CUSTOM_XML = path.join(__dirname, '..', 'fixtures', 'dialects', 'custom_vehicle.xml');
 
 /**
  * Routed connections must decode each packet with the *matched profile's*
@@ -33,13 +36,22 @@ test('routed connection decodes with the matched profile dialect', async (t) => 
     id: 'p_min2', name: 'Min2', profileType: 'gcs', dialect: 'minimal', mavlinkVersion: 'v2',
     sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
   });
+  // A runtime-compiled custom-XML profile. Its message ids exist in no bundled
+  // dialect, so this exercises the merged splitter CRC table: without it the
+  // packet would be dropped silently before routing.
+  RED.create('mavlink-ai-profile', {
+    id: 'p_custom', name: 'Custom', profileType: 'gcs', dialect: 'custom',
+    customDialectPath: CUSTOM_XML, mavlinkVersion: 'v2',
+    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
 
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c_routed', name: 'Routed UDP', profile: 'p_min',
     transport: 'udp-peer', routingMode: 'routed', unmatchedPolicy: 'default',
     routeTable: JSON.stringify([
       { sysid: 1, compid: '*', profile: 'p_ardu' },
-      { sysid: 2, compid: '*', profile: 'p_min2' }
+      { sysid: 2, compid: '*', profile: 'p_min2' },
+      { sysid: 3, compid: '*', profile: 'p_custom' }
     ]),
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
@@ -102,4 +114,20 @@ test('routed connection decodes with the matched profile dialect', async (t) => 
   // The matched route's profile (Min2), not the default (Min), is attached.
   assert.strictEqual(decodeError.payload.context.profile, 'Min2');
   assert.ok(decodeError.payload.context.raw.length > 0);
+
+  // Case 3: a custom-XML dialect's message id (9100) from sysid 3. The default
+  // profile's bundled CRC table has no entry for 9100, so this only works if
+  // the connection's splitter uses the merged table across all routed profiles.
+  const customBundle = loadDialect('custom', { customDialectPath: CUSTOM_XML });
+  const fromSys3 = new MavlinkCodec({ bundle: customBundle, version: 'v2', sysid: 3, compid: 1 });
+  const custom = await until(
+    'message',
+    (done) => conn.subscribe({ messageNames: ['CUSTOM_VEHICLE_STATUS'] }, done),
+    () => sock.send(fromSys3.encode('CUSTOM_VEHICLE_STATUS', { mode: 7 }), port, '127.0.0.1'),
+    'custom dialect decode'
+  );
+  assert.strictEqual(custom.payload.name, 'CUSTOM_VEHICLE_STATUS');
+  assert.strictEqual(custom.payload.sysid, 3);
+  assert.strictEqual(custom.payload.profile, 'Custom');
+  assert.strictEqual(custom.payload.fields.mode, 7);
 });

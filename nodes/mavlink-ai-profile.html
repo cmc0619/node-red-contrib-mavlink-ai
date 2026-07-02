@@ -44,8 +44,17 @@
       // Keep the persisted `dialect` in sync with the visible controls: a bundled
       // source stores the chosen dialect name; a path source stores 'custom' and
       // the loader compiles customDialectPath at runtime (#2).
+      // When the dropdown hasn't populated yet (the dialect list is fetched
+      // asynchronously), fall back to the node's saved dialect — never a
+      // hard-coded default, or a fast save would silently rewrite the dialect.
+      function bundledSelection() {
+        return (
+          $bundled.val() ||
+          (node.dialect && node.dialect !== 'custom' ? node.dialect : 'ardupilotmega')
+        );
+      }
       function syncDialect() {
-        $dialect.val($source.val() === 'bundled' ? $bundled.val() || 'ardupilotmega' : 'custom');
+        $dialect.val($source.val() === 'bundled' ? bundledSelection() : 'custom');
       }
       function toggleRows() {
         const bundled = $source.val() === 'bundled';
@@ -83,11 +92,14 @@
     },
     oneditsave: function () {
       // Re-derive the persisted dialect at save time so it is always correct
-      // regardless of change-event ordering.
+      // regardless of change-event ordering. If the async dialect fetch hasn't
+      // populated the dropdown yet, keep the node's saved dialect instead of
+      // silently rewriting it to a default.
       const source = $('#node-config-input-dialectSource').val();
-      $('#node-config-input-dialect').val(
-        source === 'bundled' ? $('#mav-bundled-dialect').val() || 'ardupilotmega' : 'custom'
-      );
+      const picked =
+        $('#mav-bundled-dialect').val() ||
+        (this.dialect && this.dialect !== 'custom' ? this.dialect : 'ardupilotmega');
+      $('#node-config-input-dialect').val(source === 'bundled' ? picked : 'custom');
     }
   });
 </script>
