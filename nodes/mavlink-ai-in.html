@@ -13,6 +13,7 @@
       rateLimitHz: { value: 0 },
       changedOnly: { value: false },
       outputRaw: { value: false },
+      outputErrors: { value: false },
       outputs: { value: 1 }
     },
     inputs: 0,
@@ -22,14 +23,16 @@
       return this.name || 'mavlink ai in';
     },
     oneditprepare: function () {
-      const node = this;
       function syncOutputs() {
-        $('#node-input-outputs').val($('#node-input-outputRaw').is(':checked') ? 2 : 1);
+        const n = 1 + ($('#node-input-outputRaw').is(':checked') ? 1 : 0) + ($('#node-input-outputErrors').is(':checked') ? 1 : 0);
+        $('#node-input-outputs').val(n);
       }
       $('#node-input-outputRaw').on('change', syncOutputs);
+      $('#node-input-outputErrors').on('change', syncOutputs);
     },
     oneditsave: function () {
-      $('#node-input-outputs').val($('#node-input-outputRaw').is(':checked') ? 2 : 1);
+      const n = 1 + ($('#node-input-outputRaw').is(':checked') ? 1 : 0) + ($('#node-input-outputErrors').is(':checked') ? 1 : 0);
+      $('#node-input-outputs').val(n);
     }
   });
 </script>
@@ -75,6 +78,10 @@
     <label for="node-input-outputRaw">Raw output</label>
     <input type="checkbox" id="node-input-outputRaw" style="display: inline-block; width: auto; vertical-align: top;">
   </div>
+  <div class="form-row">
+    <label for="node-input-outputErrors">Errors output</label>
+    <input type="checkbox" id="node-input-outputErrors" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
   <input type="hidden" id="node-input-outputs">
 </script>
 
@@ -84,6 +91,7 @@
   <ol class="node-ports">
     <li>Decoded messages (<code>mavlink/&lt;NAME&gt;</code>).</li>
     <li>Raw packet buffers (only when <b>Raw output</b> is enabled).</li>
+    <li>Connection diagnostics (only when <b>Errors output</b> is enabled): <code>mavlink/error</code> for packets the matched dialect could not decode (with raw hex), and <code>mavlink/rejected</code> for packets dropped by routing/accept filters.</li>
   </ol>
   <p>Use the filters to subscribe to specific messages, systems, components, or a routed profile, and rate-limit high-rate telemetry.</p>
 </script>

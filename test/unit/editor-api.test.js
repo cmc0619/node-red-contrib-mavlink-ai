@@ -90,3 +90,29 @@ test('dialects endpoint lists all loader dialects (dynamic discovery, #4)', asyn
   // not need hand-editing when a dialect is added.
   assert.deepStrictEqual([...body.dialects].sort(), [...knownDialects()].sort());
 });
+
+test('registerEditorApi registers routes per RED instance, not once per process (#35)', () => {
+  function makeRed() {
+    const captured = {};
+    return {
+      captured,
+      auth: { needsPermission: () => (req, res, next) => next() },
+      httpAdmin: {
+        get(path, ...handlers) {
+          captured[path] = handlers[handlers.length - 1];
+        }
+      }
+    };
+  }
+  const redA = makeRed();
+  const redB = makeRed();
+  registerEditorApi(redA);
+  registerEditorApi(redB); // a second runtime in the same process
+  assert.ok(redA.captured['/mavlink-ai/dialects']);
+  assert.ok(redB.captured['/mavlink-ai/dialects'], 'second RED instance must get its routes too');
+
+  // Re-registering the same instance stays idempotent (no double-registration).
+  const before = Object.keys(redA.captured).length;
+  registerEditorApi(redA);
+  assert.strictEqual(Object.keys(redA.captured).length, before);
+});

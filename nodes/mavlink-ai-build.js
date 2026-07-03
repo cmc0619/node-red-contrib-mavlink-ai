@@ -75,7 +75,14 @@ module.exports = function registerMavlinkAiBuild(RED) {
         node.warn(`mavlink-ai-build: ignoring unknown field(s) for ${name}: ${report.unknownFields.join(', ')}`);
       }
 
-      const fields = normalizer.normalizeFields(bundle, clazz, merged);
+      let fields;
+      try {
+        fields = normalizer.normalizeFields(bundle, clazz, merged);
+      } catch (e) {
+        // e.g. UNRESOLVED_FIELD_VALUE: a misspelled enum name on a numeric field.
+        sendError(node, msg, send, e.code || 'BAD_FIELDS', e.message);
+        return done();
+      }
       const defaults = node.profile.getDefaults();
 
       const out = {
