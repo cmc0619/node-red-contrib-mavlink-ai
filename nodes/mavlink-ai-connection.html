@@ -117,4 +117,6 @@
 
 <script type="text/html" data-help-name="mavlink-ai-connection">
   <p>Shared MAVLink transport/session config. This owns UDP, TCP, or serial connection runtime and references a MAVLink AI Profile.</p>
+  <p><b>udp-peer</b> tracks a reply endpoint per source sysid, so with multiple vehicles on one port an outbound message addressed to a specific <code>target_system</code> goes to that vehicle's endpoint. Broadcast/untargeted sends go to the most recent sender; a manual remote host/port overrides both.</p>
+  <p>When the profile version is <b>auto</b>, outbound framing follows the peer: packets are MAVLink v2 until inbound traffic shows a v1 peer, then v1 (messages with ids above 255 always stay v2 — v1 framing cannot carry them).</p>
 </script>

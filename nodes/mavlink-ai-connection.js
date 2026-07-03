@@ -275,7 +275,9 @@ module.exports = function registerMavlinkAiConnection(RED) {
       } catch (err) {
         return Promise.reject(toMavlinkError(err, 'ENCODE_FAILED'));
       }
-      return node._queue.enqueue(buffer, options.priority);
+      // The addressed sysid rides along so a udp-peer transport can route the
+      // packet to that vehicle's endpoint instead of the last sender (#21).
+      return node._queue.enqueue(buffer, options.priority, { targetSystem });
     };
 
     /**
@@ -303,6 +305,9 @@ module.exports = function registerMavlinkAiConnection(RED) {
      */
     function onPacket(packet) {
       const header = packet.header;
+      // Track the peer's wire version so an "auto" profile frames outbound
+      // packets the way the peer speaks (a v1-only peer ignores v2 frames).
+      node._codec.noteInboundMagic(header.magic);
       // 1. Route on the framed header (sysid/compid) before decoding.
       const decision = node._router.route(header.sysid, header.compid);
       if (!decision.accepted) {
@@ -410,13 +415,13 @@ module.exports = function registerMavlinkAiConnection(RED) {
 
     // --- transport startup ---------------------------------------------------
     node._queue = new OutboundQueue(
-      (buf) => {
+      (buf, meta) => {
         // Guard against a failed/torn-down transport so sends reject cleanly
         // instead of throwing a TypeError on a null transport.
         if (!node._transport) {
           return Promise.reject(new MavlinkError('TRANSPORT_NOT_READY', 'Transport is not started.'));
         }
-        return node._transport.send(buf);
+        return node._transport.send(buf, meta);
       },
       { enabled: toBool(config.outboundQueue, true) }
     );
