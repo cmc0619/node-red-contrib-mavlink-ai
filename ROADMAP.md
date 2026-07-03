@@ -82,7 +82,7 @@ implemented in the v2 baseline.
 - [x] retry handling
 - [x] mission lock per connection/profile/mission type
 - [x] progress events
-- [x] simulated-vehicle download integration test
+- [x] synthetic mission workflow coverage
 
 ## Phase 7: Optional transports
 
@@ -94,11 +94,11 @@ implemented in the v2 baseline.
 
 ## Phase 8: Testing
 
-- [x] unit tests for validation/config coercion
-- [x] unit tests for route matching + wildcard priority
-- [x] unit tests for codec/dialect/enum/subscription/lock/mission-type
-- [x] UDP loopback integration test
-- [x] serial-without-path / lazy-load behavior test
+- [x] offline smoke-load test
+- [x] offline unit tests for validation/config coercion
+- [x] offline unit tests for route matching + wildcard priority
+- [x] offline unit tests for codec/dialect/enum/subscription/lock/mission-type
+- [x] no hardware/network/serial integration tests in the default suite
 - [ ] recorded heartbeat/mission fixtures (synthetic harness used today) (#12)
 
 ## Phase 9: Polish
