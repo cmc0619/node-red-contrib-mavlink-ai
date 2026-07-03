@@ -56,6 +56,9 @@
   </ul>
   <h3>Inputs</h3>
   <p><code>msg.payload</code> may set <code>target_system</code>, <code>target_component</code>, <code>mission_type</code> (mission/fence/rally/all), and for upload an <code>items</code> array.</p>
+  <h3>Coordinates</h3>
+  <p>For upload items, give <code>lat</code>/<code>lon</code> in plain <b>float degrees</b> (plus <code>z</code> or <code>alt</code> in meters) — they are converted to the wire scaling automatically (degE7 int32 for <code>MISSION_ITEM_INT</code>). Explicit <code>x</code>/<code>y</code> are treated as raw wire values and win over <code>lat</code>/<code>lon</code>.</p>
+  <p>Downloaded items keep raw <code>x</code>/<code>y</code> and add <code>lat</code>/<code>lon</code> in float degrees for global frames, plus <code>wire_message</code> naming the message type they arrived as.</p>
   <h3>Outputs</h3>
   <ol class="node-ports">
     <li>Completed mission object.</li>

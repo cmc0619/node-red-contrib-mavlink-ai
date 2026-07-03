@@ -89,6 +89,10 @@ module.exports = function registerMavlinkAiMission(RED) {
         connection: node.connection,
         targetSystem,
         targetComponent,
+        // Our own identity, so responses addressed to another GCS on the same
+        // vehicle don't advance this workflow.
+        sourceSystem: defaults.sourceSystemId,
+        sourceComponent: defaults.sourceComponentId,
         missionType: missionTypeName,
         enums: bundle ? bundle.enums : null,
         useInt,
