@@ -13,7 +13,8 @@ const STATUS_UPDATE_MS = 500;
  *
  * Subscribes to a shared connection and emits decoded MAVLink messages. It does
  * not decode packets itself — the connection decodes once and distributes to
- * matching subscribers (§20). Output 2 (optional) carries raw packet buffers.
+ * matching subscribers (§20). Optional outputs carry raw packet buffers and
+ * connection diagnostics (decode errors / routing rejections, issue #22).
  */
 module.exports = function registerMavlinkAiIn(RED) {
   function MavlinkAiInNode(config) {
@@ -32,6 +33,7 @@ module.exports = function registerMavlinkAiIn(RED) {
     node.rateLimitHz = toNum(config.rateLimitHz, 0);
     node.changedOnly = toBool(config.changedOnly, false);
     node.outputRaw = toBool(config.outputRaw, false);
+    node.outputErrors = toBool(config.outputErrors, false);
 
     if (!node.connection) {
       node.status({ fill: 'red', shape: 'ring', text: 'missing connection' });
@@ -47,6 +49,16 @@ module.exports = function registerMavlinkAiIn(RED) {
       rateLimitHz: node.rateLimitHz,
       changedOnly: node.changedOnly
     };
+
+    // Output layout: [decoded, raw?, errors?] — the optional outputs keep
+    // their relative order, so the errors output index depends on outputRaw.
+    const errorIndex = node.outputRaw ? 2 : 1;
+    /** Send one message on output `index`, padding the array to match. */
+    function sendAt(index, message) {
+      const out = [];
+      out[index] = message;
+      node.send(out);
+    }
 
     let count = 0;
     let lastStatusAt = 0;
@@ -66,6 +78,18 @@ module.exports = function registerMavlinkAiIn(RED) {
       }
     });
 
+    // Diagnostics output (#22): decode errors already arrive as mavlink/error
+    // envelopes; routing rejections are wrapped here. Without this output the
+    // connection's structured diagnostics have no consumer a flow can reach.
+    let onDecodeError = null;
+    let onRejected = null;
+    if (node.outputErrors) {
+      onDecodeError = (message) => sendAt(errorIndex, { topic: message.topic, payload: message.payload });
+      onRejected = (info) => sendAt(errorIndex, { topic: 'mavlink/rejected', payload: info });
+      node.connection.emitter.on('decodeError', onDecodeError);
+      node.connection.emitter.on('rejected', onRejected);
+    }
+
     // Reflect connection status on the node badge.
     /** @param {object} status  connection status payload */
     const onStatus = (status) => node.status(badgeForState(status.state, status.state));
@@ -75,6 +99,12 @@ module.exports = function registerMavlinkAiIn(RED) {
     node.on('close', function close(done) {
       node.connection.unsubscribe(subId);
       node.connection.emitter.removeListener('status', onStatus);
+      if (onDecodeError) {
+        node.connection.emitter.removeListener('decodeError', onDecodeError);
+      }
+      if (onRejected) {
+        node.connection.emitter.removeListener('rejected', onRejected);
+      }
       done();
     });
   }

@@ -123,3 +123,22 @@ test('explicit v1/v2 settings ignore inbound magic (#19)', () => {
   v1.noteInboundMagic(0xfd);
   assert.strictEqual(v1.encode('HEARTBEAT', hb)[0], 0xfe);
 });
+
+test('encode rejects unresolvable enum-name strings with the field named (#36)', () => {
+  const b = loadDialect('ardupilotmega');
+  const codec = new MavlinkCodec({ bundle: b, version: 'v2', sysid: 255, compid: 190 });
+  assert.throws(
+    () => codec.encode('COMMAND_LONG', { command: 'MAV_CMD_ARM_DISRAM', target_system: 1, target_component: 1 }),
+    (e) => {
+      assert.strictEqual(e.code, 'UNRESOLVED_FIELD_VALUE');
+      assert.match(e.message, /command/);
+      assert.match(e.message, /MAV_CMD_ARM_DISRAM/);
+      return true;
+    }
+  );
+  // Valid enum names, numeric strings, and char[] fields keep working.
+  const ok = codec.encode('COMMAND_LONG', { command: 'MAV_CMD_COMPONENT_ARM_DISARM', target_system: 1, target_component: 1 });
+  assert.ok(Buffer.isBuffer(ok));
+  const statustext = codec.encode('STATUSTEXT', { severity: 6, text: 'hello' });
+  assert.ok(Buffer.isBuffer(statustext));
+});
