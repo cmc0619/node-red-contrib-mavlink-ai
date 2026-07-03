@@ -10,6 +10,102 @@ const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
 
 /**
+ * Resolve a single EventEmitter event, or reject quickly with a useful error
+ * instead of letting a broken integration path hang the whole test run.
+ *
+ * @param {EventEmitter} emitter
+ * @param {string} event
+ * @param {number} [ms]
+ * @returns {Promise<*>}
+ */
+function onceWithTimeout(emitter, event, ms = 1000) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for '${event}' after ${ms}ms.`));
+    }, ms);
+
+    function cleanup() {
+      clearTimeout(timer);
+      emitter.removeListener(event, onEvent);
+    }
+
+    function onEvent(value) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(value);
+    }
+
+    emitter.once(event, onEvent);
+  });
+}
+
+/**
+ * Add a hard ceiling around any promise used by integration tests.
+ *
+ * @param {Promise<*>} promise
+ * @param {string} label
+ * @param {number} [ms]
+ * @returns {Promise<*>}
+ */
+function withTimeout(promise, label, ms = 1000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms.`)), ms);
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
+/**
+ * Subscribe to a connection message and reject if it never arrives.
+ *
+ * @param {object} connection
+ * @param {object} filter
+ * @param {function(): void} trigger
+ * @param {number} [ms]
+ * @returns {Promise<object>}
+ */
+function waitForConnectionMessage(connection, filter, trigger, ms = 1000) {
+  return new Promise((resolve, reject) => {
+    let subId;
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for connection message after ${ms}ms.`));
+    }, ms);
+
+    function cleanup() {
+      clearTimeout(timer);
+      if (subId !== undefined) {
+        connection.unsubscribe(subId);
+      }
+    }
+
+    subId = connection.subscribe(filter, (message) => {
+      cleanup();
+      resolve(message);
+    });
+
+    try {
+      trigger();
+    } catch (err) {
+      cleanup();
+      reject(err);
+    }
+  });
+}
+
+/**
  * A tiny simulated MAVLink vehicle (sysid 1) over UDP. It decodes inbound
  * packets and can answer the mission download protocol, letting us exercise the
  * full connection runtime (transport -> decode -> route -> subscribe -> send)
@@ -27,7 +123,8 @@ class SimVehicle extends EventEmitter {
   }
 
   start() {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      this.socket.once('error', reject);
       this.socket.on('message', (buf, rinfo) => {
         this.lastFrom = rinfo;
         this.decoder.write(buf);
@@ -110,40 +207,44 @@ function makeConnection(RED) {
   });
 }
 
-test('udp loopback: decode HEARTBEAT, send COMMAND_LONG, download mission', async (t) => {
+test('udp loopback: decode HEARTBEAT, send COMMAND_LONG, download mission', { timeout: 5000 }, async (t) => {
   const RED = new MockRED().loadNodes();
   makeProfile(RED);
   const conn = makeConnection(RED);
 
   // Wait until the connection's UDP socket is bound, then learn its port.
-  const addr = await new Promise((resolve) => conn._transport.once('listening', resolve));
+  const addr = await onceWithTimeout(conn._transport, 'listening', 1000);
   const connPort = addr.port;
 
   const vehicle = new SimVehicle();
-  const vehiclePort = await vehicle.start();
+  const vehiclePort = await withTimeout(vehicle.start(), 'vehicle UDP bind', 1000);
   t.after(async () => {
     await RED.close(conn);
     await vehicle.stop();
   });
 
   // 1) Vehicle heartbeat -> connection decodes and the connection learns the peer.
-  const heartbeat = await new Promise((resolve) => {
-    conn.subscribe({ messageNames: ['HEARTBEAT'] }, (m) => resolve(m));
-    vehicle.sendTo(connPort, '127.0.0.1', 'HEARTBEAT', {
-      type: 'MAV_TYPE_QUADROTOR',
-      autopilot: 'MAV_AUTOPILOT_ARDUPILOTMEGA',
-      base_mode: 81,
-      custom_mode: 0,
-      system_status: 'MAV_STATE_ACTIVE'
-    });
-  });
+  const heartbeat = await waitForConnectionMessage(
+    conn,
+    { messageNames: ['HEARTBEAT'] },
+    () => {
+      vehicle.sendTo(connPort, '127.0.0.1', 'HEARTBEAT', {
+        type: 'MAV_TYPE_QUADROTOR',
+        autopilot: 'MAV_AUTOPILOT_ARDUPILOTMEGA',
+        base_mode: 81,
+        custom_mode: 0,
+        system_status: 'MAV_STATE_ACTIVE'
+      });
+    },
+    1000
+  );
   assert.strictEqual(heartbeat.payload.name, 'HEARTBEAT');
   assert.strictEqual(heartbeat.payload.sysid, 1);
   assert.strictEqual(heartbeat.payload.profile, 'Copter');
   assert.strictEqual(heartbeat.payload.fields.type, 2);
 
   // 2) Connection sends a COMMAND_LONG (arm); vehicle receives and decodes it.
-  const armReceived = new Promise((resolve) => vehicle.once('COMMAND_LONG', resolve));
+  const armReceived = onceWithTimeout(vehicle, 'COMMAND_LONG', 1000);
   await conn.send({ name: 'COMMAND_LONG', fields: { command: 'MAV_CMD_COMPONENT_ARM_DISARM', param1: 1 } });
   const arm = await armReceived;
   assert.strictEqual(arm.fields.command, 400);
@@ -160,11 +261,11 @@ test('udp loopback: decode HEARTBEAT, send COMMAND_LONG, download mission', asyn
     id: 'm1',
     connection: 'c1',
     action: 'download',
-    timeoutMs: 1500,
-    maxRetries: 3
+    timeoutMs: 250,
+    maxRetries: 2
   });
 
-  const { collected } = await RED.inject(mission, { payload: {} });
+  const { collected } = await withTimeout(RED.inject(mission, { payload: {} }), 'mission download', 2500);
   const completed = collected.map((arr) => arr[0]).filter(Boolean).pop();
   assert.ok(completed, 'expected a completed mission output');
   assert.strictEqual(completed.topic, 'mission/downloaded');
