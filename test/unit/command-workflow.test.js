@@ -193,3 +193,31 @@ test('resolveFlightMode fails loudly for unknown modes/firmware (#20)', () => {
   assert.ok(knownModes('px4').includes('OFFBOARD'));
   assert.deepStrictEqual(knownModes('generic', 'copter'), []);
 });
+
+test('CommandSend ignores acks from a different component on the same system', async () => {
+  const conn = new FakeConnection();
+  const wf = new CommandSend(opts(conn, { targetComponent: 1, timeoutMs: 1000, maxRetries: 0 }));
+  const p = wf.run();
+  await delay(0);
+  // A gimbal (compid 154) acking the same MAV_CMD must not settle us.
+  for (const { cb } of conn._subs.values()) {
+    cb({ topic: 'mavlink/COMMAND_ACK', payload: { name: 'COMMAND_ACK', sysid: 1, compid: 154, fields: { command: 400, result: 2 } } });
+  }
+  assert.strictEqual(wf.state, 'waiting_ack');
+  // The addressed component's ack does.
+  for (const { cb } of conn._subs.values()) {
+    cb({ topic: 'mavlink/COMMAND_ACK', payload: { name: 'COMMAND_ACK', sysid: 1, compid: 1, fields: { command: 400, result: 0 } } });
+  }
+  await p;
+});
+
+test('CommandSend with broadcast component accepts any responder', async () => {
+  const conn = new FakeConnection();
+  const wf = new CommandSend(opts(conn, { targetComponent: 0, timeoutMs: 1000, maxRetries: 0 }));
+  const p = wf.run();
+  await delay(0);
+  for (const { cb } of conn._subs.values()) {
+    cb({ topic: 'mavlink/COMMAND_ACK', payload: { name: 'COMMAND_ACK', sysid: 1, compid: 154, fields: { command: 400, result: 0 } } });
+  }
+  await p;
+});

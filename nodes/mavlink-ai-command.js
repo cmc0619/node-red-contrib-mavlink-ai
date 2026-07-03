@@ -151,23 +151,26 @@ module.exports = function registerMavlinkAiCommand(RED) {
       }
 
       // COMMAND_INT (issue #17): some commands are only valid via COMMAND_INT,
-      // whose x/y carry lat/lon as degE7 int32 for global frames.
-      const useInt = firstDefined(msg.command_int, incoming.command_int, node.sendAs === 'int') === true;
+      // whose x/y carry lat/lon as degE7 int32 for global frames. Accept the
+      // usual Node-RED boolean spellings ("true"/1/"yes") at runtime.
+      const useInt = toBool(firstDefined(msg.command_int, incoming.command_int, node.sendAs === 'int'), false);
 
       let fields;
       let messageName;
       if (useInt) {
         messageName = 'COMMAND_INT';
-        const x = firstDefined(
-          incoming.x,
-          incoming.lat !== undefined ? Math.round(Number(incoming.lat) * 1e7) : undefined,
-          0
-        );
-        const y = firstDefined(
-          incoming.y,
-          incoming.lon !== undefined ? Math.round(Number(incoming.lon) * 1e7) : undefined,
-          0
-        );
+        // Positional input priority: raw x/y (wire values) > lat/lon degrees >
+        // editor-saved param5/6 (degrees, COMMAND_LONG convention) > 0. A value
+        // that fails numeric conversion must error, not silently become 0,0.
+        const latDeg = firstDefined(incoming.lat, configParams.param5);
+        const lonDeg = firstDefined(incoming.lon, configParams.param6);
+        const x = firstDefined(incoming.x, latDeg !== undefined ? Math.round(Number(latDeg) * 1e7) : undefined, 0);
+        const y = firstDefined(incoming.y, lonDeg !== undefined ? Math.round(Number(lonDeg) * 1e7) : undefined, 0);
+        const z = firstDefined(incoming.z, incoming.alt, incoming.param7, configParams.param7, 0);
+        if (!Number.isFinite(Number(x)) || !Number.isFinite(Number(y)) || !Number.isFinite(Number(z))) {
+          return sendError(msg, send, done, 'BAD_COORDINATES',
+            `COMMAND_INT coordinates must be numeric (got x=${x}, y=${y}, z=${z}).`);
+        }
         fields = Object.assign(
           {
             frame: firstDefined(incoming.frame, 'MAV_FRAME_GLOBAL'),
@@ -179,7 +182,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
             param4: 0,
             x,
             y,
-            z: firstDefined(incoming.z, incoming.alt, incoming.param7, 0)
+            z
           },
           pickParams(configParams, 4),
           built

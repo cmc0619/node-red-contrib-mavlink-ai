@@ -137,3 +137,24 @@ test('msg.payload.command_int switches a single message to COMMAND_INT (#17)', a
   assert.strictEqual(out.fields.x, 473977420);
   assert.strictEqual(out.fields.frame, 'MAV_FRAME_GLOBAL_RELATIVE_ALT');
 });
+
+test('COMMAND_INT rejects non-numeric coordinates instead of sending 0,0 (#17)', async () => {
+  const { RED, node } = setup({ command: 'MAV_CMD_DO_REPOSITION', sendAs: 'int' });
+  const { collected } = await RED.inject(node, { payload: { lat: 'not-a-number', lon: 8.5 } });
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'BAD_COORDINATES');
+});
+
+test('COMMAND_INT uses editor-saved param5/6/7 as lat/lon/alt (#17)', async () => {
+  const { RED, node } = setup({
+    command: 'MAV_CMD_DO_REPOSITION',
+    sendAs: 'int',
+    fields: '{"param5":47.397742,"param6":8.545594,"param7":30}'
+  });
+  const { collected } = await RED.inject(node, { payload: {} });
+  const out = collected[0].payload;
+  assert.strictEqual(out.name, 'COMMAND_INT');
+  assert.strictEqual(out.fields.x, 473977420);
+  assert.strictEqual(out.fields.y, 85455940);
+  assert.strictEqual(out.fields.z, 30);
+});
