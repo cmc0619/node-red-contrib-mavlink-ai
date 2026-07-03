@@ -86,6 +86,8 @@
   </ul>
   <h3>Inputs</h3>
   <p><code>msg.payload</code> may set <code>target_system</code>, <code>target_component</code>, <code>action</code>, <code>param_id</code>, <code>param_index</code>, <code>param_value</code>, and <code>param_type</code>, overriding the editor values.</p>
+  <h3>Details</h3>
+  <p>Param IDs are matched case-insensitively (<code>rc1_min</code> works). When the connection's profile firmware is <b>px4</b>, integer-typed parameter values are encoded/decoded using the PX4 byte-union convention automatically; other firmwares use the plain cast convention.</p>
   <h3>Outputs</h3>
   <ol class="node-ports">
     <li><b>result</b> — <code>param/value</code> (read), <code>param/set</code> (set, includes <code>applied</code>), or <code>param/list</code> (<code>{ count, params }</code>).</li>

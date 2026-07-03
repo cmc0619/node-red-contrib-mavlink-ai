@@ -6,6 +6,8 @@ const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const {
   trimParamId,
   projectParam,
+  unionIntToFloat,
+  unionFloatToInt,
   ParamRead,
   ParamSet,
   ParamList
@@ -135,6 +137,96 @@ test('ParamSet flags applied=false when the vehicle clamps the value', async () 
   const res = await p;
   assert.strictEqual(res.payload.applied, false);
   assert.strictEqual(res.payload.param_value, 2000);
+});
+
+test('ParamSet flags applied=true across the float32 wire round-trip (#25)', async () => {
+  const conn = new FakeConnection();
+  const wf = new ParamSet({ connection: conn, targetSystem: 1, targetComponent: 1, paramId: 'ANGLE_MAX', value: 0.1 });
+  const p = wf.run();
+  // The vehicle stores/echoes float32: fround(0.1) !== 0.1 in float64 terms.
+  conn.deliverParamValue(paramValue({ id: 'ANGLE_MAX', value: Math.fround(0.1) }));
+  const res = await p;
+  assert.strictEqual(res.payload.applied, true);
+});
+
+test('Param read/set matches param ids case-insensitively (#26)', async () => {
+  const conn = new FakeConnection();
+  const read = new ParamRead({ connection: conn, targetSystem: 1, targetComponent: 1, paramId: 'rc1_min' });
+  const p = read.run();
+  conn.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 1100 }));
+  const res = await p;
+  assert.strictEqual(res.payload.param_id, 'RC1_MIN');
+  // The outbound request carries the uppercased id.
+  const req = conn.sent.find((m) => m.name === 'PARAM_REQUEST_READ');
+  assert.strictEqual(req.fields.param_id, 'RC1_MIN');
+
+  const conn2 = new FakeConnection();
+  const set = new ParamSet({ connection: conn2, targetSystem: 1, targetComponent: 1, paramId: 'rc1_min', value: 1200 });
+  const p2 = set.run();
+  conn2.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 1200 }));
+  const res2 = await p2;
+  assert.strictEqual(res2.payload.applied, true);
+});
+
+test('PX4 byte-union helpers round-trip integer values (#27)', () => {
+  // INT32 (type 6)
+  assert.strictEqual(unionFloatToInt(unionIntToFloat(1, 6), 6), 1);
+  assert.strictEqual(unionFloatToInt(unionIntToFloat(-42, 6), 6), -42);
+  assert.strictEqual(unionFloatToInt(unionIntToFloat(123456789, 6), 6), 123456789);
+  // UINT8 (type 1)
+  assert.strictEqual(unionFloatToInt(unionIntToFloat(255, 1), 1), 255);
+  // INT16 (type 4)
+  assert.strictEqual(unionFloatToInt(unionIntToFloat(-1000, 4), 4), -1000);
+  // The union float of INT32 1 is a denormal, not 1.0 — the whole point.
+  assert.notStrictEqual(unionIntToFloat(1, 6), 1);
+});
+
+test('projectParam decodes byte-union integers when firmware is px4 (#27)', () => {
+  const fields = paramValue({ id: 'SYS_AUTOSTART', value: unionIntToFloat(4001, 6), type: 6 }).fields;
+  const px4 = projectParam(fields, null, { firmware: 'px4' });
+  assert.strictEqual(px4.param_value, 4001);
+  assert.strictEqual(px4.param_raw_value, unionIntToFloat(4001, 6));
+  // Non-px4 firmware leaves the wire value alone.
+  const generic = projectParam(fields, null, { firmware: 'generic' });
+  assert.strictEqual(generic.param_value, unionIntToFloat(4001, 6));
+});
+
+test('ParamSet encodes and confirms byte-union integers for px4 (#27)', async () => {
+  const conn = new FakeConnection();
+  const wf = new ParamSet({
+    connection: conn,
+    targetSystem: 1,
+    targetComponent: 1,
+    firmware: 'px4',
+    paramId: 'SYS_AUTOSTART',
+    paramType: 'MAV_PARAM_TYPE_INT32',
+    enums: loadDialect('ardupilotmega').enums,
+    value: 4001
+  });
+  const p = wf.run();
+  const set = conn.sent.find((m) => m.name === 'PARAM_SET');
+  assert.ok(set);
+  // The wire value is the byte-union float, not the numeric cast.
+  assert.strictEqual(set.fields.param_value, unionIntToFloat(4001, 6));
+  conn.deliverParamValue(paramValue({ id: 'SYS_AUTOSTART', value: unionIntToFloat(4001, 6), type: 6 }));
+  const res = await p;
+  assert.strictEqual(res.payload.param_value, 4001);
+  assert.strictEqual(res.payload.applied, true);
+});
+
+test('ParamList ignores the param_index 65535 sentinel (#28)', async () => {
+  const conn = new FakeConnection();
+  const wf = new ParamList({ connection: conn, targetSystem: 1, targetComponent: 1, timeoutMs: 20, maxRetries: 5 });
+  const p = wf.run();
+  conn.deliverParamValue(paramValue({ id: 'A', index: 0, count: 3, value: 1 }));
+  // An unsolicited notification mid-stream must not count toward completion.
+  conn.deliverParamValue(paramValue({ id: 'NOTIFY', index: 65535, count: 3, value: 9 }));
+  conn.deliverParamValue(paramValue({ id: 'B', index: 1, count: 3, value: 2 }));
+  conn.deliverParamValue(paramValue({ id: 'C', index: 2, count: 3, value: 3 }));
+  const res = await p;
+  assert.strictEqual(res.payload.count, 3);
+  assert.deepStrictEqual(res.payload.params.map((x) => x.param_index), [0, 1, 2]);
+  assert.ok(!res.payload.params.some((x) => x.param_id === 'NOTIFY'));
 });
 
 test('ParamSet requires a numeric value', () => {
