@@ -79,3 +79,47 @@ test('encode throws UNKNOWN_MESSAGE for bad name', () => {
   const codec = new MavlinkCodec({ bundle: b });
   assert.throws(() => codec.encode('NOPE_MESSAGE', {}), /UNKNOWN_MESSAGE|not defined/);
 });
+
+test('auto version follows the detected inbound wire version (#19)', () => {
+  const b = loadDialect('ardupilotmega');
+  const codec = new MavlinkCodec({ bundle: b, version: 'auto', sysid: 255, compid: 190 });
+  const hb = { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 };
+
+  // Before any inbound traffic: v2 framing (0xFD magic).
+  assert.strictEqual(codec.effectiveVersion(), 'v2');
+  assert.strictEqual(codec.encode('HEARTBEAT', hb)[0], 0xfd);
+
+  // A v1 peer appears: outbound switches to v1 framing (0xFE magic).
+  codec.noteInboundMagic(0xfe);
+  assert.strictEqual(codec.effectiveVersion(), 'v1');
+  assert.strictEqual(codec.encode('HEARTBEAT', hb)[0], 0xfe);
+
+  // The peer upgrades to v2: outbound follows.
+  codec.noteInboundMagic(0xfd);
+  assert.strictEqual(codec.effectiveVersion(), 'v2');
+  assert.strictEqual(codec.encode('HEARTBEAT', hb)[0], 0xfd);
+
+  // Unknown magic bytes are ignored.
+  codec.noteInboundMagic(0x00);
+  assert.strictEqual(codec.effectiveVersion(), 'v2');
+});
+
+test('auto keeps v2 framing for message ids above 255 even with a v1 peer (#19)', () => {
+  const b = loadDialect('ardupilotmega');
+  const codec = new MavlinkCodec({ bundle: b, version: 'auto', sysid: 255, compid: 190 });
+  codec.noteInboundMagic(0xfe); // v1 peer
+  // BUTTON_CHANGE has msgid 257 — v1 framing cannot express it.
+  const buf = codec.encode('BUTTON_CHANGE', { time_boot_ms: 1, last_change_ms: 1, state: 1 });
+  assert.strictEqual(buf[0], 0xfd);
+});
+
+test('explicit v1/v2 settings ignore inbound magic (#19)', () => {
+  const b = loadDialect('ardupilotmega');
+  const hb = { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 };
+  const v2 = new MavlinkCodec({ bundle: b, version: 'v2', sysid: 255, compid: 190 });
+  v2.noteInboundMagic(0xfe);
+  assert.strictEqual(v2.encode('HEARTBEAT', hb)[0], 0xfd);
+  const v1 = new MavlinkCodec({ bundle: b, version: 'v1', sysid: 255, compid: 190 });
+  v1.noteInboundMagic(0xfd);
+  assert.strictEqual(v1.encode('HEARTBEAT', hb)[0], 0xfe);
+});
