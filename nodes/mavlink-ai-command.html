@@ -5,7 +5,12 @@
     defaults: {
       name: { value: '' },
       profile: { value: '', type: 'mavlink-ai-profile', required: true },
+      connection: { value: '', type: 'mavlink-ai-connection', required: false },
       command: { value: 'arm', required: true },
+      sendAs: { value: 'long' },
+      awaitAck: { value: false },
+      timeoutMs: { value: 3000, validate: RED.validators.number() },
+      maxRetries: { value: 3, validate: RED.validators.number() },
       fields: { value: '' }
     },
     inputs: 1,
@@ -152,6 +157,15 @@
       $('#node-input-profile').on('change', loadDialect);
       loadDialect();
 
+      // Await-ack needs a connection to send on; show the timing rows only
+      // when it's enabled.
+      function refreshAckRows() {
+        const on = $('#node-input-awaitAck').is(':checked');
+        $('.mav-cmd-ack').toggle(on);
+      }
+      $('#node-input-awaitAck').on('change', refreshAckRows);
+      refreshAckRows();
+
       this._collectParams = function () {
         if (!isRaw($command.val())) {
           return '';
@@ -187,11 +201,37 @@
     <label for="node-input-command">Command</label>
     <select id="node-input-command" style="width:70%;"></select>
   </div>
+  <div class="form-row">
+    <label for="node-input-sendAs">Send as</label>
+    <select id="node-input-sendAs" style="width:70%;">
+      <option value="long">COMMAND_LONG (default)</option>
+      <option value="int">COMMAND_INT (position commands, x/y in degE7)</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-input-awaitAck">Await ack</label>
+    <input type="checkbox" id="node-input-awaitAck" style="width:auto; vertical-align:middle;">
+    <span style="color:#888;">send via the connection and wait for COMMAND_ACK</span>
+  </div>
+  <div class="form-row mav-cmd-ack">
+    <label for="node-input-connection">Connection</label>
+    <input type="text" id="node-input-connection">
+  </div>
+  <div class="form-row mav-cmd-ack">
+    <label for="node-input-timeoutMs">Timeout ms</label>
+    <input type="number" id="node-input-timeoutMs">
+  </div>
+  <div class="form-row mav-cmd-ack">
+    <label for="node-input-maxRetries">Retries</label>
+    <input type="number" id="node-input-maxRetries">
+  </div>
   <div id="mav-cmd-params" style="border-top:1px solid #eee; padding-top:6px;"></div>
   <input type="hidden" id="node-input-fields">
 </script>
 
 <script type="text/html" data-help-name="mavlink-ai-command">
-  <p>Builds a MAVLink <code>COMMAND_LONG</code> as a normalized outbound message for a downstream <b>MAVLink AI Out</b> node.</p>
+  <p>Builds a MAVLink <code>COMMAND_LONG</code> (or <code>COMMAND_INT</code>) as a normalized outbound message for a downstream <b>MAVLink AI Out</b> node — or, with <b>Await ack</b> enabled, sends it on the selected connection and runs the full command protocol: retransmit with an incrementing <code>confirmation</code> on timeout, then output the <code>COMMAND_ACK</code> result (<code>command/ack</code> with <code>result</code>/<code>result_name</code>, or a <code>mavlink/error</code> on rejection/timeout). <code>MAV_RESULT_IN_PROGRESS</code> keeps the wait alive and shows progress on the status badge.</p>
   <p>Pick a friendly <b>Preset</b> (arm, set mode, takeoff, …) or any <b>MAV_CMD</b> from the advanced list. For a raw MAV_CMD you can fill <code>param1</code>–<code>param7</code>; <code>msg.payload</code> may override params at runtime (presets keep their safety-critical params fixed, e.g. arm/disarm <code>param1</code>).</p>
+  <p><b>Set mode by name</b>: <code>msg.payload.mode</code> (e.g. <code>"GUIDED"</code>, <code>"POSITION"</code>) is resolved using the profile's firmware and vehicle type — set the profile firmware to <code>ardupilot</code> or <code>px4</code> and the profile type to the vehicle (copter/plane/rover/…), or pass <code>msg.payload.vehicle_type</code>. Numeric <code>custom_mode</code>/<code>base_mode</code> keep working as before.</p>
+  <p><b>COMMAND_INT</b>: choose "Send as COMMAND_INT" (or set <code>msg.payload.command_int</code>) for commands that require it (DO_SET_ROI_LOCATION, DO_REPOSITION, …). Give <code>lat</code>/<code>lon</code> in float degrees (converted to degE7 automatically) or raw <code>x</code>/<code>y</code>, plus <code>z</code>/<code>alt</code> and an optional <code>frame</code> (default <code>MAV_FRAME_GLOBAL</code>).</p>
 </script>
