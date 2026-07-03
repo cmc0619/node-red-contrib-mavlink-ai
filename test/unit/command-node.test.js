@@ -70,3 +70,91 @@ test('unknown command yields a structured error', async () => {
   assert.strictEqual(collected[0].topic, 'mavlink/error');
   assert.strictEqual(collected[0].payload.code, 'UNKNOWN_COMMAND');
 });
+
+function setupWithFirmware(commandConfig, profileExtra) {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-profile', Object.assign({
+    id: 'p1',
+    name: 'Copter',
+    dialect: 'ardupilotmega',
+    mavlinkVersion: 'v2',
+    sourceSystemId: 255,
+    sourceComponentId: 190,
+    defaultTargetSystem: 1,
+    defaultTargetComponent: 1
+  }, profileExtra));
+  const node = RED.create('mavlink-ai-command', Object.assign({ id: 'c1', profile: 'p1' }, commandConfig));
+  return { RED, node };
+}
+
+test('set_mode resolves a mode name via profile firmware/vehicle type (#20)', async () => {
+  const { RED, node } = setupWithFirmware({ command: 'set_mode' }, { firmware: 'ardupilot', profileType: 'copter' });
+  const { collected } = await RED.inject(node, { payload: { mode: 'GUIDED' } });
+  const out = collected[0].payload;
+  assert.strictEqual(out.fields.command, 'MAV_CMD_DO_SET_MODE');
+  assert.strictEqual(out.fields.param1, 1); // MAV_MODE_FLAG_CUSTOM_MODE_ENABLED
+  assert.strictEqual(out.fields.param2, 4); // copter GUIDED
+});
+
+test('set_mode with an unknown mode name yields UNKNOWN_MODE (#20)', async () => {
+  const { RED, node } = setupWithFirmware({ command: 'set_mode' }, { firmware: 'ardupilot', profileType: 'copter' });
+  const { collected } = await RED.inject(node, { payload: { mode: 'WARP_SPEED' } });
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'UNKNOWN_MODE');
+});
+
+test('set_mode numeric custom_mode still works without a firmware table (#20)', async () => {
+  const { RED, node } = setup({ command: 'set_mode' });
+  const { collected } = await RED.inject(node, { payload: { custom_mode: 4 } });
+  const out = collected[0].payload;
+  assert.strictEqual(out.fields.param2, 4);
+});
+
+test('sendAs int builds COMMAND_INT with degE7 lat/lon (#17)', async () => {
+  const { RED, node } = setup({ command: 'MAV_CMD_DO_REPOSITION', sendAs: 'int' });
+  const { collected } = await RED.inject(node, {
+    payload: { lat: 47.397742, lon: 8.545594, alt: 30, param1: -1 }
+  });
+  const out = collected[0].payload;
+  assert.strictEqual(out.name, 'COMMAND_INT');
+  assert.strictEqual(out.fields.command, 'MAV_CMD_DO_REPOSITION');
+  assert.strictEqual(out.fields.x, 473977420);
+  assert.strictEqual(out.fields.y, 85455940);
+  assert.strictEqual(out.fields.z, 30);
+  assert.strictEqual(out.fields.param1, -1);
+  assert.strictEqual(out.fields.frame, 'MAV_FRAME_GLOBAL');
+  assert.strictEqual(out.fields.confirmation, undefined); // COMMAND_INT has none
+  assert.strictEqual(out.fields.param5, undefined);
+});
+
+test('msg.payload.command_int switches a single message to COMMAND_INT (#17)', async () => {
+  const { RED, node } = setup({ command: 'MAV_CMD_DO_SET_ROI_LOCATION' });
+  const { collected } = await RED.inject(node, {
+    payload: { command_int: true, x: 473977420, y: 85455940, z: 10, frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT' }
+  });
+  const out = collected[0].payload;
+  assert.strictEqual(out.name, 'COMMAND_INT');
+  assert.strictEqual(out.fields.x, 473977420);
+  assert.strictEqual(out.fields.frame, 'MAV_FRAME_GLOBAL_RELATIVE_ALT');
+});
+
+test('COMMAND_INT rejects non-numeric coordinates instead of sending 0,0 (#17)', async () => {
+  const { RED, node } = setup({ command: 'MAV_CMD_DO_REPOSITION', sendAs: 'int' });
+  const { collected } = await RED.inject(node, { payload: { lat: 'not-a-number', lon: 8.5 } });
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'BAD_COORDINATES');
+});
+
+test('COMMAND_INT uses editor-saved param5/6/7 as lat/lon/alt (#17)', async () => {
+  const { RED, node } = setup({
+    command: 'MAV_CMD_DO_REPOSITION',
+    sendAs: 'int',
+    fields: '{"param5":47.397742,"param6":8.545594,"param7":30}'
+  });
+  const { collected } = await RED.inject(node, { payload: {} });
+  const out = collected[0].payload;
+  assert.strictEqual(out.name, 'COMMAND_INT');
+  assert.strictEqual(out.fields.x, 473977420);
+  assert.strictEqual(out.fields.y, 85455940);
+  assert.strictEqual(out.fields.z, 30);
+});
