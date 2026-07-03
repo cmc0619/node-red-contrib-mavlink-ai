@@ -389,11 +389,28 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (!node.heartbeatEnabled || node._heartbeatTimer) {
         return;
       }
+      if (node.transportType === 'udp-in') {
+        // Listen-only transport: sending can never succeed, so a heartbeat
+        // timer would just log an error every tick forever.
+        node.warn(
+          `mavlink-ai-connection '${node.name || node.id}': heartbeat is enabled but transport udp-in is listen-only; not sending heartbeats.`
+        );
+        return;
+      }
       /** Send one heartbeat; surface failures through the error emitter. */
       const tick = () => {
         node
           .send({ name: 'HEARTBEAT', fields: node.profile.getHeartbeatFields() }, { priority: 3 })
-          .catch((err) => node.emitter.emit('error', toMavlinkError(err, 'HEARTBEAT_FAILED')));
+          .catch((err) => {
+            // "No peer yet" is a normal udp-peer startup state (nothing has
+            // sent to us, so there is nowhere to reply); logging it once per
+            // tick until a vehicle appears is pure noise. Heartbeats resume
+            // silently once a peer is learned.
+            if (err && (err.code === 'UDP_NO_PEER' || err.code === 'TRANSPORT_NOT_READY')) {
+              return;
+            }
+            node.emitter.emit('error', toMavlinkError(err, 'HEARTBEAT_FAILED'));
+          });
       };
       node._heartbeatTimer = setInterval(tick, node.heartbeatIntervalMs);
       if (typeof node._heartbeatTimer.unref === 'function') {

@@ -1,6 +1,6 @@
 'use strict';
 
-const { parseList, parseIdList, toInt, toBool, idAccepted } = require('../lib/util/validation');
+const { parseList, parseIdList, toNum, toBool, idAccepted } = require('../lib/util/validation');
 const { registerEditorApi } = require('../lib/editor-api');
 
 /**
@@ -29,7 +29,9 @@ module.exports = function registerMavlinkAiFilter(RED) {
     node.fieldName = config.fieldName || '';
     node.fieldValue = config.fieldValue === '' ? undefined : config.fieldValue;
     node.fieldExists = toBool(config.fieldExists, false);
-    node.rateLimitHz = toInt(config.rateLimitHz, 0);
+    // toNum, not toInt: sub-1Hz rates like 0.5 are meaningful and truncation
+    // would silently disable the limit.
+    node.rateLimitHz = toNum(config.rateLimitHz, 0);
     node.changedOnly = toBool(config.changedOnly, false);
 
     const lastDelivered = new Map(); // key -> timestamp

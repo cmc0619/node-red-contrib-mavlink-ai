@@ -1,7 +1,12 @@
 'use strict';
 
-const { parseList, parseIdList, toInt, toBool } = require('../lib/util/validation');
+const { parseList, parseIdList, toInt, toNum, toBool } = require('../lib/util/validation');
 const { badgeForState } = require('../lib/util/status');
+
+// Minimum interval between rx-counter badge updates. Status updates travel to
+// every open editor over the admin websocket, so pushing one per message at
+// telemetry rates (50Hz ATTITUDE) can bog down the editor UI.
+const STATUS_UPDATE_MS = 500;
 
 /**
  * mavlink-ai-in (DESIGN.md §13.1).
@@ -22,7 +27,9 @@ module.exports = function registerMavlinkAiIn(RED) {
     node.sysid = config.sysid === '' || config.sysid == null ? '*' : toInt(config.sysid, '*');
     node.compid = config.compid === '' || config.compid == null ? '*' : toInt(config.compid, '*');
     node.profileFilter = config.profileFilter || '';
-    node.rateLimitHz = toInt(config.rateLimitHz, 0);
+    // toNum, not toInt: sub-1Hz rates like 0.5 are meaningful and truncation
+    // would silently disable the limit.
+    node.rateLimitHz = toNum(config.rateLimitHz, 0);
     node.changedOnly = toBool(config.changedOnly, false);
     node.outputRaw = toBool(config.outputRaw, false);
 
@@ -42,6 +49,7 @@ module.exports = function registerMavlinkAiIn(RED) {
     };
 
     let count = 0;
+    let lastStatusAt = 0;
     const subId = node.connection.subscribe(filter, (message) => {
       count += 1;
       const decoded = { topic: message.topic, payload: message.payload };
@@ -51,7 +59,11 @@ module.exports = function registerMavlinkAiIn(RED) {
       } else {
         node.send(decoded);
       }
-      node.status({ fill: 'green', shape: 'dot', text: `rx ${count}` });
+      const now = Date.now();
+      if (now - lastStatusAt >= STATUS_UPDATE_MS) {
+        lastStatusAt = now;
+        node.status({ fill: 'green', shape: 'dot', text: `rx ${count}` });
+      }
     });
 
     // Reflect connection status on the node badge.

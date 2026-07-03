@@ -1,6 +1,5 @@
 'use strict';
 
-const { errorPayload } = require('../lib/util/errors');
 const { badgeForState } = require('../lib/util/status');
 
 /**
@@ -45,15 +44,9 @@ module.exports = function registerMavlinkAiOut(RED) {
         node.status({ fill: 'green', shape: 'dot', text: `tx ${sent}` });
         done();
       } catch (err) {
+        // This node has no outputs; failures surface via done(err) so a Catch
+        // node can handle them.
         node.status({ fill: 'red', shape: 'ring', text: err.code || 'send error' });
-        msg.payload = errorPayload({
-          node: 'mavlink-ai-out',
-          connection: node.connection.name,
-          code: err.code || 'SEND_FAILED',
-          message: err.message,
-          context: err.context
-        });
-        msg.topic = 'mavlink/error';
         done(err);
       }
     });

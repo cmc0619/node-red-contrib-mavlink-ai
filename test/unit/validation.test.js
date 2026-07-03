@@ -2,13 +2,22 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { toInt, toBool, parseList, parseIdList, isWildcard, idAccepted } = require('../../lib/util/validation');
+const { toInt, toNum, toBool, parseList, parseIdList, isWildcard, idAccepted } = require('../../lib/util/validation');
 
 test('toInt coerces and falls back', () => {
   assert.strictEqual(toInt('42', 0), 42);
   assert.strictEqual(toInt('', 7), 7);
   assert.strictEqual(toInt(undefined, 7), 7);
   assert.strictEqual(toInt('nope', 3), 3);
+});
+
+test('toNum preserves fractions and falls back (#29)', () => {
+  assert.strictEqual(toNum('0.5', 0), 0.5);
+  assert.strictEqual(toNum(2.5, 0), 2.5);
+  assert.strictEqual(toNum('42', 0), 42);
+  assert.strictEqual(toNum('', 7), 7);
+  assert.strictEqual(toNum(undefined, 7), 7);
+  assert.strictEqual(toNum('nope', 3), 3);
 });
 
 test('toBool handles node-red string booleans', () => {
