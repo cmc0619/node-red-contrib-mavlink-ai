@@ -17,6 +17,7 @@ a file, or paste its contents.
 | `10-param-read-write.json` | Read/set a single parameter and request the full list via the param node. |
 | `11-telemetry-stream-interval.json` | Start/stop an ATTITUDE stream with SET_MESSAGE_INTERVAL command presets. |
 | `12-onboard-companion-debug-storyboard.json` | Debug-only storyboard for an onboard Raspberry Pi / companion-computer routine; emits the planned takeoff/circle/aerobatics/return/land phases to Debug only and sends no MAVLink packets. |
+| `13-swarm-registry-fanout-dry-run.json` | Discover active sysids from HEARTBEAT into a swarm registry table, then fan out a formation reposition (10 m spacing from a shared origin) as a dry-run wired to Debug — nothing is sent until you disable dry-run and wire in an out node. |
 
 All UDP examples assume a MAVLink source (SITL, a vehicle, or `mavlink-router`)
 sending to UDP `14550`. The shared config nodes (`AI Profile - Copter`,

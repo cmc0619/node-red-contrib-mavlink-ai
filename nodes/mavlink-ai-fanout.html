@@ -1,0 +1,128 @@
+<script type="text/javascript">
+  RED.nodes.registerType('mavlink-ai-fanout', {
+    category: 'MAVLink AI',
+    color: '#FFD6A5',
+    defaults: {
+      name: { value: '' },
+      profile: { value: '', type: 'mavlink-ai-profile', required: true },
+      connection: { value: '', type: 'mavlink-ai-connection', required: false },
+      mode: { value: 'fanout' },
+      command: { value: '' },
+      sendAs: { value: 'long' },
+      awaitAck: { value: false },
+      timeoutMs: { value: 3000, validate: RED.validators.number() },
+      maxRetries: { value: 3, validate: RED.validators.number() },
+      spacingMs: { value: 0, validate: RED.validators.number() },
+      stopOnError: { value: false },
+      dryRun: { value: false },
+      fields: { value: '' }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: 'font-awesome/fa-share-alt',
+    label: function () {
+      const prefix = this.mode === 'broadcast' ? 'broadcast' : 'fan-out';
+      return this.name || (this.command ? prefix + ' ' + this.command : 'mavlink ai ' + prefix);
+    },
+    oneditprepare: function () {
+      // Make the broadcast/fan-out distinction loud: they are not the same
+      // thing, and formation movement is fan-out (issue #46).
+      function refreshMode() {
+        const broadcast = $('#node-input-mode').val() === 'broadcast';
+        $('#mav-fanout-mode-tip').text(
+          broadcast
+            ? 'Broadcast sends ONE identical message to target_system 0. Only correct when every ' +
+              'vehicle should interpret the exact same bytes (e.g. stream rates). Formation movement is fan-out.'
+            : 'Fan-out sends one message per target vehicle, each with its own target_system and ' +
+              '(usually) its own coordinates. This is what formation movement needs.'
+        );
+        // Broadcast cannot collect per-vehicle ACKs.
+        if (broadcast) {
+          $('#node-input-awaitAck').prop('checked', false);
+        }
+        $('#node-input-awaitAck').prop('disabled', broadcast);
+        refreshAckRows();
+      }
+      function refreshAckRows() {
+        const on = $('#node-input-awaitAck').is(':checked');
+        $('.mav-fanout-ack').toggle(on);
+      }
+      $('#node-input-mode').on('change', refreshMode);
+      $('#node-input-awaitAck').on('change', refreshAckRows);
+      refreshMode();
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="mavlink-ai-fanout">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Swarm Fan-out">
+  </div>
+  <div class="form-row">
+    <label for="node-input-profile">Profile</label>
+    <input type="text" id="node-input-profile">
+  </div>
+  <div class="form-row">
+    <label for="node-input-mode">Mode</label>
+    <select id="node-input-mode" style="width:70%;">
+      <option value="fanout">Fan-out (one message per vehicle)</option>
+      <option value="broadcast">Broadcast (one message, target_system 0)</option>
+    </select>
+  </div>
+  <div id="mav-fanout-mode-tip" class="form-tips" style="margin:4px 0;"></div>
+  <div class="form-row">
+    <label for="node-input-command">Command</label>
+    <input type="text" id="node-input-command" placeholder="MAV_CMD_DO_REPOSITION (or set via msg.payload.command)">
+  </div>
+  <div class="form-row">
+    <label for="node-input-sendAs">Send as</label>
+    <select id="node-input-sendAs" style="width:70%;">
+      <option value="long">COMMAND_LONG (default)</option>
+      <option value="int">COMMAND_INT (position commands, x/y in degE7)</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-input-fields">Shared params</label>
+    <input type="text" id="node-input-fields" placeholder='{"param1":-1} (JSON, applied to every target)'>
+  </div>
+  <div class="form-row">
+    <label for="node-input-spacingMs">Spacing ms</label>
+    <input type="number" id="node-input-spacingMs" min="0" placeholder="0 = no pacing">
+  </div>
+  <div class="form-row">
+    <label for="node-input-dryRun">Dry-run</label>
+    <input type="checkbox" id="node-input-dryRun" style="display: inline-block; width: auto; vertical-align: top;">
+    <span style="color:#888;">output the built messages instead of sending/queueing them</span>
+  </div>
+  <div class="form-row">
+    <label for="node-input-awaitAck">Await acks</label>
+    <input type="checkbox" id="node-input-awaitAck" style="width:auto; vertical-align:middle;">
+    <span style="color:#888;">send via the connection and aggregate per-vehicle COMMAND_ACKs</span>
+  </div>
+  <div class="form-row mav-fanout-ack">
+    <label for="node-input-connection">Connection</label>
+    <input type="text" id="node-input-connection">
+  </div>
+  <div class="form-row mav-fanout-ack">
+    <label for="node-input-timeoutMs">Timeout ms</label>
+    <input type="number" id="node-input-timeoutMs">
+  </div>
+  <div class="form-row mav-fanout-ack">
+    <label for="node-input-maxRetries">Retries</label>
+    <input type="number" id="node-input-maxRetries">
+  </div>
+  <div class="form-row mav-fanout-ack">
+    <label for="node-input-stopOnError">Stop on error</label>
+    <input type="checkbox" id="node-input-stopOnError" style="display: inline-block; width: auto; vertical-align: top;">
+    <span style="color:#888;">abort remaining vehicles after the first failure</span>
+  </div>
+</script>
+
+<script type="text/html" data-help-name="mavlink-ai-fanout">
+  <p>Expands one logical command into <b>one message per target vehicle</b> with <code>target_system</code> filled in (fan-out), or — explicitly, in broadcast mode — a single identical message to <code>target_system</code> 0. These are different things: formation movement needs fan-out, because each vehicle gets its own target position.</p>
+  <p><b>Targets</b> come from <code>msg.payload.targets</code> (sysid numbers and/or objects like <code>{"sysid": 2, "lat": 39.1, "lon": -75.1, "alt": 40}</code>), <code>msg.payload.sysids</code>, or a <b>MAVLink AI Swarm</b> registry output (<code>payload.vehicles</code>) wired straight in. Per-target objects may override <code>param1..7</code>, <code>lat/lon/alt</code>, raw <code>x/y/z</code>, <code>frame</code>, and <code>target_component</code>.</p>
+  <p><b>Meter offsets</b>: give <code>msg.payload.origin</code> (<code>{lat, lon, alt}</code>) and per-target <code>north/east/up</code> (or <code>down</code>) in meters — the node converts to global lat/lon/alt (and degE7 for COMMAND_INT) so you never add meters to degrees by hand. Set <b>Dry-run</b> (or <code>msg.payload.dry_run</code>) to see exactly what would be sent (<code>swarm/dryrun</code>).</p>
+  <p><b>Without Await acks</b> the node emits normalized <code>mavlink/send</code> messages for a downstream <b>MAVLink AI Out</b> node, optionally paced by <b>Spacing ms</b>. <b>With Await acks</b> it sends each command on the connection, runs the full COMMAND_ACK workflow per vehicle (retries, timeout), and outputs one <code>swarm/ack</code> aggregation: <code>{ accepted: [1,2], failed: [4], timedOut: [5], skipped: [], results: { "1": {...} } }</code>. Partial failure is normal in swarm operations and is reported, not hidden.</p>
+  <p><b>Safety gates</b> belong upstream: filter the swarm registry output (e.g. <code>{"armed": true, "includeStale": false}</code> or a group) so only vehicles with a recent heartbeat and the expected state are targeted.</p>
+</script>

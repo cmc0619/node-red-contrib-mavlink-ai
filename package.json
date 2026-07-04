@@ -47,7 +47,9 @@
       "mavlink-ai-filter": "nodes/mavlink-ai-filter.js",
       "mavlink-ai-command": "nodes/mavlink-ai-command.js",
       "mavlink-ai-mission": "nodes/mavlink-ai-mission.js",
-      "mavlink-ai-param": "nodes/mavlink-ai-param.js"
+      "mavlink-ai-param": "nodes/mavlink-ai-param.js",
+      "mavlink-ai-swarm": "nodes/mavlink-ai-swarm.js",
+      "mavlink-ai-fanout": "nodes/mavlink-ai-fanout.js"
     }
   }
 }

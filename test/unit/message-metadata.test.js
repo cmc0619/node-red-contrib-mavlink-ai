@@ -58,6 +58,37 @@ test('resolves real param indices for commands with gaps', () => {
   assert.strictEqual(takeoff.params[0].index, 1);
 });
 
+test('messages and fields carry visible descriptions from the .d.ts JSDoc (#45)', () => {
+  const md = buildMetadata('ardupilotmega');
+  const fov = md.messages.CAMERA_FOV_STATUS;
+  assert.match(fov.description, /field of view of a camera/i);
+  const timeBootMs = fov.fields.find((f) => f.name === 'time_boot_ms');
+  assert.match(timeBootMs.description, /Timestamp \(time since system boot\)/);
+  // The JSDoc's literal "Units: ms" line must not be duplicated into the
+  // description — units already ride in their own metadata field.
+  assert.ok(!/Units:/.test(timeBootMs.description));
+  assert.strictEqual(timeBootMs.units, 'ms');
+});
+
+test('enum members carry descriptions, merged across the include chain (#45)', () => {
+  const md = buildMetadata('ardupilotmega');
+  // Defined in common:
+  const arm = md.enums.MAV_CMD.find((e) => e.name === 'MAV_CMD_COMPONENT_ARM_DISARM');
+  assert.match(arm.description, /Arms \/ Disarms a component/);
+  // Defined only in the ardupilotmega extension of the same enum:
+  const resume = md.enums.MAV_CMD.find((e) => e.name === 'MAV_CMD_DO_SET_RESUME_REPEAT_DIST');
+  assert.match(resume.description, /distance to be repeated/i);
+  const active = md.enums.MAV_STATE.find((e) => e.name === 'MAV_STATE_ACTIVE');
+  assert.match(active.description, /active/i);
+});
+
+test('commands carry a command-level description (#45)', () => {
+  const md = buildMetadata('ardupilotmega');
+  assert.match(md.commands.MAV_CMD_NAV_LOITER_TIME.description, /Loiter at the specified/i);
+  // Param descriptions keep working as before.
+  assert.match(md.commands.MAV_CMD_NAV_LOITER_TIME.params[0].description, /Loiter time/);
+});
+
 test('invalid dialect yields an invalid metadata object (no throw)', () => {
   const md = buildMetadata('nope-not-a-dialect');
   assert.strictEqual(md.valid, false);

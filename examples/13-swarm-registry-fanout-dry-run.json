@@ -1,0 +1,141 @@
+[
+  {
+    "id": "flow13",
+    "type": "tab",
+    "label": "MAVLink AI - 13 Swarm Registry + Fan-out (dry-run)",
+    "disabled": false,
+    "info": "Simulation-first swarm demo (issue #46): discover active sysids from HEARTBEAT, then fan out a formation reposition as a DRY-RUN wired to debug. Nothing is sent to a vehicle until you disable dry-run and wire the fan-out node into a MAVLink AI Out node. Works against multi-vehicle SITL sending to UDP 14550."
+  },
+  {
+    "id": "ai_profile_copter",
+    "type": "mavlink-ai-profile",
+    "name": "AI Profile - Copter",
+    "profileType": "gcs",
+    "dialect": "ardupilotmega",
+    "customDialectPath": "",
+    "mavlinkVersion": "auto",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
+    "defaultTargetSystem": 1,
+    "defaultTargetComponent": 1,
+    "preferredMissionItemType": "MISSION_ITEM_INT",
+    "defaultMissionType": "mission",
+    "heartbeatType": "",
+    "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
+    "debugProtocol": false
+  },
+  {
+    "id": "ai_conn_udp",
+    "type": "mavlink-ai-connection",
+    "name": "AI Conn - Copter UDP 14550",
+    "profile": "ai_profile_copter",
+    "transport": "udp-peer",
+    "routingMode": "single-profile",
+    "bindAddress": "0.0.0.0",
+    "bindPort": 14550,
+    "remoteHost": "",
+    "remotePort": 14550,
+    "serialPath": "",
+    "serialBaud": 57600,
+    "reconnect": true,
+    "heartbeat": true,
+    "heartbeatIntervalMs": 1000,
+    "acceptedSysids": "",
+    "acceptedCompids": "",
+    "unmatchedPolicy": "default",
+    "routeTable": "",
+    "outboundQueue": true
+  },
+  {
+    "id": "n13_swarm",
+    "type": "mavlink-ai-swarm",
+    "z": "flow13",
+    "name": "Swarm registry",
+    "connection": "ai_conn_udp",
+    "staleMs": 5000,
+    "expireMs": 30000,
+    "emitOnChange": true,
+    "intervalMs": 0,
+    "includeGcs": false,
+    "groups": "{\"all-copters\":{\"type\":\"MAV_TYPE_QUADROTOR\"}}",
+    "x": 200,
+    "y": 120,
+    "wires": [
+      [
+        "n13_dbg_table"
+      ]
+    ]
+  },
+  {
+    "id": "n13_dbg_table",
+    "type": "debug",
+    "z": "flow13",
+    "name": "Vehicle table",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 450,
+    "y": 120,
+    "wires": []
+  },
+  {
+    "id": "n13_inject",
+    "type": "inject",
+    "z": "flow13",
+    "name": "Line up 10 m apart",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "topic": "",
+    "payload": "{\"origin\":{\"lat\":39.1,\"lon\":-75.1,\"alt\":40},\"targets\":[{\"sysid\":1,\"east\":0},{\"sysid\":2,\"east\":10},{\"sysid\":3,\"east\":20}]}",
+    "payloadType": "json",
+    "x": 190,
+    "y": 220,
+    "wires": [
+      [
+        "n13_fanout"
+      ]
+    ]
+  },
+  {
+    "id": "n13_fanout",
+    "type": "mavlink-ai-fanout",
+    "z": "flow13",
+    "name": "Reposition fan-out (dry-run)",
+    "profile": "ai_profile_copter",
+    "connection": "",
+    "mode": "fanout",
+    "command": "MAV_CMD_DO_REPOSITION",
+    "sendAs": "int",
+    "awaitAck": false,
+    "timeoutMs": 3000,
+    "maxRetries": 3,
+    "spacingMs": 100,
+    "stopOnError": false,
+    "dryRun": true,
+    "fields": "{\"param1\":-1}",
+    "x": 450,
+    "y": 220,
+    "wires": [
+      [
+        "n13_dbg_dry"
+      ]
+    ]
+  },
+  {
+    "id": "n13_dbg_dry",
+    "type": "debug",
+    "z": "flow13",
+    "name": "Would send",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 690,
+    "y": 220,
+    "wires": []
+  }
+]

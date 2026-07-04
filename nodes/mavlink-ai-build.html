@@ -22,6 +22,7 @@
       const $message = $('#node-input-messageName');
       const $fieldsHost = $('#mav-fields');
       const $status = $('#mav-fields-status');
+      const $msgDesc = $('#mav-msg-desc');
 
       // Parse the saved field values ({ snake_field: value }).
       let savedFields = {};
@@ -47,12 +48,28 @@
         return /^(u?int(8|16|32|64)_t|float|double|char)/.test(type);
       }
 
-      // Render one labeled input per field of the selected message.
+      // Trim an enum-member description to fit an <option> label.
+      function optionLabel(e) {
+        let label = e.name + ' (' + e.value + ')';
+        if (e.description) {
+          const short = e.description.length > 90 ? e.description.slice(0, 87) + '…' : e.description;
+          label += ' - ' + short;
+        }
+        return label;
+      }
+
+      // Render one labeled input per field of the selected message, each with a
+      // visible Type/Units/description help box (issue #45) like the old
+      // mavlink-msg editor.
       function renderFields(msgName, prefill) {
         $fieldsHost.empty();
+        $msgDesc.empty().hide();
         const def = metadata.messages[msgName];
         if (!def) {
           return;
+        }
+        if (def.description) {
+          $msgDesc.text(def.description).show();
         }
         def.fields.forEach(function (field) {
           if (field.name === 'target_system' || field.name === 'target_component') {
@@ -76,7 +93,7 @@
             $('<option></option>').val('').text('(default)').appendTo($input);
             let matched = false;
             metadata.enums[field.enum].forEach(function (e) {
-              const opt = $('<option></option>').val(e.name).text(e.name + ' (' + e.value + ')');
+              const opt = $('<option></option>').val(e.name).text(optionLabel(e));
               if (saved !== undefined && (String(saved) === e.name || Number(saved) === e.value)) {
                 opt.prop('selected', true);
                 matched = true;
@@ -96,14 +113,34 @@
             $input = $('<input type="number" step="any">')
               .attr('id', id)
               .attr('data-field', field.name)
+              .attr('placeholder', field.type)
               .val(saved !== undefined ? saved : '');
           } else {
             $input = $('<input type="text">')
               .attr('id', id)
               .attr('data-field', field.name)
+              .attr('placeholder', field.type)
               .val(saved !== undefined ? saved : '');
           }
           $input.css({ width: '70%' }).appendTo($row);
+
+          // Visible Type/Units/description help under the input, not hidden in
+          // a title tooltip (issue #45).
+          const tipParts = [];
+          if (field.type) {
+            tipParts.push('Type: ' + field.type + (field.enum ? ' [' + field.enum + ']' : ''));
+          }
+          if (field.units) {
+            tipParts.push('Units: ' + field.units);
+          }
+          if (field.description) {
+            tipParts.push(field.description);
+          }
+          if (tipParts.length) {
+            $('<div class="form-tips" style="margin:2px 0 6px 120px; width:70%; box-sizing:border-box;"></div>')
+              .text(tipParts.join(' | '))
+              .appendTo($row);
+          }
           $row.appendTo($fieldsHost);
         });
       }
@@ -215,6 +252,7 @@
     <label for="node-input-messageName">Message</label>
     <select id="node-input-messageName" style="width:70%;"></select>
   </div>
+  <div id="mav-msg-desc" class="form-tips" style="display:none; margin:4px 0;"></div>
   <div class="form-row">
     <label for="node-input-applyDefaults">Apply defaults</label>
     <input type="checkbox" id="node-input-applyDefaults" style="display: inline-block; width: auto; vertical-align: top;">
@@ -226,6 +264,6 @@
 
 <script type="text/html" data-help-name="mavlink-ai-build">
   <p>Builds a normalized outbound MAVLink message object (without sending it) for a downstream <b>MAVLink AI Out</b> node.</p>
-  <p>Pick a <b>Message</b> and the editor renders a labeled input for each of its fields; fields backed by a MAVLink enum become dropdowns of readable names (e.g. <code>MAV_CMD_COMPONENT_ARM_DISARM</code>). The field list updates when you change the message or the profile's dialect.</p>
+  <p>Pick a <b>Message</b> and the editor shows the message's MAVLink description plus a labeled input for each of its fields, with the field's wire type as the input placeholder and a visible <i>Type | Units | description</i> help box underneath. Fields backed by a MAVLink enum become dropdowns of readable names, values, and descriptions (e.g. <code>MAV_CMD_COMPONENT_ARM_DISARM</code>). The field list updates when you change the message or the profile's dialect.</p>
   <p>Leave a field blank to let it zero-fill. <code>msg.payload</code> may still override fields at runtime, and enum-name strings are resolved against the profile dialect.</p>
 </script>
