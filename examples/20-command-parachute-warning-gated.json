@@ -1,0 +1,93 @@
+[
+  {
+    "id": "flow20",
+    "type": "tab",
+    "label": "MAVLink AI - 20 Parachute (safety-gated)",
+    "disabled": false,
+    "info": "WARNING — safety-critical example (issue #51). MAV_CMD_DO_PARACHUTE with action RELEASE (2) fires the parachute and typically stops the motors: releasing at the wrong moment destroys the vehicle. Most vehicles have no parachute at all — this is an example pattern, not a preset. The gate function refuses to pass RELEASE unless msg.payload.i_understand_release === true, and the output is Debug-wired only."
+  },
+  {
+    "id": "ai_profile_copter",
+    "type": "mavlink-ai-profile",
+    "name": "AI Profile - Copter",
+    "profileType": "copter",
+    "firmware": "ardupilot",
+    "dialect": "ardupilotmega",
+    "customDialectPath": "",
+    "mavlinkVersion": "auto",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
+    "defaultTargetSystem": 1,
+    "defaultTargetComponent": 1,
+    "preferredMissionItemType": "MISSION_ITEM_INT",
+    "defaultMissionType": "mission",
+    "heartbeatType": "",
+    "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
+    "debugProtocol": false
+  },
+  {
+    "id": "n20_i1",
+    "type": "inject",
+    "z": "flow20",
+    "name": "Enable parachute (auto-deploy)",
+    "props": [{ "p": "payload" }],
+    "payload": "{\"action\":1}",
+    "payloadType": "json",
+    "x": 200,
+    "y": 100,
+    "wires": [["n20_gate"]]
+  },
+  {
+    "id": "n20_i2",
+    "type": "inject",
+    "z": "flow20",
+    "name": "RELEASE (confirmed)",
+    "props": [{ "p": "payload" }],
+    "payload": "{\"action\":2,\"i_understand_release\":true}",
+    "payloadType": "json",
+    "x": 170,
+    "y": 160,
+    "wires": [["n20_gate"]]
+  },
+  {
+    "id": "n20_gate",
+    "type": "function",
+    "z": "flow20",
+    "name": "Release confirmation gate",
+    "func": "// DO_PARACHUTE actions: 0 disable, 1 enable, 2 RELEASE.\n// Enable/disable pass through; RELEASE needs explicit confirmation.\nconst action = Number(msg.payload && msg.payload.action);\nif (action === 2 && msg.payload.i_understand_release !== true) {\n    node.warn('Parachute RELEASE blocked: set msg.payload.i_understand_release = true.');\n    return null;\n}\nmsg.payload = { param1: action };\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "x": 450,
+    "y": 130,
+    "wires": [["n20_cmd"]]
+  },
+  {
+    "id": "n20_cmd",
+    "type": "mavlink-ai-command",
+    "z": "flow20",
+    "name": "DO_PARACHUTE",
+    "profile": "ai_profile_copter",
+    "command": "MAV_CMD_DO_PARACHUTE",
+    "sendAs": "long",
+    "awaitAck": false,
+    "timeoutMs": 3000,
+    "maxRetries": 3,
+    "fields": "",
+    "presetFields": "",
+    "x": 690,
+    "y": 130,
+    "wires": [["n20_dbg"]]
+  },
+  {
+    "id": "n20_dbg",
+    "type": "debug",
+    "z": "flow20",
+    "name": "Would send (parachute!)",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 920,
+    "y": 130,
+    "wires": []
+  }
+]

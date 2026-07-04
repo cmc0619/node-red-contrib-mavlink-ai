@@ -154,6 +154,33 @@ implemented in the v2 baseline.
 - [ ] Formation/leader-follower helper nodes (issue #46 follow-up; the
   primitives above land first per the issue's scope guidance).
 
+## Phase 13: Command node UX & preset expansion
+
+- [x] **Workflow-grouped command dropdown** (issue #50). Presets grouped into
+  Basic Flight / Guided–Autonomy / Mission / Camera / Telemetry–System
+  optgroups; raw `MAV_CMD_*` clearly presented as the Advanced escape hatch.
+- [x] **New presets** (issues #50/#52): Go To / Reposition (COMMAND_INT
+  DO_REPOSITION), Change Speed, Condition Yaw, Spin / Rotate (configurable
+  angle, default 360), Mission Start, Pause/Resume Mission
+  (DO_PAUSE_CONTINUE, param1 protected), Take Photo, Start/Stop Video.
+- [x] **Friendly preset parameter UI** (issue #49). Per-preset editor fields
+  stored in `presetFields` (separate from raw paramN storage): profile-aware
+  flight-mode dropdown (`/mavlink-ai/modes` endpoint over `knownModes`),
+  takeoff altitude, force arm/disarm as an advanced checkbox, message
+  pickers + rate-Hz input for the message-interval presets, and a
+  warning/confirmation gate on the reboot preset. Runtime `msg.payload`
+  values override editor statics.
+- [x] **Build node command warning** (issue #48). Selecting
+  `COMMAND_LONG`/`COMMAND_INT` in the Build node shows a visible warning
+  pointing at the Command node; both messages stay fully usable.
+- [x] **Specialized command families as examples first** (issue #51):
+  servo/relay, camera trigger, gimbal + ROI, log list request, calibration
+  (confirmation-gated, bench only), parachute (release-gated) — plus the
+  beginner demo sequence (issue #52). All Debug-wired by default.
+- [ ] Dedicated `mavlink-ai-camera` / `mavlink-ai-gimbal` nodes only if the
+  example flows prove the workflows are stateful enough to justify them
+  (issue #51 guidance).
+
 ## Open 1.0 gaps (not yet implemented)
 
 These are stated 1.0 requirements in `RELEASE_SCOPE.md` that the current

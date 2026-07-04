@@ -32,9 +32,58 @@ module.exports = function registerMavlinkAiCommand(RED) {
   // Serve message/enum metadata to the editor's MAV_CMD picker.
   registerEditorApi(RED);
 
+  /**
+   * MAV_CMD_CONDITION_YAW param3 direction from a friendly value:
+   * 'clockwise'/'cw'/1, 'counter-clockwise'/'ccw'/-1, 'shortest'/0.
+   *
+   * @param {*} value
+   * @param {number} fallback
+   * @returns {number}
+   */
+  function yawDirection(value, fallback) {
+    if (value === undefined || value === null || value === '') {
+      return fallback;
+    }
+    const s = String(value).toLowerCase().replace(/[\s_-]/g, '');
+    if (s === 'clockwise' || s === 'cw') {
+      return 1;
+    }
+    if (s === 'counterclockwise' || s === 'ccw') {
+      return -1;
+    }
+    if (s === 'shortest') {
+      return 0;
+    }
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  /**
+   * Shared CONDITION_YAW shape for the condition_yaw and spin presets.
+   *
+   * @param {object} p        merged preset/runtime params
+   * @param {number} angle    degrees to turn / heading to face
+   * @param {object} defaults { direction, relative } preset defaults
+   * @returns {object}
+   */
+  function yawCommand(p, angle, defaults) {
+    return {
+      command: 'MAV_CMD_CONDITION_YAW',
+      param1: angle,
+      param2: firstDefined(p.rate, p.param2, 0), // 0 = firmware default rate
+      param3: yawDirection(p.direction, defaults.direction),
+      param4: toBool(firstDefined(p.relative, defaults.relative), false) ? 1 : 0
+    };
+  }
+
+  // MAV_CMD_DO_CHANGE_SPEED param1 speed types from friendly names.
+  const SPEED_TYPES = { airspeed: 0, groundspeed: 1, climb: 2, descent: 3 };
+
   // Each builder returns a flat object: { command, param1..param7 } (only the
-  // params it sets). These are merged into the COMMAND_LONG fields.
+  // params it sets). These are merged into the COMMAND_LONG/COMMAND_INT
+  // fields. Grouping mirrors the editor's dropdown (#50).
   const COMMANDS = {
+    // --- Basic Flight -------------------------------------------------------
     arm: (p) => ({ command: 'MAV_CMD_COMPONENT_ARM_DISARM', param1: 1, param2: p.force ? 21196 : 0 }),
     disarm: (p) => ({ command: 'MAV_CMD_COMPONENT_ARM_DISARM', param1: 0, param2: p.force ? 21196 : 0 }),
     set_mode: (p) => ({
@@ -46,16 +95,73 @@ module.exports = function registerMavlinkAiCommand(RED) {
     takeoff: (p) => ({ command: 'MAV_CMD_NAV_TAKEOFF', param7: firstDefined(p.altitude, p.param7, 10) }),
     land: () => ({ command: 'MAV_CMD_NAV_LAND' }),
     rtl: () => ({ command: 'MAV_CMD_NAV_RETURN_TO_LAUNCH' }),
+
+    // --- Guided / Autonomy (#50) --------------------------------------------
+    // goto rides COMMAND_INT by default (DO_REPOSITION wants degE7 x/y); the
+    // lat/lon/alt inputs are handled by the COMMAND_INT path below.
+    goto: (p) => ({
+      command: 'MAV_CMD_DO_REPOSITION',
+      param1: firstDefined(p.speed, -1), // m/s, -1 = vehicle default
+      param2: 1, // MAV_DO_REPOSITION_FLAGS_CHANGE_MODE: switch to guided
+      param4: firstDefined(p.yaw, NaN) // NaN = keep the current yaw mode
+    }),
+    change_speed: (p) => ({
+      command: 'MAV_CMD_DO_CHANGE_SPEED',
+      param1: firstDefined(SPEED_TYPES[String(p.speed_type).toLowerCase()], p.speed_type, p.param1, 1),
+      param2: firstDefined(p.speed, p.param2, 0),
+      param3: firstDefined(p.throttle, p.param3, -1) // -1 = no throttle change
+    }),
+    condition_yaw: (p) => yawCommand(p, firstDefined(p.angle, p.param1, 0), { direction: 0, relative: false }),
+    // Spin / Rotate (#52): a relative turn, default one full rotation but the
+    // angle is configurable (90, 180, 720, ...).
+    spin: (p) => yawCommand(p, firstDefined(p.angle, p.param1, 360), { direction: 1, relative: true }),
+
+    // --- Mission (#50) ------------------------------------------------------
+    mission_start: (p) => ({
+      command: 'MAV_CMD_MISSION_START',
+      param1: firstDefined(p.first_item, p.param1, 0),
+      param2: firstDefined(p.last_item, p.param2, 0)
+    }),
+    // param1 is fixed per preset so an incoming override can't silently flip
+    // pause into resume (same protection as arm/disarm param1).
+    pause_mission: () => ({ command: 'MAV_CMD_DO_PAUSE_CONTINUE', param1: 0 }),
+    resume_mission: () => ({ command: 'MAV_CMD_DO_PAUSE_CONTINUE', param1: 1 }),
+
+    // --- Camera (#52): cameras are often separate MAVLink components — set
+    // target_component (e.g. 100 for MAV_COMP_ID_CAMERA) when needed. --------
+    take_photo: (p) => ({
+      command: 'MAV_CMD_IMAGE_START_CAPTURE',
+      param2: firstDefined(p.interval, p.param2, 0), // s between captures
+      param3: firstDefined(p.count, p.param3, 1), // 1 = single photo
+      param4: firstDefined(p.sequence, p.param4, 0)
+    }),
+    start_video: (p) => ({
+      command: 'MAV_CMD_VIDEO_START_CAPTURE',
+      param1: firstDefined(p.stream_id, p.param1, 0), // 0 = all streams
+      param2: firstDefined(p.status_frequency, p.param2, 0)
+    }),
+    stop_video: (p) => ({
+      command: 'MAV_CMD_VIDEO_STOP_CAPTURE',
+      param1: firstDefined(p.stream_id, p.param1, 0)
+    }),
+
+    // --- Telemetry / System -------------------------------------------------
     reboot: () => ({ command: 'MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN', param1: 1 }),
     request_message: (p) => ({
       command: 'MAV_CMD_REQUEST_MESSAGE',
       param1: firstDefined(p.message_id, p.param1, 0)
     }),
-    set_message_interval: (p) => ({
-      command: 'MAV_CMD_SET_MESSAGE_INTERVAL',
-      param1: firstDefined(p.message_id, p.param1, 0),
-      param2: firstDefined(p.interval_us, p.param2, 1000000)
-    }),
+    set_message_interval: (p) => {
+      // Humans think in Hz; the wire wants microseconds. rate_hz wins only
+      // when it is a usable positive number.
+      const rate = Number(p.rate_hz);
+      const rateUs = Number.isFinite(rate) && rate > 0 ? Math.round(1e6 / rate) : undefined;
+      return {
+        command: 'MAV_CMD_SET_MESSAGE_INTERVAL',
+        param1: firstDefined(p.message_id, p.param1, 0),
+        param2: firstDefined(p.interval_us, rateUs, p.param2, 1000000)
+      };
+    },
     // Disable a stream: SET_MESSAGE_INTERVAL with interval -1 stops the message
     // (0 would request the default rate, so we force -1 for a real stop).
     stop_message_interval: (p) => ({
@@ -64,6 +170,10 @@ module.exports = function registerMavlinkAiCommand(RED) {
       param2: -1
     })
   };
+
+  // Presets that should ride COMMAND_INT unless the user says otherwise
+  // (their positional params are degE7-scaled lat/lon).
+  const INT_PRESETS = new Set(['goto']);
 
   function MavlinkAiCommandNode(config) {
     RED.nodes.createNode(this, config);
@@ -85,6 +195,19 @@ module.exports = function registerMavlinkAiCommand(RED) {
         configParams = JSON.parse(config.fields);
       } catch (e) {
         node.warn(`mavlink-ai-command: invalid fields JSON, ignoring (${e.message})`);
+      }
+    }
+
+    // Friendly preset parameters from the editor (#49): mode, altitude, force,
+    // message_id, rate_hz, angle, ... Stored separately from the raw paramN
+    // fields so switching between preset and raw selections cannot corrupt
+    // saved values. Runtime msg.payload values override these statics.
+    let presetParams = {};
+    if (config.presetFields) {
+      try {
+        presetParams = JSON.parse(config.presetFields);
+      } catch (e) {
+        node.warn(`mavlink-ai-command: invalid presetFields JSON, ignoring (${e.message})`);
       }
     }
 
@@ -119,19 +242,25 @@ module.exports = function registerMavlinkAiCommand(RED) {
 
       const defaults = node.profile.getDefaults ? node.profile.getDefaults() : {};
 
+      // Editor preset fields under runtime payload values (#49): a static
+      // editor value (e.g. mode "GUIDED", altitude 15) applies unless the
+      // incoming message overrides it.
+      const merged = Object.assign({}, presetParams, incoming);
+
       // Firmware-aware mode names (issue #20): set_mode accepts `mode` (e.g.
-      // "GUIDED", "POSITION") resolved against the profile firmware + vehicle
-      // type. Numeric base_mode/custom_mode input keeps working unchanged.
-      const params = Object.assign({}, incoming);
-      if (selected === 'set_mode' && incoming.mode !== undefined) {
+      // "GUIDED", "POSITION") — now also from the editor's mode dropdown —
+      // resolved against the profile firmware + vehicle type. Numeric
+      // base_mode/custom_mode input keeps working unchanged.
+      const params = Object.assign({}, merged);
+      if (selected === 'set_mode' && merged.mode !== undefined) {
         try {
           const resolved = resolveFlightMode(
             defaults.firmware,
-            firstDefined(incoming.vehicle_type, defaults.profileType),
-            incoming.mode
+            firstDefined(merged.vehicle_type, defaults.profileType),
+            merged.mode
           );
-          params.base_mode = firstDefined(incoming.base_mode, resolved.base_mode);
-          params.custom_mode = firstDefined(incoming.custom_mode, resolved.custom_mode);
+          params.base_mode = firstDefined(merged.base_mode, resolved.base_mode);
+          params.custom_mode = firstDefined(merged.custom_mode, resolved.custom_mode);
         } catch (err) {
           const e = toMavlinkError(err, 'UNKNOWN_MODE');
           return sendError(msg, send, done, e.code, e.message, e.context);
@@ -142,6 +271,14 @@ module.exports = function registerMavlinkAiCommand(RED) {
       // number) is sent as a raw COMMAND_LONG/COMMAND_INT with the given params.
       let built;
       if (builder) {
+        // Reboot is the one preset dangerous enough for a runtime gate: a
+        // reboot mid-flight stops the motors, and the editor's confirmation
+        // checkbox cannot protect flows deployed via import/API. Require the
+        // confirm flag (editor checkbox or msg.payload.confirm) here too.
+        if (selected === 'reboot' && !toBool(params.confirm, false)) {
+          return sendError(msg, send, done, 'REBOOT_NOT_CONFIRMED',
+            "Reboot requires explicit confirmation: check 'Confirm reboot' in the editor or set msg.payload.confirm = true.");
+        }
         built = builder(params);
       } else if (isRawCommand(selected)) {
         built = { command: selected };
@@ -152,8 +289,10 @@ module.exports = function registerMavlinkAiCommand(RED) {
 
       // COMMAND_INT (issue #17): some commands are only valid via COMMAND_INT,
       // whose x/y carry lat/lon as degE7 int32 for global frames. Accept the
-      // usual Node-RED boolean spellings ("true"/1/"yes") at runtime.
-      const useInt = toBool(firstDefined(msg.command_int, incoming.command_int, node.sendAs === 'int'), false);
+      // usual Node-RED boolean spellings ("true"/1/"yes") at runtime. Position
+      // presets like goto default to COMMAND_INT (#50).
+      const defaultInt = node.sendAs === 'int' || INT_PRESETS.has(String(selected));
+      const useInt = toBool(firstDefined(msg.command_int, merged.command_int, defaultInt), false);
 
       let fields;
       let messageName;
@@ -162,18 +301,21 @@ module.exports = function registerMavlinkAiCommand(RED) {
         // Positional input priority: raw x/y (wire values) > lat/lon degrees >
         // editor-saved param5/6 (degrees, COMMAND_LONG convention) > 0. A value
         // that fails numeric conversion must error, not silently become 0,0.
-        const latDeg = firstDefined(incoming.lat, configParams.param5);
-        const lonDeg = firstDefined(incoming.lon, configParams.param6);
-        const x = firstDefined(incoming.x, latDeg !== undefined ? Math.round(Number(latDeg) * 1e7) : undefined, 0);
-        const y = firstDefined(incoming.y, lonDeg !== undefined ? Math.round(Number(lonDeg) * 1e7) : undefined, 0);
-        const z = firstDefined(incoming.z, incoming.alt, incoming.param7, configParams.param7, 0);
-        if (!Number.isFinite(Number(x)) || !Number.isFinite(Number(y)) || !Number.isFinite(Number(z))) {
+        const latDeg = firstDefined(merged.lat, configParams.param5);
+        const lonDeg = firstDefined(merged.lon, configParams.param6);
+        // Coerce to numbers here (not just validate): the raw input may be a
+        // numeric string, and the emitted payload should carry real numbers
+        // for downstream consumers rather than relying on later resolution.
+        const x = Number(firstDefined(merged.x, latDeg !== undefined ? Math.round(Number(latDeg) * 1e7) : undefined, 0));
+        const y = Number(firstDefined(merged.y, lonDeg !== undefined ? Math.round(Number(lonDeg) * 1e7) : undefined, 0));
+        const z = Number(firstDefined(merged.z, merged.alt, merged.param7, configParams.param7, 0));
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
           return sendError(msg, send, done, 'BAD_COORDINATES',
             `COMMAND_INT coordinates must be numeric (got x=${x}, y=${y}, z=${z}).`);
         }
         fields = Object.assign(
           {
-            frame: firstDefined(incoming.frame, 'MAV_FRAME_GLOBAL'),
+            frame: firstDefined(merged.frame, 'MAV_FRAME_GLOBAL'),
             current: 0,
             autocontinue: 0,
             param1: 0,
@@ -217,13 +359,13 @@ module.exports = function registerMavlinkAiCommand(RED) {
       const overridable = useInt ? 4 : 7;
       for (let i = 1; i <= overridable; i += 1) {
         const key = `param${i}`;
-        if (incoming[key] !== undefined && built[key] === undefined) {
-          fields[key] = incoming[key];
+        if (merged[key] !== undefined && built[key] === undefined) {
+          fields[key] = merged[key];
         }
       }
 
-      const targetSystem = firstDefined(incoming.target_system, defaults.defaultTargetSystem, 1);
-      const targetComponent = firstDefined(incoming.target_component, defaults.defaultTargetComponent, 1);
+      const targetSystem = firstDefined(merged.target_system, defaults.defaultTargetSystem, 1);
+      const targetComponent = firstDefined(merged.target_component, defaults.defaultTargetComponent, 1);
 
       // --- await-ack mode (issue #16): run the command protocol ourselves ----
       if (node.awaitAck) {

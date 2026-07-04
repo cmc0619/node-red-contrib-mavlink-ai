@@ -11,7 +11,24 @@
       awaitAck: { value: false },
       timeoutMs: { value: 3000, validate: RED.validators.number() },
       maxRetries: { value: 3, validate: RED.validators.number() },
-      fields: { value: '' }
+      fields: { value: '' },
+      // Friendly preset parameters (#49), stored separately from the raw
+      // paramN fields so preset/raw switches can't corrupt saved values.
+      // Reboot requires an explicit confirmation once the dialog has been
+      // edited; pre-existing flows (no presetFields yet) stay valid.
+      presetFields: {
+        value: '',
+        validate: function (v) {
+          if (this.command !== 'reboot' || !v) {
+            return true;
+          }
+          try {
+            return JSON.parse(v).confirm === true;
+          } catch (e) {
+            return false;
+          }
+        }
+      }
     },
     inputs: 1,
     outputs: 1,
@@ -21,29 +38,166 @@
     },
     oneditprepare: function () {
       const node = this;
-      const PRESETS = [
-        ['arm', 'Arm'],
-        ['disarm', 'Disarm'],
-        ['set_mode', 'Set Mode'],
-        ['takeoff', 'Takeoff'],
-        ['land', 'Land'],
-        ['rtl', 'RTL'],
-        ['reboot', 'Reboot Autopilot'],
-        ['request_message', 'Request Message'],
-        ['set_message_interval', 'Set Message Interval'],
-        ['stop_message_interval', 'Stop Message Interval']
+      // Friendly presets grouped by workflow (#50). Raw MAV_CMD_* is NOT a
+      // preset — it is the advanced escape hatch and gets its own optgroup.
+      const PRESET_GROUPS = [
+        ['Basic Flight', [
+          ['arm', 'Arm'],
+          ['disarm', 'Disarm'],
+          ['set_mode', 'Set Mode'],
+          ['takeoff', 'Takeoff'],
+          ['land', 'Land'],
+          ['rtl', 'RTL']
+        ]],
+        ['Guided / Autonomy', [
+          ['goto', 'Go To / Reposition'],
+          ['change_speed', 'Change Speed'],
+          ['condition_yaw', 'Condition Yaw'],
+          ['spin', 'Spin / Rotate']
+        ]],
+        ['Mission', [
+          ['mission_start', 'Mission Start'],
+          ['pause_mission', 'Pause Mission'],
+          ['resume_mission', 'Resume Mission']
+        ]],
+        ['Camera', [
+          ['take_photo', 'Take Photo'],
+          ['start_video', 'Start Video Recording'],
+          ['stop_video', 'Stop Video Recording']
+        ]],
+        ['Telemetry / System', [
+          ['request_message', 'Request Message'],
+          ['set_message_interval', 'Set Message Interval'],
+          ['stop_message_interval', 'Stop Message Interval'],
+          ['reboot', 'Reboot Autopilot']
+        ]]
       ];
+
+      // Friendly per-preset parameter forms (#49). Field types:
+      //   number | checkbox | select (static options) |
+      //   mode (profile-aware flight modes) | message (dialect message picker)
+      const PRESET_FORMS = {
+        arm: {
+          fields: [{ key: 'force', type: 'checkbox', label: 'Force arm', tip: 'Bypasses pre-arm safety checks (magic value 21196). Usually leave off.' }]
+        },
+        disarm: {
+          fields: [{ key: 'force', type: 'checkbox', label: 'Force disarm', tip: 'Bypasses safety checks — can disarm in flight. Usually leave off.' }]
+        },
+        set_mode: {
+          tip: 'The mode list comes from the profile firmware + vehicle type. Numeric base_mode/custom_mode via msg.payload keep working; raw custom-mode numbers are firmware/vehicle-specific (GUIDED is 4 on ArduCopter but 15 on ArduPlane).',
+          fields: [{ key: 'mode', type: 'mode', label: 'Flight mode' }]
+        },
+        takeoff: {
+          fields: [{ key: 'altitude', type: 'number', label: 'Altitude (m)', placeholder: '10' }]
+        },
+        land: { tip: 'No parameters — lands at the current position.' },
+        rtl: { tip: 'No parameters — returns to the launch point.' },
+        goto: {
+          tip: 'Sends MAV_CMD_DO_REPOSITION as COMMAND_INT (lat/lon converted to degE7 automatically). msg.payload.lat/lon/alt override the static values.',
+          fields: [
+            { key: 'lat', type: 'number', label: 'Latitude (deg)' },
+            { key: 'lon', type: 'number', label: 'Longitude (deg)' },
+            { key: 'alt', type: 'number', label: 'Altitude (m)' },
+            { key: 'speed', type: 'number', label: 'Speed (m/s)', placeholder: '-1 = default' }
+          ]
+        },
+        change_speed: {
+          fields: [
+            {
+              key: 'speed_type',
+              type: 'select',
+              label: 'Speed type',
+              options: [['groundspeed', 'Ground speed'], ['airspeed', 'Airspeed'], ['climb', 'Climb speed'], ['descent', 'Descent speed']]
+            },
+            { key: 'speed', type: 'number', label: 'Speed (m/s)' },
+            { key: 'throttle', type: 'number', label: 'Throttle (%)', placeholder: '-1 = no change', advanced: true }
+          ]
+        },
+        condition_yaw: {
+          fields: [
+            { key: 'angle', type: 'number', label: 'Yaw angle (deg)' },
+            { key: 'rate', type: 'number', label: 'Yaw rate (deg/s)', placeholder: '0 = default' },
+            {
+              key: 'direction',
+              type: 'select',
+              label: 'Direction',
+              options: [['shortest', 'Shortest'], ['clockwise', 'Clockwise'], ['counter-clockwise', 'Counter-clockwise']]
+            },
+            { key: 'relative', type: 'checkbox', label: 'Relative', tip: 'Turn relative to the current heading instead of to an absolute heading.' }
+          ]
+        },
+        spin: {
+          tip: 'A relative turn via MAV_CMD_CONDITION_YAW. Any angle works (90, 180, 720, ...); 360 is the classic demo spin.',
+          fields: [
+            { key: 'angle', type: 'number', label: 'Spin angle (deg)', placeholder: '360' },
+            { key: 'rate', type: 'number', label: 'Yaw rate (deg/s)', placeholder: '0 = default' },
+            {
+              key: 'direction',
+              type: 'select',
+              label: 'Direction',
+              options: [['clockwise', 'Clockwise'], ['counter-clockwise', 'Counter-clockwise']]
+            }
+          ]
+        },
+        mission_start: {
+          fields: [
+            { key: 'first_item', type: 'number', label: 'First item', placeholder: '0' },
+            { key: 'last_item', type: 'number', label: 'Last item', placeholder: '0 = end' }
+          ]
+        },
+        pause_mission: { tip: 'MAV_CMD_DO_PAUSE_CONTINUE (pause). Needs firmware support — recent ArduPilot and PX4 accept it; the ACK tells you if yours does not.' },
+        resume_mission: { tip: 'MAV_CMD_DO_PAUSE_CONTINUE (continue). Needs firmware support — the ACK tells you if yours does not.' },
+        take_photo: {
+          tip: 'Cameras are often separate MAVLink components — set target_component (e.g. 100) in msg.payload when the camera is not the autopilot.',
+          fields: [
+            { key: 'count', type: 'number', label: 'Count', placeholder: '1' },
+            { key: 'interval', type: 'number', label: 'Interval (s)', placeholder: '0 = single', advanced: true }
+          ]
+        },
+        start_video: {
+          tip: 'Cameras are often separate MAVLink components — set target_component in msg.payload when needed.',
+          fields: [{ key: 'stream_id', type: 'number', label: 'Stream ID', placeholder: '0 = all' }]
+        },
+        stop_video: {
+          fields: [{ key: 'stream_id', type: 'number', label: 'Stream ID', placeholder: '0 = all' }]
+        },
+        reboot: {
+          warning: 'Reboots the autopilot. Never send this to a flying vehicle — motors stop and the vehicle falls. The runtime refuses to build this command unless confirmed here (or msg.payload.confirm = true).',
+          fields: [{ key: 'confirm', type: 'checkbox', label: 'Confirm reboot' }]
+        },
+        request_message: {
+          fields: [{ key: 'message_id', type: 'message', label: 'Message' }]
+        },
+        set_message_interval: {
+          fields: [
+            { key: 'message_id', type: 'message', label: 'Message' },
+            { key: 'rate_hz', type: 'number', label: 'Rate (Hz)', tip: 'Converted to interval microseconds on send (param2 = 1e6 / rate). msg.payload.interval_us overrides.' }
+          ]
+        },
+        stop_message_interval: {
+          fields: [{ key: 'message_id', type: 'message', label: 'Message' }]
+        }
+      };
+
       const $command = $('#node-input-command');
       const $params = $('#mav-cmd-params');
+      const $preset = $('#mav-preset-params');
       const $cmdDesc = $('#mav-cmd-desc');
       let commands = {}; // MAV_CMD_NAME -> { description, params:[{index,name,description,units}] }
       let mavCmdByName = {}; // MAV_CMD_NAME -> { value, description } (enum table)
+      let messageList = []; // [{name, id}] for the message pickers
 
       let savedParams = {};
       try {
         savedParams = node.fields ? JSON.parse(node.fields) : {};
       } catch (e) {
         savedParams = {};
+      }
+      let savedPreset = {};
+      try {
+        savedPreset = node.presetFields ? JSON.parse(node.presetFields) : {};
+      } catch (e) {
+        savedPreset = {};
       }
 
       // Metadata query for the selected profile; a custom-XML profile forwards
@@ -61,11 +215,134 @@
         return /^MAV_CMD_/.test(value);
       }
 
-      // Render one input per param for a raw MAV_CMD selection. When the dialect
-      // metadata knows the command (e.g. NAV_WAYPOINT), show its named params
-      // (hold, acceptRadius, latitude, …) with units and a visible help box
-      // under each input (issue #45); otherwise fall back to generic param1..7.
-      // Values are always stored as paramN.
+      function tipsBox(text) {
+        return $('<div class="form-tips" style="margin:2px 0 6px 140px; width:55%; box-sizing:border-box;"></div>').text(text);
+      }
+
+      // ---- friendly preset forms (#49) -----------------------------------
+
+      /** One preset field row; the input carries data-preset=<key>. */
+      function presetRow(field, $host) {
+        const $row = $('<div class="form-row" style="margin-bottom:4px;"></div>');
+        $('<label></label>').css({ width: '140px' }).text(field.label).appendTo($row);
+        const saved = savedPreset[field.key];
+        let $input;
+        if (field.type === 'checkbox') {
+          $input = $('<input type="checkbox">')
+            .css({ width: 'auto', 'vertical-align': 'middle' })
+            .prop('checked', saved === true);
+        } else if (field.type === 'select') {
+          $input = $('<select></select>').css({ width: '55%' });
+          field.options.forEach(function (o) {
+            $('<option></option>').val(o[0]).text(o[1]).appendTo($input);
+          });
+          if (saved !== undefined) {
+            $input.val(String(saved));
+          }
+        } else if (field.type === 'message') {
+          $input = $('<select></select>').css({ width: '55%' }).addClass('mav-preset-message');
+          $('<option></option>').val('').text('(set via msg.payload)').appendTo($input);
+          messageList.forEach(function (m) {
+            $('<option></option>').val(m.id).text(m.name + ' (' + m.id + ')').appendTo($input);
+          });
+          if (saved !== undefined) {
+            $input.val(String(saved));
+            if ($input.val() !== String(saved)) {
+              // keep an id the current dialect doesn't list
+              $('<option></option>').val(String(saved)).text(String(saved)).appendTo($input);
+              $input.val(String(saved));
+            }
+          }
+        } else if (field.type === 'mode') {
+          $input = $('<select></select>').css({ width: '55%' }).addClass('mav-preset-mode');
+          $('<option></option>').val('').text('Loading modes...').appendTo($input);
+        } else {
+          $input = $('<input type="number" step="any">')
+            .css({ width: '55%' })
+            .attr('placeholder', field.placeholder || '')
+            .val(saved !== undefined ? saved : '');
+        }
+        $input.attr('data-preset', field.key).attr('data-preset-type', field.type).appendTo($row);
+        if (field.tip) {
+          tipsBox(field.tip).appendTo($row);
+        }
+        $row.appendTo($host);
+      }
+
+      // Populate the Set Mode dropdown from the profile firmware/type (#49).
+      let modesRequestId = 0;
+      function loadModes($select) {
+        const p = RED.nodes.node($('#node-input-profile').val());
+        const firmware = (p && p.firmware) || 'generic';
+        const vehicleType = (p && p.profileType) || '';
+        const requestId = ++modesRequestId;
+        $.getJSON('mavlink-ai/modes', { firmware: firmware, vehicleType: vehicleType })
+          .done(function (data) {
+            if (requestId !== modesRequestId || !$select.closest('body').length) {
+              return;
+            }
+            $select.empty();
+            const modes = (data && data.modes) || [];
+            if (!modes.length) {
+              // No mode-name table for this firmware: fall back to numerics.
+              $select.replaceWith(
+                $('<input type="number" step="1">')
+                  .attr('data-preset', 'custom_mode')
+                  .attr('data-preset-type', 'number')
+                  .attr('placeholder', 'custom_mode (firmware-specific)')
+                  .css({ width: '55%' })
+                  .val(savedPreset.custom_mode !== undefined ? savedPreset.custom_mode : '')
+              );
+              return;
+            }
+            $('<option></option>').val('').text('(set via msg.payload)').appendTo($select);
+            modes.forEach(function (m) {
+              $('<option></option>').val(m).text(m).appendTo($select);
+            });
+            if (savedPreset.mode !== undefined) {
+              $select.val(String(savedPreset.mode));
+              if ($select.val() !== String(savedPreset.mode)) {
+                $('<option></option>').val(String(savedPreset.mode)).text(String(savedPreset.mode)).appendTo($select);
+                $select.val(String(savedPreset.mode));
+              }
+            }
+          })
+          .fail(function () {
+            if (requestId !== modesRequestId) {
+              return;
+            }
+            $select.empty();
+            $('<option></option>').val('').text('(modes unavailable — set via msg.payload)').appendTo($select);
+          });
+      }
+
+      function renderPresetForm(selected) {
+        $preset.empty();
+        if (isRaw(selected)) {
+          return;
+        }
+        const form = PRESET_FORMS[selected];
+        if (!form) {
+          return;
+        }
+        if (form.warning) {
+          $('<div class="form-tips" style="margin:4px 0; border-color:#b00; color:#b00;"></div>')
+            .text(form.warning)
+            .appendTo($preset);
+        }
+        if (form.tip) {
+          $('<div class="form-tips" style="margin:4px 0;"></div>').text(form.tip).appendTo($preset);
+        }
+        (form.fields || []).forEach(function (field) {
+          presetRow(field, $preset);
+        });
+        $preset.find('.mav-preset-mode').each(function () {
+          loadModes($(this));
+        });
+      }
+
+      // ---- raw MAV_CMD param rows (#45) -----------------------------------
+
       function paramRow(key, labelText, tipText) {
         const $row = $('<div class="form-row" style="margin-bottom:4px;"></div>');
         $('<label></label>').css({ width: '140px' }).text(labelText).attr('title', tipText || '').appendTo($row);
@@ -77,9 +354,7 @@
           .val(savedParams[key] !== undefined ? savedParams[key] : '')
           .appendTo($row);
         if (tipText) {
-          $('<div class="form-tips" style="margin:2px 0 6px 140px; width:55%; box-sizing:border-box;"></div>')
-            .text(tipText)
-            .appendTo($row);
+          tipsBox(tipText).appendTo($row);
         }
         return $row;
       }
@@ -102,6 +377,7 @@
         $params.empty();
         const selected = $command.val();
         renderCommandDescription(selected);
+        renderPresetForm(selected);
         if (!isRaw(selected)) {
           return;
         }
@@ -144,13 +420,15 @@
         // profile change) instead of snapping back to the saved value.
         const selected = $command.val() || node.command || 'arm';
         $command.empty();
-        const $presets = $('<optgroup label="Presets"></optgroup>');
-        PRESETS.forEach(function (p) {
-          $('<option></option>').val(p[0]).text(p[1]).appendTo($presets);
+        PRESET_GROUPS.forEach(function (group) {
+          const $g = $('<optgroup></optgroup>').attr('label', group[0]);
+          group[1].forEach(function (p) {
+            $('<option></option>').val(p[0]).text(p[1]).appendTo($g);
+          });
+          $g.appendTo($command);
         });
-        $presets.appendTo($command);
         if (mavCmds && mavCmds.length) {
-          const $adv = $('<optgroup label="MAV_CMD (advanced)"></optgroup>');
+          const $adv = $('<optgroup label="Advanced / Raw MAV_CMD (escape hatch)"></optgroup>');
           mavCmds.forEach(function (e) {
             $('<option></option>').val(e.name).text(e.name + ' (' + e.value + ')').appendTo($adv);
           });
@@ -176,6 +454,11 @@
               return; // a newer request superseded this response
             }
             commands = (data && data.commands) || {};
+            messageList = [];
+            const messages = (data && data.messages) || {};
+            Object.keys(messages).sort().forEach(function (name) {
+              messageList.push({ name: name, id: messages[name].id });
+            });
             buildOptions((data && data.enums && data.enums.MAV_CMD) || []);
           })
           .fail(function () {
@@ -183,6 +466,7 @@
               return;
             }
             commands = {};
+            messageList = [];
             buildOptions([]); // presets only if metadata unavailable
           });
       }
@@ -213,10 +497,36 @@
         });
         return JSON.stringify(out);
       };
+
+      this._collectPresetFields = function () {
+        if (isRaw($command.val())) {
+          // Keep the saved preset values so switching to raw and back does not
+          // wipe them (#49).
+          return node.presetFields || '';
+        }
+        const out = {};
+        $preset.find('[data-preset]').each(function () {
+          const key = $(this).attr('data-preset');
+          const type = $(this).attr('data-preset-type');
+          if (type === 'checkbox') {
+            out[key] = $(this).is(':checked');
+            return;
+          }
+          const v = $(this).val();
+          if (v === '' || v === null || v === undefined) {
+            return; // omit blanks so runtime/builder defaults apply
+          }
+          out[key] = isNaN(Number(v)) ? v : Number(v);
+        });
+        return Object.keys(out).length ? JSON.stringify(out) : '';
+      };
     },
     oneditsave: function () {
       if (typeof this._collectParams === 'function') {
         $('#node-input-fields').val(this._collectParams());
+      }
+      if (typeof this._collectPresetFields === 'function') {
+        $('#node-input-presetFields').val(this._collectPresetFields());
       }
     }
   });
@@ -236,6 +546,7 @@
     <select id="node-input-command" style="width:70%;"></select>
   </div>
   <div id="mav-cmd-desc" class="form-tips" style="display:none; margin:4px 0;"></div>
+  <div id="mav-preset-params"></div>
   <div class="form-row">
     <label for="node-input-sendAs">Send as</label>
     <select id="node-input-sendAs" style="width:70%;">
@@ -262,11 +573,13 @@
   </div>
   <div id="mav-cmd-params" style="border-top:1px solid #eee; padding-top:6px;"></div>
   <input type="hidden" id="node-input-fields">
+  <input type="hidden" id="node-input-presetFields">
 </script>
 
 <script type="text/html" data-help-name="mavlink-ai-command">
   <p>Builds a MAVLink <code>COMMAND_LONG</code> (or <code>COMMAND_INT</code>) as a normalized outbound message for a downstream <b>MAVLink AI Out</b> node — or, with <b>Await ack</b> enabled, sends it on the selected connection and runs the full command protocol: retransmit on timeout (incrementing <code>confirmation</code> for <code>COMMAND_LONG</code>; <code>COMMAND_INT</code> has no confirmation field and is resent unchanged), then output the <code>COMMAND_ACK</code> result (<code>command/ack</code> with <code>result</code>/<code>result_name</code>, or a <code>mavlink/error</code> on rejection/timeout). <code>MAV_RESULT_IN_PROGRESS</code> keeps the wait alive and shows progress on the status badge.</p>
-  <p>Pick a friendly <b>Preset</b> (arm, set mode, takeoff, …) or any <b>MAV_CMD</b> from the advanced list. A raw MAV_CMD shows the command's MAVLink description and one labeled input per defined parameter, each with a visible help box (param index, units, description — where a parameter expects an enum, the description names it). You can fill <code>param1</code>–<code>param7</code>; <code>msg.payload</code> may override params at runtime (presets keep their safety-critical params fixed, e.g. arm/disarm <code>param1</code>).</p>
-  <p><b>Set mode by name</b>: <code>msg.payload.mode</code> (e.g. <code>"GUIDED"</code>, <code>"POSITION"</code>) is resolved using the profile's firmware and vehicle type — set the profile firmware to <code>ardupilot</code> or <code>px4</code> and the profile type to the vehicle (copter/plane/rover/…), or pass <code>msg.payload.vehicle_type</code>. Numeric <code>custom_mode</code>/<code>base_mode</code> keep working as before.</p>
-  <p><b>COMMAND_INT</b>: choose "Send as COMMAND_INT" (or set <code>msg.payload.command_int</code>) for commands that require it (DO_SET_ROI_LOCATION, DO_REPOSITION, …). Give <code>lat</code>/<code>lon</code> in float degrees (converted to degE7 automatically) or raw <code>x</code>/<code>y</code>, plus <code>z</code>/<code>alt</code> and an optional <code>frame</code> (default <code>MAV_FRAME_GLOBAL</code>).</p>
+  <p><b>Presets</b> are grouped by workflow: <i>Basic Flight</i> (arm, disarm, set mode, takeoff, land, RTL), <i>Guided / Autonomy</i> (go to/reposition, change speed, condition yaw, spin/rotate), <i>Mission</i> (start, pause, resume — pause/resume use <code>MAV_CMD_DO_PAUSE_CONTINUE</code> and need firmware support; the ACK tells you), <i>Camera</i> (take photo, start/stop video — cameras are often separate components, so set <code>msg.payload.target_component</code> when needed), and <i>Telemetry / System</i>. Each preset shows friendly fields (mode dropdown, altitude, rate Hz, ...); <code>msg.payload</code> values override the static editor values at runtime. Presets keep their safety-critical params fixed (e.g. arm/disarm <code>param1</code>, mission pause/resume <code>param1</code>), and <i>Reboot Autopilot</i> refuses to build unless confirmed (editor checkbox or <code>msg.payload.confirm = true</code>).</p>
+  <p><b>Advanced / Raw MAV_CMD</b> is the escape hatch, not a normal preset: pick any command from the dialect enum, see its MAVLink description and per-parameter help (param index, units, description — where a parameter expects an enum, the description names it), and fill <code>param1</code>–<code>param7</code> directly.</p>
+  <p><b>Set mode by name</b>: the editor offers a mode dropdown resolved from the profile's firmware and vehicle type (ArduPilot copter/plane/rover/boat/sub/antenna-tracker or PX4), or pass <code>msg.payload.mode</code> (e.g. <code>"GUIDED"</code>, <code>"POSITION"</code>) at runtime. Raw numeric <code>custom_mode</code> values are firmware/vehicle-specific (GUIDED is 4 on ArduCopter but 15 on ArduPlane); numeric <code>custom_mode</code>/<code>base_mode</code> keep working as before. Stunts like flips are <i>modes</i>, not commands, on ArduCopter (FLIP mode via set mode) — there is no generic cross-firmware flip command.</p>
+  <p><b>COMMAND_INT</b>: choose "Send as COMMAND_INT" (or set <code>msg.payload.command_int</code>) for commands that require it (DO_SET_ROI_LOCATION, DO_REPOSITION, …). The <i>Go To / Reposition</i> preset uses COMMAND_INT automatically. Give <code>lat</code>/<code>lon</code> in float degrees (converted to degE7 automatically) or raw <code>x</code>/<code>y</code>, plus <code>z</code>/<code>alt</code> and an optional <code>frame</code> (default <code>MAV_FRAME_GLOBAL</code>).</p>
 </script>

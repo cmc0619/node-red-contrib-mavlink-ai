@@ -64,6 +64,22 @@
       function renderFields(msgName, prefill) {
         $fieldsHost.empty();
         $msgDesc.empty().hide();
+        // COMMAND_LONG/COMMAND_INT are the low-level command transport; the
+        // command node is the normal path for MAV_CMD workflows (#48). Keep
+        // them usable here, but say so loudly.
+        const $cmdWarn = $('#mav-build-cmd-warning');
+        if (msgName === 'COMMAND_LONG' || msgName === 'COMMAND_INT') {
+          $cmdWarn
+            .text(
+              msgName +
+                ' is a low-level command message. Use the MAVLink AI Command node for normal vehicle ' +
+                'commands, MAV_CMD parameter help, ACK handling, and retries. Continue here only for ' +
+                'raw/advanced use, debugging, or custom dialect behavior.'
+            )
+            .show();
+        } else {
+          $cmdWarn.empty().hide();
+        }
         const def = metadata.messages[msgName];
         if (!def) {
           return;
@@ -252,6 +268,7 @@
     <label for="node-input-messageName">Message</label>
     <select id="node-input-messageName" style="width:70%;"></select>
   </div>
+  <div id="mav-build-cmd-warning" class="form-tips" style="display:none; margin:4px 0; border-color:#b00; color:#b00;"></div>
   <div id="mav-msg-desc" class="form-tips" style="display:none; margin:4px 0;"></div>
   <div class="form-row">
     <label for="node-input-applyDefaults">Apply defaults</label>
@@ -266,4 +283,5 @@
   <p>Builds a normalized outbound MAVLink message object (without sending it) for a downstream <b>MAVLink AI Out</b> node.</p>
   <p>Pick a <b>Message</b> and the editor shows the message's MAVLink description plus a labeled input for each of its fields, with the field's wire type as the input placeholder and a visible <i>Type | Units | description</i> help box underneath. Fields backed by a MAVLink enum become dropdowns of readable names, values, and descriptions (e.g. <code>MAV_CMD_COMPONENT_ARM_DISARM</code>). The field list updates when you change the message or the profile's dialect.</p>
   <p>Leave a field blank to let it zero-fill. <code>msg.payload</code> may still override fields at runtime, and enum-name strings are resolved against the profile dialect.</p>
+  <p><b>Note</b>: <code>COMMAND_LONG</code> / <code>COMMAND_INT</code> are low-level command transport messages. For normal vehicle commands prefer the <b>MAVLink AI Command</b> node — it adds MAV_CMD parameter help, COMMAND_ACK handling, and retries. Build them here only for raw/advanced use, debugging, or custom dialect behavior.</p>
 </script>
