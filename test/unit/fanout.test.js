@@ -229,8 +229,15 @@ test('dry-run outputs the built messages without sending (#46)', async () => {
 });
 
 test('await-acks aggregates accepted/failed/timedOut per sysid (#46)', async () => {
+  // timeoutMs is generous on purpose: sysids 1/2/4 ack "immediately" (setImmediate
+  // in the stub) and must be classified by their ack, never by a timeout. A tight
+  // timeout (e.g. 40ms) races the immediate acks under event-loop starvation on a
+  // loaded CI runner — a >40ms stall lets sysid 1's timeout fire before its queued
+  // ack is processed, wrongly bucketing it as timedOut. Only the genuinely-silent
+  // sysid 5 should ever hit the timeout, so a large value stays reliable while the
+  // acked sysids still finish near-instantly.
   const { RED, node } = setup(
-    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', awaitAck: true, timeoutMs: 40, maxRetries: 0 },
+    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', awaitAck: true, timeoutMs: 1000, maxRetries: 0 },
     { 1: 0, 2: 0, 4: 2 /* MAV_RESULT_DENIED */ } // sysid 5 stays silent -> timeout
   );
   // The workflow's retry timer is unref'd; keep the loop alive while it runs.
@@ -250,8 +257,11 @@ test('await-acks aggregates accepted/failed/timedOut per sysid (#46)', async () 
 });
 
 test('stop-on-error skips remaining targets after the first failure (#46)', async () => {
+  // Generous timeout for the same reason as the aggregation test above: sysids
+  // 1/2 ack immediately and must be classified by their ack, not a timeout race
+  // under load. No sysid is silent here, so a large timeout never actually fires.
   const { RED, node } = setup(
-    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', awaitAck: true, timeoutMs: 40, maxRetries: 0, stopOnError: true },
+    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', awaitAck: true, timeoutMs: 1000, maxRetries: 0, stopOnError: true },
     { 1: 0, 2: 2, 3: 0 }
   );
   const keepAlive = setInterval(() => {}, 10);
