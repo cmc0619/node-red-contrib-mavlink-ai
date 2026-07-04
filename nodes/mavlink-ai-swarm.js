@@ -1,6 +1,7 @@
 'use strict';
 
 const { VehicleRegistry } = require('../lib/swarm/vehicle-registry');
+const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { toInt, toBool } = require('../lib/util/validation');
 const { badgeForState } = require('../lib/util/status');
 
@@ -130,7 +131,8 @@ module.exports = function registerMavlinkAiSwarm(RED) {
     }
 
     // Input triggers an on-demand snapshot; payload may carry a registry
-    // filter ({ group, type, armed, sysids, includeStale }).
+    // filter ({ group, type, armed, sysids, includeStale }). A malformed
+    // filter yields a structured error message, not a crashed handler.
     node.on('input', (msg, send, done) => {
       const p = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
       const filter = {};
@@ -139,7 +141,17 @@ module.exports = function registerMavlinkAiSwarm(RED) {
           filter[key] = p[key];
         }
       }
-      const vehicles = registry.vehicles(filter);
+      let vehicles;
+      try {
+        vehicles = registry.vehicles(filter);
+      } catch (err) {
+        const e = toMavlinkError(err, 'BAD_FILTER');
+        node.status({ fill: 'red', shape: 'ring', text: e.code });
+        msg.topic = 'mavlink/error';
+        msg.payload = errorPayload({ node: 'mavlink-ai-swarm', code: e.code, message: e.message, context: e.context });
+        send(msg);
+        return done();
+      }
       msg.topic = 'swarm/vehicles';
       msg.payload = {
         vehicles,

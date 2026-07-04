@@ -5,7 +5,16 @@
     defaults: {
       name: { value: '' },
       profile: { value: '', type: 'mavlink-ai-profile', required: true },
-      connection: { value: '', type: 'mavlink-ai-connection', required: false },
+      connection: {
+        value: '',
+        type: 'mavlink-ai-connection',
+        required: false,
+        // Await-acks has nothing to send on without a connection; catch that at
+        // edit time instead of a runtime NO_CONNECTION error.
+        validate: function (v) {
+          return !this.awaitAck || (v !== '' && v != null);
+        }
+      },
       mode: { value: 'fanout' },
       command: { value: '' },
       sendAs: { value: 'long' },

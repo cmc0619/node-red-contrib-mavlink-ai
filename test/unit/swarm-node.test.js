@@ -86,6 +86,15 @@ test('input payload filters the snapshot (armed / groups) (#46)', async () => {
   await RED.close(node);
 });
 
+test('a malformed input filter yields a structured error, not a crash (#46)', async () => {
+  const { RED, conn, node } = setup({});
+  conn.deliver(heartbeat(1));
+  const { collected } = await RED.inject(node, { payload: { sysids: { nope: true } } });
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'BAD_FILTER');
+  await RED.close(node);
+});
+
 test('emitOnChange sends the table when a vehicle first appears (#46)', async () => {
   const { RED, conn, node } = setup({ emitOnChange: true });
   conn.deliver(heartbeat(7));

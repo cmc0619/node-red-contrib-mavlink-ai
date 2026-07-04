@@ -93,6 +93,37 @@ test('broadcast builds a single target_system-0 message (#46)', () => {
   assert.strictEqual(messages[0].target_component, 0);
 });
 
+test('non-numeric params and coordinates fail fast instead of emitting NaN (#46)', () => {
+  assert.throws(
+    () => buildFanout({ command: 'MAV_CMD_DO_SET_MODE', targets: [{ sysid: 1, param2: 'GUIDED-ish' }] }),
+    (e) => e.code === 'BAD_PARAM' && /param2/.test(e.message)
+  );
+  assert.throws(
+    () => buildFanout({ command: 'MAV_CMD_DO_SET_MODE', targets: [1], base: { param1: NaN } }),
+    (e) => e.code === 'BAD_PARAM'
+  );
+  assert.throws(
+    () => buildFanout({ command: 'MAV_CMD_DO_REPOSITION', targets: [{ sysid: 1, lat: 'x', lon: 8.5 }] }),
+    (e) => e.code === 'BAD_COORDINATES'
+  );
+  assert.throws(
+    () =>
+      buildFanout({
+        command: 'MAV_CMD_NAV_WAYPOINT',
+        targets: [{ sysid: 1, lat: 39.1, lon: -75.1, alt: 'high' }]
+      }),
+    (e) => e.code === 'BAD_COORDINATES'
+  );
+  assert.throws(
+    () => buildFanout({ command: 'MAV_CMD_NAV_LAND', targets: [{ sysid: 1, target_component: 'gimbal' }] }),
+    (e) => e.code === 'BAD_PARAM' && /target_component/.test(e.message)
+  );
+  assert.throws(
+    () => buildFanout({ command: 'MAV_CMD_DO_REPOSITION', useInt: true, targets: [{ sysid: 1, x: null, y: 1 }] }),
+    (e) => e.code === 'BAD_PARAM'
+  );
+});
+
 test('empty target list and missing command fail with structured codes (#46)', () => {
   assert.throws(() => buildFanout({ command: 'MAV_CMD_NAV_LAND', targets: [] }), (e) => e.code === 'NO_TARGETS');
   assert.throws(() => buildFanout({ targets: [1] }), (e) => e.code === 'NO_COMMAND');

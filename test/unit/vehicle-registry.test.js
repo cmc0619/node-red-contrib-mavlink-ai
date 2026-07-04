@@ -103,6 +103,20 @@ test('filters select by sysids, type, and armed state (#46)', () => {
   assert.deepStrictEqual(reg.sysids({ sysids: [1, 3] }), [1, 3]);
 });
 
+test('sysids filter accepts arrays, single ids, and comma strings; rejects garbage (#46)', () => {
+  const reg = new VehicleRegistry({ now: makeClock().now });
+  reg.ingest(heartbeat(1));
+  reg.ingest(heartbeat(2));
+  reg.ingest(heartbeat(3));
+  assert.deepStrictEqual(reg.sysids({ sysids: 2 }), [2]);
+  assert.deepStrictEqual(reg.sysids({ sysids: '1, 3' }), [1, 3]);
+  // A malformed filter must throw, not silently select every vehicle.
+  const isBad = (err) => err.code === 'BAD_FILTER';
+  assert.throws(() => reg.sysids({ sysids: { nope: true } }), isBad);
+  assert.throws(() => reg.sysids({ sysids: 'one,two' }), isBad);
+  assert.throws(() => reg.sysids({ sysids: [] }), isBad);
+});
+
 test('named groups resolve to vehicles: sysid lists and filters (#46)', () => {
   const reg = new VehicleRegistry({ enums: ENUMS, now: makeClock().now });
   reg.setGroups({

@@ -56,6 +56,22 @@ test('non-finite input yields BAD_COORDINATES naming the field (#46)', () => {
   );
 });
 
+test('null/empty origins are rejected, not treated as lat/lon 0 (#46)', () => {
+  // Number(null) === 0, so a naive coercion would silently aim at "null
+  // island" — a missing origin must throw instead.
+  const isBad = (err) => err.code === 'BAD_COORDINATES';
+  assert.throws(() => offsetLatLon(null, { north: 10 }), isBad);
+  assert.throws(() => nedOffsetToGlobal(null, { north: 10 }), isBad);
+  assert.throws(() => globalToNedOffset(null, { lat: 1, lon: 1 }), isBad);
+  assert.throws(() => globalToNedOffset({ lat: 1, lon: 1 }, null), isBad);
+  assert.throws(() => offsetLatLon({ lat: null, lon: 0 }, {}), isBad);
+  assert.throws(() => offsetLatLon({ lat: '', lon: 0 }, {}), isBad);
+  assert.throws(() => offsetLatLon({ lat: true, lon: 0 }, {}), isBad);
+  // Numeric strings keep working (JSON payloads often carry them).
+  const ok = offsetLatLon({ lat: '39.1', lon: '-75.1' }, { north: 0 });
+  assert.strictEqual(ok.lat, 39.1);
+});
+
 test('polar latitudes are rejected instead of dividing by ~zero (#46)', () => {
   assert.throws(
     () => metersToLatLonDelta(0, 10, 90),
