@@ -62,7 +62,30 @@ mavlink-ai-filter    filter decoded messages, with rate limiting
 mavlink-ai-command   build common commands (arm, mode, takeoff, message interval, ...)
 mavlink-ai-mission   run mission download/upload/clear workflows
 mavlink-ai-param     read/set a parameter or request the full parameter list
+mavlink-ai-swarm     registry of active vehicles discovered from HEARTBEAT
+mavlink-ai-fanout    expand one command into per-vehicle messages, aggregate ACKs
 ```
+
+## Swarm orchestration
+
+Multi-vehicle use is a first-class concern, not a hand-rolled pattern: the
+**swarm** node maintains a registry of active systems (type, armed state, mode,
+position, battery, stale/expired) from HEARTBEAT and telemetry, with named
+groups (`{"scouts": [1, 2], "all-copters": {"type": "MAV_TYPE_QUADROTOR"}}`).
+The **fanout** node expands one logical command into one message per target
+system — *fan-out* — or, explicitly and only when asked, a single
+`target_system` 0 message — *broadcast*. These are different things: formation
+movement is fan-out, because each vehicle needs its own target position.
+
+Fan-out understands meters: give an `origin` and per-target `north`/`east`/`up`
+offsets and it converts to global lat/lon/alt (and degE7 for `COMMAND_INT`)
+instead of anyone adding meters to degrees by hand. A dry-run mode shows
+exactly what would be sent, and "await acks" runs the COMMAND_ACK workflow per
+vehicle and aggregates `{ accepted, failed, timedOut, skipped, results }`
+without hiding partial failure.
+
+Pixhawk/ArduPilot/PX4 remains the flight controller: these are high-level
+MAVLink orchestration helpers, not a motor-control replacement.
 
 ## Quick start
 

@@ -1,0 +1,87 @@
+<script type="text/javascript">
+  RED.nodes.registerType('mavlink-ai-swarm', {
+    category: 'MAVLink AI',
+    color: '#C4E1C1',
+    defaults: {
+      name: { value: '' },
+      connection: { value: '', type: 'mavlink-ai-connection', required: true },
+      staleMs: { value: 5000, validate: RED.validators.number() },
+      expireMs: { value: 30000, validate: RED.validators.number() },
+      emitOnChange: { value: true },
+      intervalMs: { value: 0, validate: RED.validators.number() },
+      includeGcs: { value: false },
+      groups: { value: '' }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: 'font-awesome/fa-sitemap',
+    label: function () {
+      return this.name || 'mavlink ai swarm';
+    },
+    oneditprepare: function () {
+      // Validate the groups JSON live so a typo is visible before deploy.
+      const $groups = $('#node-input-groups');
+      const $hint = $('#mav-swarm-groups-hint');
+      function checkGroups() {
+        const text = $groups.val().trim();
+        if (!text) {
+          $hint.text('');
+          return;
+        }
+        try {
+          const parsed = JSON.parse(text);
+          $hint.css('color', '#888').text('Groups: ' + Object.keys(parsed).join(', '));
+        } catch (e) {
+          $hint.css('color', '#b00').text('Invalid JSON: ' + e.message);
+        }
+      }
+      $groups.on('input', checkGroups);
+      checkGroups();
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="mavlink-ai-swarm">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Swarm Registry">
+  </div>
+  <div class="form-row">
+    <label for="node-input-connection">Connection</label>
+    <input type="text" id="node-input-connection">
+  </div>
+  <div class="form-row">
+    <label for="node-input-staleMs">Stale after ms</label>
+    <input type="number" id="node-input-staleMs" min="100" placeholder="5000">
+  </div>
+  <div class="form-row">
+    <label for="node-input-expireMs">Expire after ms</label>
+    <input type="number" id="node-input-expireMs" min="0" placeholder="30000 (0 = never)">
+  </div>
+  <div class="form-row">
+    <label for="node-input-emitOnChange">Emit on change</label>
+    <input type="checkbox" id="node-input-emitOnChange" style="display: inline-block; width: auto; vertical-align: top;">
+    <span style="color:#888;">send the table when vehicles appear, go stale, or expire</span>
+  </div>
+  <div class="form-row">
+    <label for="node-input-intervalMs">Interval ms</label>
+    <input type="number" id="node-input-intervalMs" min="0" placeholder="0 = off">
+  </div>
+  <div class="form-row">
+    <label for="node-input-includeGcs">Include GCS</label>
+    <input type="checkbox" id="node-input-includeGcs" style="display: inline-block; width: auto; vertical-align: top;">
+    <span style="color:#888;">also track MAV_TYPE_GCS heartbeats</span>
+  </div>
+  <div class="form-row">
+    <label for="node-input-groups">Groups</label>
+    <input type="text" id="node-input-groups" placeholder='{"scouts":[1,2],"all-copters":{"type":"MAV_TYPE_QUADROTOR"}}'>
+  </div>
+  <div id="mav-swarm-groups-hint" style="margin:2px 0 6px 104px;"></div>
+</script>
+
+<script type="text/html" data-help-name="mavlink-ai-swarm">
+  <p>Maintains a registry of the active MAVLink systems on a connection — the swarm — discovered from <code>HEARTBEAT</code> and enriched from <code>GLOBAL_POSITION_INT</code>, <code>LOCAL_POSITION_NED</code>, and <code>SYS_STATUS</code>. Vehicles with no recent heartbeat are marked <code>stale</code>, then removed after <b>Expire after ms</b>. Ground stations (<code>MAV_TYPE_GCS</code>) are ignored unless <b>Include GCS</b> is enabled.</p>
+  <p>The output (<code>swarm/vehicles</code>) carries <code>payload.vehicles</code> — one entry per sysid/compid with <code>type_name</code>, <code>armed</code>, <code>mode</code> (resolved from the vehicle's own autopilot/type where known), <code>status</code>, <code>position</code>, <code>localPosition</code>, <code>battery</code>, <code>lastSeen</code>, and <code>stale</code> — plus <code>payload.sysids</code>, which a downstream <b>MAVLink AI Fanout</b> node accepts directly as its target list.</p>
+  <p><b>When it emits</b>: on membership/stale changes (<b>Emit on change</b>), on a fixed <b>Interval</b>, and whenever a message arrives on the input. An input <code>msg.payload</code> may filter the snapshot: <code>{ group, type, armed, sysids, includeStale }</code>.</p>
+  <p><b>Groups</b> are named target sets for fan-out: a sysid list (<code>{"scouts": [1, 2]}</code>) or a filter (<code>{"all-copters": {"type": "MAV_TYPE_QUADROTOR"}}</code>, <code>{"armed-only": {"armed": true}}</code>). Query one with <code>msg.payload.group</code>.</p>
+</script>

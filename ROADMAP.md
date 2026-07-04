@@ -130,6 +130,30 @@ implemented in the v2 baseline.
   issue #4). The profile editor discovers dialects from `/mavlink-ai/dialects`
   and adds a `Dialect source` selector (bundled / local path / custom path).
 
+## Phase 12: Swarm primitives & editor help
+
+- [x] **Rich MAVLink editor help** (issue #45). The metadata layer now serves
+  message/field/enum-member/command descriptions parsed from the bundled
+  `mavlink-mappings` type declarations; the build and command editors show
+  visible `form-tips` help (message/command description, per-field
+  `Type | Units | description`, wire-type placeholders, enum dropdowns with
+  descriptions) instead of hiding help in `title` tooltips. Command *param*
+  enums stay descriptive text — the generated metadata doesn't expose a
+  param-to-enum association to build dropdowns from.
+- [x] **Swarm registry** (issue #46). `mavlink-ai-swarm` +
+  `lib/swarm/vehicle-registry.js`: active vehicles from HEARTBEAT (armed, mode
+  via the vehicle's own autopilot/type, position, battery), stale/expiry,
+  filters, named groups.
+- [x] **Fan-out vs broadcast** (issue #46). `mavlink-ai-fanout` +
+  `lib/swarm/fanout.js`: one command expanded per target sysid (or an explicit
+  `target_system` 0 broadcast), per-target overrides, pacing, dry-run, and
+  per-vehicle COMMAND_ACK aggregation (`accepted/failed/timedOut/skipped`).
+- [x] **Coordinate-frame helpers** (issue #46).
+  `lib/swarm/coordinate-frames.js`: meters offsets -> lat/lon deltas, NED
+  offset -> global target, degE7 scaling, NED-down vs altitude-up guards.
+- [ ] Formation/leader-follower helper nodes (issue #46 follow-up; the
+  primitives above land first per the issue's scope guidance).
+
 ## Open 1.0 gaps (not yet implemented)
 
 These are stated 1.0 requirements in `RELEASE_SCOPE.md` that the current
