@@ -289,3 +289,39 @@ test('arm force via presetFields sets the force magic value (#49)', async () => 
   const { collected } = await RED.inject(node, { payload: {} });
   assert.strictEqual(collected[0].payload.fields.param2, 21196);
 });
+
+test('reboot requires explicit runtime confirmation (#49)', async () => {
+  // No confirmation anywhere (imported/legacy flow shape): structured error,
+  // never a silent reboot.
+  const { RED, node } = setup({ command: 'reboot' });
+  const blocked = await RED.inject(node, { payload: {} });
+  assert.strictEqual(blocked.collected[0].topic, 'mavlink/error');
+  assert.strictEqual(blocked.collected[0].payload.code, 'REBOOT_NOT_CONFIRMED');
+
+  // Editor checkbox confirmation.
+  const { RED: RED2, node: confirmed } = setup({ command: 'reboot', presetFields: '{"confirm":true}' });
+  const ok = await RED2.inject(confirmed, { payload: {} });
+  assert.strictEqual(ok.collected[0].payload.fields.command, 'MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN');
+  assert.strictEqual(ok.collected[0].payload.fields.param1, 1);
+
+  // Runtime confirmation via msg.payload.
+  const { RED: RED3, node: runtime } = setup({ command: 'reboot' });
+  const okMsg = await RED3.inject(runtime, { payload: { confirm: true } });
+  assert.strictEqual(okMsg.collected[0].payload.fields.command, 'MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN');
+});
+
+test('COMMAND_INT coerces numeric-string coordinates into real numbers (#53 review)', async () => {
+  const { RED, node } = setup({ command: 'MAV_CMD_DO_REPOSITION', sendAs: 'int' });
+  const { collected } = await RED.inject(node, {
+    payload: { lat: '47.397742', lon: '8.545594', alt: '30' }
+  });
+  const out = collected[0].payload;
+  assert.strictEqual(out.fields.x, 473977420);
+  assert.strictEqual(out.fields.y, 85455940);
+  assert.strictEqual(out.fields.z, 30);
+  assert.strictEqual(typeof out.fields.z, 'number');
+  // Raw wire values as strings coerce too.
+  const raw = await RED.inject(node, { payload: { x: '473977420', y: '85455940', z: '10' } });
+  assert.strictEqual(raw.collected[0].payload.fields.x, 473977420);
+  assert.strictEqual(typeof raw.collected[0].payload.fields.x, 'number');
+});

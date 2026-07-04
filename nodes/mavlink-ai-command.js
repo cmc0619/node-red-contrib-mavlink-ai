@@ -271,6 +271,14 @@ module.exports = function registerMavlinkAiCommand(RED) {
       // number) is sent as a raw COMMAND_LONG/COMMAND_INT with the given params.
       let built;
       if (builder) {
+        // Reboot is the one preset dangerous enough for a runtime gate: a
+        // reboot mid-flight stops the motors, and the editor's confirmation
+        // checkbox cannot protect flows deployed via import/API. Require the
+        // confirm flag (editor checkbox or msg.payload.confirm) here too.
+        if (selected === 'reboot' && !toBool(params.confirm, false)) {
+          return sendError(msg, send, done, 'REBOOT_NOT_CONFIRMED',
+            "Reboot requires explicit confirmation: check 'Confirm reboot' in the editor or set msg.payload.confirm = true.");
+        }
         built = builder(params);
       } else if (isRawCommand(selected)) {
         built = { command: selected };
@@ -295,10 +303,13 @@ module.exports = function registerMavlinkAiCommand(RED) {
         // that fails numeric conversion must error, not silently become 0,0.
         const latDeg = firstDefined(merged.lat, configParams.param5);
         const lonDeg = firstDefined(merged.lon, configParams.param6);
-        const x = firstDefined(merged.x, latDeg !== undefined ? Math.round(Number(latDeg) * 1e7) : undefined, 0);
-        const y = firstDefined(merged.y, lonDeg !== undefined ? Math.round(Number(lonDeg) * 1e7) : undefined, 0);
-        const z = firstDefined(merged.z, merged.alt, merged.param7, configParams.param7, 0);
-        if (!Number.isFinite(Number(x)) || !Number.isFinite(Number(y)) || !Number.isFinite(Number(z))) {
+        // Coerce to numbers here (not just validate): the raw input may be a
+        // numeric string, and the emitted payload should carry real numbers
+        // for downstream consumers rather than relying on later resolution.
+        const x = Number(firstDefined(merged.x, latDeg !== undefined ? Math.round(Number(latDeg) * 1e7) : undefined, 0));
+        const y = Number(firstDefined(merged.y, lonDeg !== undefined ? Math.round(Number(lonDeg) * 1e7) : undefined, 0));
+        const z = Number(firstDefined(merged.z, merged.alt, merged.param7, configParams.param7, 0));
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
           return sendError(msg, send, done, 'BAD_COORDINATES',
             `COMMAND_INT coordinates must be numeric (got x=${x}, y=${y}, z=${z}).`);
         }
