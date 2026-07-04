@@ -33,9 +33,10 @@
     "serialport": "^13.0.0"
   },
   "scripts": {
-    "test": "npm run test:smoke && npm run test:unit",
+    "test": "npm run test:smoke && npm run test:unit && npm run test:integration",
     "test:smoke": "node test/smoke-load.js",
-    "test:unit": "node --test test/unit/*.test.js"
+    "test:unit": "node --test test/unit/*.test.js",
+    "test:integration": "node --test test/integration/*.test.js"
   },
   "node-red": {
     "nodes": {

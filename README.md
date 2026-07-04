@@ -87,6 +87,34 @@ without hiding partial failure.
 Pixhawk/ArduPilot/PX4 remains the flight controller: these are high-level
 MAVLink orchestration helpers, not a motor-control replacement.
 
+## MAVLink 2 signing
+
+The profile supports minimal MAVLink 2 packet signing, built on the protocol
+library's signing primitives (no custom crypto layer):
+
+- **Sign outbound** — appends a valid signature to every encoded packet; this
+  forces MAVLink 2 framing, since signed frames are v2-only.
+- **Verify inbound** — checks signatures on received signed packets; a bad
+  signature is rejected and surfaced on the In node's errors output as
+  `mavlink/rejected` (`reason: "signature-invalid"`).
+- **Require signature** — with verify on, also rejects *unsigned* inbound
+  packets (`reason: "signature-required"`).
+- **Link ID** — the 0–255 link id written into outbound signatures.
+
+The shared **passphrase** is the signing key (SHA-256 derived, matching Mission
+Planner / QGroundControl). It is stored as an encrypted Node-RED credential, so
+it is never written into exported flow JSON. The signature timestamp uses the
+protocol library's default; raw `sendRaw` buffers are sent as-is and are not
+signed.
+
+**Scope note:** verification checks signature *authenticity* only. MAVLink
+signing's optional replay protection — per-`(sysid, compid, linkId)` monotonic
+timestamp state and a freshness window — is **not** implemented, because the
+protocol library exposes only the authenticity check and stateful, persisted
+replay tracking is out of scope for this minimal support. A captured, validly
+signed frame can therefore be replayed; do not rely on signing alone as an
+anti-replay control.
+
 ## Quick start
 
 1. Drop a **MAVLink AI In** node onto a flow.

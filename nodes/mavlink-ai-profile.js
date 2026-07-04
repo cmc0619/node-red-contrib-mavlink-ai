@@ -54,6 +54,15 @@ module.exports = function registerMavlinkAiProfile(RED) {
     node.heartbeatAutopilot = config.heartbeatAutopilot || 'MAV_AUTOPILOT_INVALID';
     node.debugProtocol = toBool(config.debugProtocol, false);
 
+    // MAVLink 2 signing (issue #15). Minimal support built on node-mavlink's
+    // signing primitives: sign outbound frames and/or verify inbound ones with
+    // a shared passphrase. The passphrase is a Node-RED credential so it is not
+    // written into exported flow JSON; the toggles/link id are plain config.
+    node.signOutbound = toBool(config.signOutbound, false);
+    node.verifyInbound = toBool(config.verifyInbound, false);
+    node.requireSignature = toBool(config.requireSignature, false);
+    node.signingLinkId = toInt(config.signingLinkId, 0);
+
     // Load the dialect at construction. On failure mark invalid and report a
     // useful error — never silently fall back to a different dialect (§15).
     node.bundle = loadDialect(node.dialect, { customDialectPath: node.customDialectPath });
@@ -91,14 +100,39 @@ module.exports = function registerMavlinkAiProfile(RED) {
     });
 
     /**
-     * Protocol options used to construct a codec (version + source identity).
+     * MAVLink 2 signing options for the codec (issue #15), or null when signing
+     * is entirely off. The passphrase comes from the encrypted credential store;
+     * a config with only verify/require flags set (no passphrase) is still
+     * returned so inbound handling can fail closed rather than silently pass
+     * unverified traffic.
      *
-     * @returns {{version: string, sysid: number, compid: number}}
+     * @returns {?object}
+     */
+    node.getSigningOptions = () => {
+      const passphrase = (node.credentials && node.credentials.signingPassphrase) || '';
+      if (!passphrase && !node.signOutbound && !node.verifyInbound && !node.requireSignature) {
+        return null;
+      }
+      return {
+        passphrase,
+        linkId: node.signingLinkId,
+        signOutbound: node.signOutbound,
+        verifyInbound: node.verifyInbound,
+        requireSignature: node.requireSignature
+      };
+    };
+
+    /**
+     * Protocol options used to construct a codec (version + source identity +
+     * signing).
+     *
+     * @returns {{version: string, sysid: number, compid: number, signing: ?object}}
      */
     node.getProtocolOptions = () => ({
       version: node.mavlinkVersion,
       sysid: node.sourceSystemId,
-      compid: node.sourceComponentId
+      compid: node.sourceComponentId,
+      signing: node.getSigningOptions()
     });
 
     /**
@@ -152,5 +186,11 @@ module.exports = function registerMavlinkAiProfile(RED) {
     };
   }
 
-  RED.nodes.registerType('mavlink-ai-profile', MavlinkAiProfileNode);
+  // The signing passphrase is a credential so it lives in the encrypted
+  // credential store, never in exported flow JSON (issue #15).
+  RED.nodes.registerType('mavlink-ai-profile', MavlinkAiProfileNode, {
+    credentials: {
+      signingPassphrase: { type: 'password' }
+    }
+  });
 };

@@ -308,6 +308,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       // Track the peer's wire version so an "auto" profile frames outbound
       // packets the way the peer speaks (a v1-only peer ignores v2 frames).
       node._codec.noteInboundMagic(header.magic);
+
       // 1. Route on the framed header (sysid/compid) before decoding.
       const decision = node._router.route(header.sysid, header.compid);
       if (!decision.accepted) {
@@ -321,7 +322,23 @@ module.exports = function registerMavlinkAiConnection(RED) {
       //    carry systems on different dialects).
       const codec = getCodecForProfile(profile);
 
-      // 3. If the matched dialect has no definition for this message id, or
+      // 3. MAVLink 2 signature verification (issue #15), using the *matched
+      //    profile's* codec so a routed system is checked against its own
+      //    signing policy/key rather than the default profile's. Verification
+      //    is a no-op (returns null) unless that profile enables it, so
+      //    unsigned setups are unaffected. Runs after routing but before decode
+      //    so an unauthentic frame never reaches subscribers.
+      const sigDecision = codec.verifyInboundPacket(packet);
+      if (sigDecision && !sigDecision.accepted) {
+        node.emitter.emit('rejected', {
+          sysid: header.sysid,
+          compid: header.compid,
+          reason: sigDecision.reason
+        });
+        return;
+      }
+
+      // 4. If the matched dialect has no definition for this message id, or
       //    decoding throws, emit a structured decode error with raw metadata
       //    instead of silently passing an undecodable packet.
       if (!codec.bundle.registry[header.msgid]) {

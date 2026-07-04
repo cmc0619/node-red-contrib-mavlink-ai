@@ -36,7 +36,7 @@ implemented in the v2 baseline.
 - [x] runtime XML loading of custom local/Docker dialect paths
 - [x] dialect include-graph resolution (do not assume `common`)
 - [x] dynamic bundled-dialect discovery in the editor UI
-- [ ] MAVLink 2 signing capability / unsupported behavior documented and tested (#15)
+- [x] MAVLink 2 signing: sign outbound + verify inbound, documented and tested (#15)
 
 ## Phase 3: Connection layer
 
@@ -181,15 +181,30 @@ implemented in the v2 baseline.
   example flows prove the workflows are stateful enough to justify them
   (issue #51 guidance).
 
+## Phase 14: MAVLink 2 signing (#15)
+
+`node-mavlink` does expose signing primitives (`MavLinkPacketSignature.key`,
+`MavLinkProtocolV2.sign`, and `MavLinkPacket.signature.matches`), so 1.0 ships
+real minimal support rather than a "not supported" note.
+
+- [x] **Sign outbound**: the codec builds a V2 `IFLAG_SIGNED` frame and appends
+  the signature block (node-mavlink's own `sendSigned` sequence) when the
+  profile enables it. Signing forces MAVLink 2 framing.
+- [x] **Verify inbound**: the connection checks `packet.signature` before
+  routing/decoding and rejects bad/missing signatures per policy
+  (`signature-invalid` / `signature-required` / `signature-no-key`), surfaced on
+  the In node's errors output.
+- [x] **Profile config**: sign-outbound / verify-inbound / require-signature
+  toggles and a link id, with the passphrase stored as an encrypted Node-RED
+  credential (never in exported flow JSON).
+- [x] Unit + UDP-loopback integration tests for the sign/verify matrix.
+
 ## Open 1.0 gaps (not yet implemented)
 
 These are stated 1.0 requirements in `RELEASE_SCOPE.md` that the current
 baseline does **not** meet. They are tracked as GitHub issues, not just prose.
 
-- [ ] **MAVLink 2 signing capability / unsupported behavior** (#15). Confirm
-  what `node-mavlink` exposes, document the current support level, avoid UI
-  claims for unsupported behavior, and surface unsupported signing behavior
-  clearly where feasible.
+- (none currently open — signing landed in Phase 14)
 
 ## Remaining release tasks
 
