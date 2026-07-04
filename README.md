@@ -107,6 +107,14 @@ it is never written into exported flow JSON. The signature timestamp uses the
 protocol library's default; raw `sendRaw` buffers are sent as-is and are not
 signed.
 
+**Scope note:** verification checks signature *authenticity* only. MAVLink
+signing's optional replay protection — per-`(sysid, compid, linkId)` monotonic
+timestamp state and a freshness window — is **not** implemented, because the
+protocol library exposes only the authenticity check and stateful, persisted
+replay tracking is out of scope for this minimal support. A captured, validly
+signed frame can therefore be replayed; do not rely on signing alone as an
+anti-replay control.
+
 ## Quick start
 
 1. Drop a **MAVLink AI In** node onto a flow.

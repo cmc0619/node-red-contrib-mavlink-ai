@@ -166,6 +166,24 @@ test('empty signing config is treated as no signing (#15)', () => {
   assert.strictEqual(codec.verifyInboundPacket({ signature: null }), null);
 });
 
+test('sign-outbound with no passphrase warns about the silent downgrade (#15)', () => {
+  const original = console.warn;
+  const warnings = [];
+  console.warn = (msg) => warnings.push(String(msg));
+  try {
+    const codec = new MavlinkCodec({
+      bundle,
+      sysid: 1,
+      compid: 1,
+      signing: { signOutbound: true } // enabled, but no passphrase
+    });
+    assert.strictEqual(codec.signsOutbound(), false); // still cannot sign
+    assert.ok(warnings.some((w) => /UNSIGNED/.test(w)), 'warned about the downgrade');
+  } finally {
+    console.warn = original;
+  }
+});
+
 test('linkId is clamped into a byte (#15)', () => {
   const codec = new MavlinkCodec({
     bundle,
