@@ -28,7 +28,15 @@
       defaultMissionType: { value: 'mission', required: true },
       heartbeatType: { value: '' },
       heartbeatAutopilot: { value: 'MAV_AUTOPILOT_INVALID' },
-      debugProtocol: { value: false }
+      debugProtocol: { value: false },
+      // MAVLink 2 signing (issue #15). The passphrase is a credential (below).
+      signOutbound: { value: false },
+      verifyInbound: { value: false },
+      requireSignature: { value: false },
+      signingLinkId: { value: 0, validate: RED.validators.number() }
+    },
+    credentials: {
+      signingPassphrase: { type: 'password' }
     },
     label: function () {
       return this.name || 'MAVLink AI Profile';
@@ -89,6 +97,20 @@
 
       $source.on('change', toggleRows);
       $bundled.on('change', syncDialect);
+
+      // MAVLink 2 signing (issue #15): the detail rows (passphrase, link id,
+      // require-signature) are only meaningful once signing or verification is
+      // enabled, so show them together.
+      function toggleSigningRows() {
+        const on = $('#node-config-input-signOutbound').is(':checked') ||
+          $('#node-config-input-verifyInbound').is(':checked');
+        $('.mav-signing-detail').toggle(on);
+        // require-signature only applies while verifying inbound.
+        $('.mav-signing-require').toggle($('#node-config-input-verifyInbound').is(':checked'));
+      }
+      $('#node-config-input-signOutbound').on('change', toggleSigningRows);
+      $('#node-config-input-verifyInbound').on('change', toggleSigningRows);
+      toggleSigningRows();
     },
     oneditsave: function () {
       // Re-derive the persisted dialect at save time so it is always correct
@@ -200,6 +222,35 @@
     <label for="node-config-input-debugProtocol">Debug</label>
     <input type="checkbox" id="node-config-input-debugProtocol" style="display: inline-block; width: auto; vertical-align: top;">
   </div>
+
+  <hr>
+  <h4 style="margin:6px 0;">MAVLink 2 Signing</h4>
+  <div class="form-row">
+    <label for="node-config-input-signOutbound">Sign outbound</label>
+    <input type="checkbox" id="node-config-input-signOutbound" style="display: inline-block; width: auto; vertical-align: top;">
+    <span style="color:#888;">sign packets we send (forces MAVLink 2)</span>
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-verifyInbound">Verify inbound</label>
+    <input type="checkbox" id="node-config-input-verifyInbound" style="display: inline-block; width: auto; vertical-align: top;">
+    <span style="color:#888;">check signatures on packets we receive</span>
+  </div>
+  <div class="form-row mav-signing-require">
+    <label for="node-config-input-requireSignature">Require signature</label>
+    <input type="checkbox" id="node-config-input-requireSignature" style="display: inline-block; width: auto; vertical-align: top;">
+    <span style="color:#888;">reject unsigned inbound packets</span>
+  </div>
+  <div class="form-row mav-signing-detail">
+    <label for="node-config-input-signingPassphrase">Passphrase</label>
+    <input type="password" id="node-config-input-signingPassphrase" placeholder="shared secret (stored as a credential)">
+  </div>
+  <div class="form-row mav-signing-detail">
+    <label for="node-config-input-signingLinkId">Link ID</label>
+    <input type="number" id="node-config-input-signingLinkId" min="0" max="255" placeholder="0">
+  </div>
+  <div class="form-tips mav-signing-detail">
+    The passphrase is the shared signing key (SHA-256 derived, matching Mission Planner / QGroundControl). It is stored as an encrypted Node-RED credential, not in exported flow JSON. Signing applies to encoded messages; raw <code>sendRaw</code> buffers pass through unsigned.
+  </div>
 </script>
 
 <script type="text/html" data-help-name="mavlink-ai-profile">
@@ -209,4 +260,13 @@
     <li><b>Bundled</b> — pick from the dialects the loader can serve (discovered dynamically, not hard-coded).</li>
     <li><b>Local path</b> / <b>Custom path (mounted)</b> — point at a MAVLink XML dialect on disk (or a Docker-mounted path). Its <code>&lt;include&gt;</code> graph is resolved and the dialect is compiled at runtime. Invalid XML or a missing/circular include fails loudly (the profile marks itself invalid) rather than falling back.</li>
   </ul>
+  <h3>MAVLink 2 signing</h3>
+  <p>Minimal support built on the protocol library's signing primitives. A shared <b>passphrase</b> is the signing key (SHA-256 derived, the same as Mission Planner / QGroundControl); it is stored as an encrypted credential, never in exported flows.</p>
+  <ul>
+    <li><b>Sign outbound</b> — append a valid signature to every encoded packet. This forces MAVLink 2 framing (signed frames are v2-only), even if the version is set to auto/v1.</li>
+    <li><b>Verify inbound</b> — check the signature on received signed packets; a bad signature is rejected (surfaced on the In node's errors output as <code>mavlink/rejected</code> with reason <code>signature-invalid</code>).</li>
+    <li><b>Require signature</b> — with verify on, also reject <em>unsigned</em> inbound packets (reason <code>signature-required</code>).</li>
+    <li><b>Link ID</b> — the link id (0–255) written into outbound signatures.</li>
+  </ul>
+  <p>The signature timestamp uses the protocol library's default (wall clock, in the MAVLink 10-µs-since-2015 units). Raw <code>sendRaw</code> buffers are sent as-is and are not signed.</p>
 </script>

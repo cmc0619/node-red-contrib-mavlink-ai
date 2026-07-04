@@ -308,6 +308,22 @@ module.exports = function registerMavlinkAiConnection(RED) {
       // Track the peer's wire version so an "auto" profile frames outbound
       // packets the way the peer speaks (a v1-only peer ignores v2 frames).
       node._codec.noteInboundMagic(header.magic);
+
+      // 0. MAVLink 2 signature verification (issue #15). Wire authenticity is
+      //    checked before routing/decoding: a frame that fails the connection
+      //    profile's signing policy is rejected up front. Verification is a
+      //    no-op (returns null) unless the profile enables it, so unsigned
+      //    setups are unaffected.
+      const sigDecision = node._codec.verifyInboundPacket(packet);
+      if (sigDecision && !sigDecision.accepted) {
+        node.emitter.emit('rejected', {
+          sysid: header.sysid,
+          compid: header.compid,
+          reason: sigDecision.reason
+        });
+        return;
+      }
+
       // 1. Route on the framed header (sysid/compid) before decoding.
       const decision = node._router.route(header.sysid, header.compid);
       if (!decision.accepted) {

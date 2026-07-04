@@ -46,6 +46,10 @@ class MockRED {
   _createNode(node, config) {
     node.id = config.id;
     node.type = config.type;
+    // Real Node-RED populates node.credentials from its encrypted store; the
+    // mock lets a test pass them inline via config.credentials (used for the
+    // signing passphrase, which is a credential rather than plain config).
+    node.credentials = config.credentials || {};
     const ee = new EventEmitter();
     ee.setMaxListeners(0);
     node._ee = ee;

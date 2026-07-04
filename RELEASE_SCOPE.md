@@ -252,6 +252,15 @@ Signing required for outbound
 Signing required for inbound
 ```
 
+**Status (implemented, issue #15):** `node-mavlink` does expose signing
+(`MavLinkPacketSignature.key`, `MavLinkProtocolV2.sign`,
+`MavLinkPacket.signature.matches`), so this is surfaced as profile settings:
+sign-outbound, verify-inbound, require-signature, and a link id, with the
+passphrase held as an encrypted Node-RED credential. Signing is done through the
+library — no custom crypto. Inbound frames that fail policy are rejected with a
+clear reason rather than silently accepted, and signing is never faked when
+disabled.
+
 ## 10. Advanced Stream Rate Management
 
 Basic stream/message rate control means sending commands such as request-message or set-message-interval.
