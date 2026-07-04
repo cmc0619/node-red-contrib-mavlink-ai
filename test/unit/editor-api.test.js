@@ -91,6 +91,20 @@ test('dialects endpoint lists all loader dialects (dynamic discovery, #4)', asyn
   assert.deepStrictEqual([...body.dialects].sort(), [...knownDialects()].sort());
 });
 
+test('modes endpoint serves firmware/vehicle-aware flight-mode names (#49)', async () => {
+  const copter = await invoke(routes['/mavlink-ai/modes'], { firmware: 'ardupilot', vehicleType: 'copter' });
+  assert.strictEqual(copter.body.ok, true);
+  assert.ok(copter.body.modes.includes('GUIDED'));
+  assert.ok(copter.body.modes.includes('LOITER'));
+  const plane = await invoke(routes['/mavlink-ai/modes'], { firmware: 'ardupilot', vehicleType: 'plane' });
+  assert.ok(plane.body.modes.includes('FBWA'));
+  const px4 = await invoke(routes['/mavlink-ai/modes'], { firmware: 'px4' });
+  assert.ok(px4.body.modes.includes('OFFBOARD'));
+  // Unsupported combination: empty list, so the editor falls back to numerics.
+  const generic = await invoke(routes['/mavlink-ai/modes'], { firmware: 'generic' });
+  assert.deepStrictEqual(generic.body.modes, []);
+});
+
 test('registerEditorApi registers routes per RED instance, not once per process (#35)', () => {
   function makeRed() {
     const captured = {};

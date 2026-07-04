@@ -1,0 +1,65 @@
+[
+  {
+    "id": "flow18",
+    "type": "tab",
+    "label": "MAVLink AI - 18 Log List Request",
+    "disabled": false,
+    "info": "Developer/admin workflow example (issue #51): request the vehicle's onboard log list with a LOG_REQUEST_LIST message (built via the Build node — it is a plain message, not a MAV_CMD) and watch LOG_ENTRY replies. This one is wired through a connection because it is read-only; erase/format actions are deliberately NOT included here — build those yourself with the raw command list and a confirmation gate."
+  },
+  {
+    "id": "ai_profile_copter",
+    "type": "mavlink-ai-profile",
+    "name": "AI Profile - Copter",
+    "profileType": "copter",
+    "firmware": "ardupilot",
+    "dialect": "ardupilotmega",
+    "customDialectPath": "",
+    "mavlinkVersion": "auto",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
+    "defaultTargetSystem": 1,
+    "defaultTargetComponent": 1,
+    "preferredMissionItemType": "MISSION_ITEM_INT",
+    "defaultMissionType": "mission",
+    "heartbeatType": "",
+    "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
+    "debugProtocol": false
+  },
+  {
+    "id": "n18_inject",
+    "type": "inject",
+    "z": "flow18",
+    "name": "Request log list",
+    "props": [{ "p": "payload" }],
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 160,
+    "y": 100,
+    "wires": [["n18_build"]]
+  },
+  {
+    "id": "n18_build",
+    "type": "mavlink-ai-build",
+    "z": "flow18",
+    "name": "LOG_REQUEST_LIST",
+    "profile": "ai_profile_copter",
+    "messageName": "LOG_REQUEST_LIST",
+    "fields": "{\"start\":0,\"end\":65535}",
+    "applyDefaults": true,
+    "x": 400,
+    "y": 100,
+    "wires": [["n18_dbg"]]
+  },
+  {
+    "id": "n18_dbg",
+    "type": "debug",
+    "z": "flow18",
+    "name": "Would send (wire to out; watch LOG_ENTRY with an in node)",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 760,
+    "y": 100,
+    "wires": []
+  }
+]
