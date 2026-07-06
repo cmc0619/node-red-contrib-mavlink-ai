@@ -20,7 +20,7 @@ test('heartbeat fields advertise mavlink_version 3 (#66)', () => {
   assert.strictEqual(profile.getHeartbeatFields().mavlink_version, 3);
 });
 
-test('encoded HEARTBEAT round-trips mavlink_version = 3 (#66)', (t, done) => {
+test('encoded HEARTBEAT round-trips mavlink_version = 3 (#66)', { timeout: 2000 }, (t, done) => {
   const bundle = loadDialect('ardupilotmega');
   const profile = makeProfile();
   const codec = new MavlinkCodec({ bundle, version: 'v2', sysid: 1, compid: 1 });

@@ -79,12 +79,11 @@ test('changedOnly handles BigInt (uint64) fields without throwing (#73)', () => 
   let count = 0;
   reg.subscribe({ changedOnly: true }, () => (count += 1));
   // MAVLink 64-bit fields (e.g. time_usec) decode as BigInt; JSON.stringify
-  // throws on those, which in dispatch would abort delivery for the packet.
-  assert.doesNotThrow(() => {
-    reg.dispatch(msg('SYSTEM_TIME', 1, 1, { time_unix_usec: 123n }));
-    reg.dispatch(msg('SYSTEM_TIME', 1, 1, { time_unix_usec: 123n }));
-    reg.dispatch(msg('SYSTEM_TIME', 1, 1, { time_unix_usec: 456n }));
-  });
+  // throws on those, which in dispatch would abort delivery for the packet. A
+  // throw here would fail the test directly (no doesNotThrow wrapper needed).
+  reg.dispatch(msg('SYSTEM_TIME', 1, 1, { time_unix_usec: 123n }));
+  reg.dispatch(msg('SYSTEM_TIME', 1, 1, { time_unix_usec: 123n }));
+  reg.dispatch(msg('SYSTEM_TIME', 1, 1, { time_unix_usec: 456n }));
   assert.strictEqual(count, 2); // 123n delivered once, 456n once
 });
 
