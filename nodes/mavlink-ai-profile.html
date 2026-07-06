@@ -107,6 +107,102 @@
       $source.on('change', toggleRows);
       $bundled.on('change', syncDialect);
 
+      // --- downloadable XML catalog picker (#61) --------------------------
+      // Downloaded XMLs are managed *Custom* paths: picking one fills the XML
+      // path field. This is not a third dialect source.
+      const $catalog = $('#mav-catalog-pick');
+      const $catalogStatus = $('#mav-catalog-status');
+
+      function loadCatalog() {
+        $.getJSON('mavlink-ai/xml-catalog')
+          .done(function (data) {
+            $catalog.empty();
+            $('<option></option>').val('').text('-- downloaded XML (optional) --').appendTo($catalog);
+            const snapshots = (data && data.snapshots) || [];
+            let count = 0;
+            snapshots.forEach(function (snap) {
+              (snap.files || []).forEach(function (f) {
+                const when = snap.downloadedAt ? new Date(snap.downloadedAt).toISOString().slice(0, 10) : '';
+                const label = f.name + '  [' + snap.repo + '@' + snap.ref + ' ' + when + ']' +
+                  (f.bundledExists ? ' (bundled exists)' : ' (not bundled)');
+                $('<option></option>').val(f.path).text(label)
+                  .attr('data-file', f.name)
+                  .attr('data-snapshot', snap.snapshotId)
+                  .appendTo($catalog);
+                count += 1;
+              });
+            });
+            $catalogStatus.text(count ? '' : 'No downloaded XML yet — use "Update catalog".');
+          })
+          .fail(function () {
+            $catalogStatus.text('Catalog unavailable.');
+          });
+      }
+
+      $catalog.on('change', function () {
+        const p = $(this).val();
+        if (p) {
+          $path.val(p);
+        }
+      });
+
+      $('#mav-catalog-update').on('click', function (e) {
+        e.preventDefault();
+        $catalogStatus.text('Downloading MAVLink XML from mavlink/mavlink...');
+        $.ajax({
+          url: 'mavlink-ai/xml-catalog/update',
+          method: 'POST',
+          contentType: 'application/json',
+          data: JSON.stringify({})
+        })
+          .done(function () {
+            $catalogStatus.text('Downloaded. Pick a file below.');
+            loadCatalog();
+          })
+          .fail(function (xhr) {
+            const msg = (xhr && xhr.responseJSON && xhr.responseJSON.error) || 'download failed';
+            $catalogStatus.text('Update failed: ' + msg);
+          });
+      });
+
+      $('#mav-catalog-compare').on('click', function (e) {
+        e.preventDefault();
+        const opt = $catalog.find('option:selected');
+        const file = opt.attr('data-file');
+        const snapshot = opt.attr('data-snapshot');
+        if (!file) {
+          $catalogStatus.text('Pick a downloaded XML to compare.');
+          return;
+        }
+        $catalogStatus.text('Comparing ' + file + ' with the bundled dialect...');
+        $.getJSON('mavlink-ai/xml-catalog/compare', snapshot ? { file: file, snapshot: snapshot } : { file: file })
+          .done(function (data) {
+            const c = data && data.comparison;
+            if (!c) {
+              $catalogStatus.text('No comparison available.');
+              return;
+            }
+            if (!c.bundledExists) {
+              $catalogStatus.text(file + ': not present in the bundled dialects (new dialect).');
+              return;
+            }
+            if (!c.comparable || !c.diff) {
+              $catalogStatus.text(file + ': a bundled dialect exists (deeper diff unavailable).');
+              return;
+            }
+            const d = c.diff;
+            $catalogStatus.text(
+              file + ' vs bundled — messages: +' + d.addedMessages.length + ' / -' + d.removedMessages.length +
+              ' / changed ' + d.changedMessages.length + '; enums: +' + d.addedEnums.length + ' / -' + d.removedEnums.length + '.'
+            );
+          })
+          .fail(function () {
+            $catalogStatus.text('Comparison failed.');
+          });
+      });
+
+      loadCatalog();
+
       // MAVLink 2 signing (issue #15): the detail rows (passphrase, link id,
       // require-signature) are only meaningful once signing or verification is
       // enabled, so show them together.
@@ -179,6 +275,18 @@
   </div>
   <div class="form-tips mav-dialect-path">
     A custom dialect is a MAVLink XML file readable by the Node-RED process (local or mounted). Its <code>&lt;include&gt;</code> graph is resolved and compiled at runtime.
+  </div>
+  <div class="form-row mav-dialect-path">
+    <label for="mav-catalog-pick">Downloaded XML</label>
+    <select id="mav-catalog-pick" style="width:60%;"></select>
+  </div>
+  <div class="form-row mav-dialect-path" style="margin-left:104px;">
+    <button id="mav-catalog-update" class="red-ui-button">Update catalog</button>
+    <button id="mav-catalog-compare" class="red-ui-button">Compare with bundled</button>
+  </div>
+  <div class="form-tips mav-dialect-path" id="mav-catalog-status" style="min-height:1em;"></div>
+  <div class="form-tips mav-dialect-path">
+    Optionally download official MAVLink XML dialects into a local catalog and pick one here — it just fills the XML path above (a managed Custom path, not a replacement for bundled dialects).
   </div>
   <input type="hidden" id="node-config-input-dialect">
   <div class="form-row">
