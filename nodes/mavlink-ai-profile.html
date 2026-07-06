@@ -68,10 +68,6 @@
         const bundled = $source.val() === 'bundled';
         $('.mav-dialect-bundled').toggle(bundled);
         $('.mav-dialect-path').toggle(!bundled);
-        $path.attr(
-          'placeholder',
-          $source.val() === 'mounted' ? '/data/mavlink/dialects/custom.xml' : '/path/to/custom.xml'
-        );
         syncDialect();
       }
 
@@ -88,8 +84,21 @@
         $bundled.val(saved);
       }
 
-      // Restore the source; infer it for older configs saved before this field.
-      $source.val(node.dialectSource || (node.dialect === 'custom' ? 'local' : 'bundled'));
+      // Restore the source. The UI now offers only Bundled and Custom (#60):
+      // legacy configs saved with 'local' or 'mounted' were never separate
+      // runtime modes (both persist dialect 'custom' + customDialectPath), so
+      // they collapse to 'custom' here. Configs predating the field infer from
+      // the saved dialect.
+      function normalizeSource(saved, dialect) {
+        if (saved === 'local' || saved === 'mounted' || saved === 'custom') {
+          return 'custom';
+        }
+        if (saved === 'bundled') {
+          return 'bundled';
+        }
+        return dialect === 'custom' ? 'custom' : 'bundled';
+      }
+      $source.val(normalizeSource(node.dialectSource, node.dialect));
 
       $.getJSON('mavlink-ai/dialects')
         .done(function (data) { populateBundled(data && data.dialects); toggleRows(); })
@@ -157,8 +166,7 @@
     <label for="node-config-input-dialectSource">Dialect source</label>
     <select id="node-config-input-dialectSource">
       <option value="bundled">Bundled</option>
-      <option value="local">Local path</option>
-      <option value="mounted">Custom path (mounted)</option>
+      <option value="custom">Custom</option>
     </select>
   </div>
   <div class="form-row mav-dialect-bundled">
@@ -168,6 +176,9 @@
   <div class="form-row mav-dialect-path">
     <label for="node-config-input-customDialectPath">XML path</label>
     <input type="text" id="node-config-input-customDialectPath" placeholder="/path/to/custom.xml">
+  </div>
+  <div class="form-tips mav-dialect-path">
+    A custom dialect is a MAVLink XML file readable by the Node-RED process (local or mounted). Its <code>&lt;include&gt;</code> graph is resolved and compiled at runtime.
   </div>
   <input type="hidden" id="node-config-input-dialect">
   <div class="form-row">
@@ -258,7 +269,7 @@
   <h3>Dialect source</h3>
   <ul>
     <li><b>Bundled</b> — pick from the dialects the loader can serve (discovered dynamically, not hard-coded).</li>
-    <li><b>Local path</b> / <b>Custom path (mounted)</b> — point at a MAVLink XML dialect on disk (or a Docker-mounted path). Its <code>&lt;include&gt;</code> graph is resolved and the dialect is compiled at runtime. Invalid XML or a missing/circular include fails loudly (the profile marks itself invalid) rather than falling back.</li>
+    <li><b>Custom</b> — a single <b>XML path</b> to a MAVLink dialect file the Node-RED process can read (local or mounted; they are not separate modes). Its <code>&lt;include&gt;</code> graph is resolved and the dialect is compiled at runtime. Invalid XML or a missing/circular include fails loudly (the profile marks itself invalid) rather than falling back.</li>
   </ul>
   <h3>MAVLink 2 signing</h3>
   <p>Minimal support built on the protocol library's signing primitives. A shared <b>passphrase</b> is the signing key (SHA-256 derived, the same as Mission Planner / QGroundControl); it is stored as an encrypted credential, never in exported flows.</p>

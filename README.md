@@ -13,12 +13,13 @@ protocol/dialect layer, the UDP / TCP / serial connection runtime, routing with
 per-profile decode, subscriptions, the in/out/build/filter/command nodes, and
 the mission download/upload/clear workflows. Serial is optional and lazy-loaded.
 
-Dialect support now includes both bundled dialects and runtime-compiled custom
-local/Docker-mounted MAVLink XML dialects. Custom XML loading resolves the file's
-real `<include>` graph, compiles the resulting definitions into the same runtime
-bundle shape used by bundled dialects, and fails loudly with structured errors
-for invalid XML, missing includes, include cycles, or unsupported remote includes.
-There is no silent fallback to `common`.
+Dialect support has two sources: **bundled** dialects and a **custom** MAVLink
+XML path. A custom dialect is simply an XML file readable by the Node-RED
+process (local or mounted — not separate modes). Custom XML loading resolves the
+file's real `<include>` graph, compiles the resulting definitions into the same
+runtime bundle shape used by bundled dialects, and fails loudly with structured
+errors for invalid XML, missing includes, include cycles, or unsupported remote
+includes. There is no silent fallback to `common`.
 
 Remaining release/readiness items live in [`RELEASE_SCOPE.md`](RELEASE_SCOPE.md)
 and the open sections of [`ROADMAP.md`](ROADMAP.md).
