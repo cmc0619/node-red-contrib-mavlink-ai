@@ -2,8 +2,10 @@
 
 const { MissionDownload } = require('../lib/mission/mission-download');
 const { MissionUpload } = require('../lib/mission/mission-upload');
+const { MissionClear } = require('../lib/mission/mission-clear');
 const { missionTypeToNumber } = require('../lib/mission/mission-state-machine');
-const { toInt, firstDefined } = require('../lib/util/validation');
+const { topicAction, normalizeUploadItems } = require('../lib/mission/upload-input');
+const { toInt, toBool, firstDefined } = require('../lib/util/validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 
 /**
@@ -23,7 +25,8 @@ module.exports = function registerMavlinkAiMission(RED) {
     node.name = config.name;
     node.connection = RED.nodes.getNode(config.connection);
     node.action = config.action || 'download';
-    node.timeoutMs = toInt(config.timeoutMs, 3000);
+    // 10s default (#58): legacy parity and safe for real radio/serial links.
+    node.timeoutMs = toInt(config.timeoutMs, 10000);
     node.maxRetries = toInt(config.maxRetries, 3);
 
     if (!node.connection) {
@@ -40,7 +43,9 @@ module.exports = function registerMavlinkAiMission(RED) {
       }
 
       const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
-      const action = msg.action || payload.action || node.action;
+      // Aigen-style topic aliases (#56): `upload_mission` etc. select the action
+      // without an explicit payload.action. Explicit action still wins.
+      const action = msg.action || payload.action || topicAction(msg.topic) || node.action;
       const profile = node.connection.profile;
       const defaults = profile && profile.getDefaults ? profile.getDefaults() : {};
 
@@ -106,10 +111,20 @@ module.exports = function registerMavlinkAiMission(RED) {
         if (action === 'download') {
           result = await new MissionDownload(opts).run();
         } else if (action === 'upload') {
-          opts.items = Array.isArray(payload.items) ? payload.items : [];
+          opts.items = normalizeUploadItems(payload);
           result = await new MissionUpload(opts).run();
         } else if (action === 'clear') {
-          result = await clearMission(node.connection, targetSystem, targetComponent, missionTypeNum, missionTypeName);
+          // Best-effort by default (resolve once sent); opt into waiting for a
+          // MISSION_ACK with wait_ack, optionally overriding the timeout (#59).
+          const waitAck = toBool(firstDefined(msg.wait_ack, payload.wait_ack), false);
+          if (waitAck) {
+            const clearOpts = Object.assign({}, opts, {
+              timeoutMs: toInt(payload.timeout_ms, node.timeoutMs)
+            });
+            result = await new MissionClear(clearOpts).run();
+          } else {
+            result = await clearMission(node.connection, targetSystem, targetComponent, missionTypeNum, missionTypeName);
+          }
         } else {
           throw Object.assign(new Error(`Unsupported mission action '${action}'.`), { code: 'UNSUPPORTED_ACTION' });
         }
@@ -148,7 +163,14 @@ async function clearMission(connection, targetSystem, targetComponent, missionTy
   });
   return {
     topic: 'mission/cleared',
-    payload: { target_system: targetSystem, target_component: targetComponent, mission_type: missionTypeName }
+    payload: {
+      target_system: targetSystem,
+      target_component: targetComponent,
+      mission_type: missionTypeName,
+      // Best-effort clear: resolved on send, not on a vehicle ack. Set wait_ack
+      // to get an acknowledged clear (#59).
+      acked: false
+    }
   };
 }
 

@@ -5,6 +5,9 @@ const assert = require('node:assert');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MissionDownload, extractItem } = require('../../lib/mission/mission-download');
 const { MissionUpload, buildItemFields } = require('../../lib/mission/mission-upload');
+const { MissionClear } = require('../../lib/mission/mission-clear');
+const { DEFAULT_TIMEOUT_MS } = require('../../lib/mission/mission-state-machine');
+const { topicAction, normalizeUploadItems } = require('../../lib/mission/upload-input');
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -155,4 +158,131 @@ test('upload rejection reports the MAV_MISSION_RESULT name (#24)', async () => {
     assert.match(String(e.context.result_name), /INVALID_SEQUENCE/);
     return true;
   });
+});
+
+// --- #58: mission timeout default ------------------------------------------
+
+test('mission workflow default timeout is 10s (#58)', () => {
+  assert.strictEqual(DEFAULT_TIMEOUT_MS, 10000);
+  // A workflow with no explicit timeout adopts the default.
+  const conn = new FakeConnection();
+  const wf = new MissionDownload({
+    connection: conn,
+    targetSystem: 1,
+    targetComponent: 1,
+    missionType: 'mission'
+  });
+  assert.strictEqual(wf.timeoutMs, 10000);
+});
+
+// --- #57: upload answers with the requested item type ----------------------
+
+test('upload answers MISSION_REQUEST with MISSION_ITEM (float degrees) (#57)', async () => {
+  const conn = new FakeConnection();
+  // Profile prefers *_INT, but the vehicle asks with the non-INT request.
+  const wf = new MissionUpload(
+    downloadOpts(conn, { useInt: true, timeoutMs: 1000, maxRetries: 0, items: [{ command: 16, lat: 3, lon: 4 }] })
+  );
+  const p = wf.run();
+  await delay(0);
+  conn.deliver('MISSION_REQUEST', { seq: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  await delay(0);
+  const sent = conn.sent.find((m) => m.name === 'MISSION_ITEM' || m.name === 'MISSION_ITEM_INT');
+  assert.ok(sent);
+  assert.strictEqual(sent.name, 'MISSION_ITEM'); // matched the request, not the profile
+  assert.strictEqual(sent.fields.x, 3); // float degrees, not degE7
+  assert.strictEqual(sent.fields.y, 4);
+  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  await p;
+});
+
+test('upload answers MISSION_REQUEST_INT with MISSION_ITEM_INT (degE7) even if profile prefers float (#57)', async () => {
+  const conn = new FakeConnection();
+  const wf = new MissionUpload(
+    downloadOpts(conn, { useInt: false, timeoutMs: 1000, maxRetries: 0, items: [{ command: 16, lat: 3, lon: 4 }] })
+  );
+  const p = wf.run();
+  await delay(0);
+  conn.deliver('MISSION_REQUEST_INT', { seq: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  await delay(0);
+  const sent = conn.sent.find((m) => m.name === 'MISSION_ITEM' || m.name === 'MISSION_ITEM_INT');
+  assert.strictEqual(sent.name, 'MISSION_ITEM_INT');
+  assert.strictEqual(sent.fields.x, 30000000); // lat 3 in degE7
+  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  await p;
+});
+
+// --- #56: waypoints alias + default command --------------------------------
+
+test('topicAction maps Aigen topics to actions (#56)', () => {
+  assert.strictEqual(topicAction('upload_mission'), 'upload');
+  assert.strictEqual(topicAction('download_mission'), 'download');
+  assert.strictEqual(topicAction('clear_mission'), 'clear');
+  assert.strictEqual(topicAction('something_else'), undefined);
+});
+
+test('normalizeUploadItems accepts waypoints alias and defaults NAV_WAYPOINT (#56)', () => {
+  const wp = normalizeUploadItems({ waypoints: [{ lat: 37.7749, lon: -122.4194, alt: 100 }] });
+  assert.strictEqual(wp.length, 1);
+  assert.strictEqual(wp[0].command, 'MAV_CMD_NAV_WAYPOINT');
+  assert.strictEqual(wp[0].lat, 37.7749);
+
+  // items wins over waypoints when both present, and explicit command is kept.
+  const both = normalizeUploadItems({
+    items: [{ command: 'MAV_CMD_NAV_TAKEOFF', lat: 1, lon: 2, alt: 10 }],
+    waypoints: [{ lat: 9, lon: 9 }]
+  });
+  assert.strictEqual(both.length, 1);
+  assert.strictEqual(both[0].command, 'MAV_CMD_NAV_TAKEOFF');
+
+  // A raw item with x/y but no lat/lon and no command is left untouched (no default).
+  const raw = normalizeUploadItems({ items: [{ x: 1, y: 2, z: 3 }] });
+  assert.strictEqual(raw[0].command, undefined);
+  assert.deepStrictEqual(normalizeUploadItems({}), []);
+});
+
+// --- #59: clear with MISSION_ACK -------------------------------------------
+
+test('MissionClear resolves on an accepted MISSION_ACK (#59)', async () => {
+  const conn = new FakeConnection();
+  const enums = loadDialect('ardupilotmega').enums;
+  const wf = new MissionClear(downloadOpts(conn, { enums, timeoutMs: 1000, maxRetries: 0 }));
+  const p = wf.run();
+  await delay(0);
+  assert.ok(conn.sent.find((m) => m.name === 'MISSION_CLEAR_ALL'));
+  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  const res = await p;
+  assert.strictEqual(res.topic, 'mission/cleared');
+  assert.strictEqual(res.payload.acked, true);
+  assert.strictEqual(res.payload.result, 0);
+  assert.match(String(res.payload.result_name), /ACCEPTED/);
+});
+
+test('MissionClear rejects a denied clear with the result name (#59)', async () => {
+  const conn = new FakeConnection();
+  const enums = loadDialect('ardupilotmega').enums;
+  const wf = new MissionClear(downloadOpts(conn, { enums, timeoutMs: 1000, maxRetries: 0 }));
+  const p = wf.run();
+  await delay(0);
+  conn.deliver('MISSION_ACK', { type: 3, mission_type: 0, target_system: 255, target_component: 190 });
+  await assert.rejects(p, (e) => {
+    assert.strictEqual(e.code, 'MISSION_CLEAR_REJECTED');
+    assert.strictEqual(e.context.result, 3);
+    return true;
+  });
+});
+
+test('MissionClear times out cleanly with no ACK (#59)', async () => {
+  const conn = new FakeConnection();
+  const wf = new MissionClear(downloadOpts(conn, { timeoutMs: 20, maxRetries: 0 }));
+  // The workflow timeout timer is unref'd; keep the loop alive so it can fire.
+  const keepAlive = setInterval(() => {}, 5);
+  try {
+    await assert.rejects(wf.run(), (e) => {
+      assert.strictEqual(e.code, 'MISSION_TIMEOUT');
+      return true;
+    });
+  } finally {
+    clearInterval(keepAlive);
+  }
 });
