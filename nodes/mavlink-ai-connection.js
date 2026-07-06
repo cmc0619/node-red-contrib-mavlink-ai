@@ -163,6 +163,23 @@ module.exports = function registerMavlinkAiConnection(RED) {
       return codec;
     }
 
+    /**
+     * Pick the codec to encode an outbound message with, honoring the profile
+     * named on the message (#68). A name/id that resolves to a real valid
+     * profile uses that profile's codec (its dialect + source identity); a blank
+     * profile, a name-only label the connection can't resolve, or an invalid
+     * profile falls back to the connection's default codec.
+     *
+     * @param {string|object} [profileRef]  message.profile (name, id, or object)
+     * @returns {MavlinkCodec}
+     */
+    function resolveOutboundCodec(profileRef) {
+      if (profileRef === undefined || profileRef === null || profileRef === '') {
+        return node._codec;
+      }
+      return getCodecForProfile(node.resolveProfile(profileRef));
+    }
+
     // --- routing -------------------------------------------------------------
     /**
      * Resolve a route's profile reference (config-node id, name, or object) to
@@ -269,9 +286,16 @@ module.exports = function registerMavlinkAiConnection(RED) {
         fields.target_component,
         defaults.defaultTargetComponent
       );
+      // Encode with the codec of the profile named on the message when it
+      // resolves to a real, valid profile (routed / custom-dialect sends carry
+      // the builder's profile), so the right dialect, source identity, version
+      // and signing are used — not always the connection's default profile
+      // (#68). Falls back to the default codec when no profile is named or the
+      // name can't be resolved to a valid profile node.
+      const codec = resolveOutboundCodec(message.profile);
       let buffer;
       try {
-        buffer = node._codec.encode(message.name, fields, { targetSystem, targetComponent });
+        buffer = codec.encode(message.name, fields, { targetSystem, targetComponent });
       } catch (err) {
         return Promise.reject(toMavlinkError(err, 'ENCODE_FAILED'));
       }
@@ -305,9 +329,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
      */
     function onPacket(packet) {
       const header = packet.header;
-      // Track the peer's wire version so an "auto" profile frames outbound
-      // packets the way the peer speaks (a v1-only peer ignores v2 frames).
-      node._codec.noteInboundMagic(header.magic);
+      // Track the peer's wire version, keyed by its sysid, so an "auto" profile
+      // frames outbound packets the way *that* peer speaks — a v1-only vehicle
+      // ignores v2 frames, and a mixed fleet must not have one peer's version
+      // flip framing for all of them (#69). Noted on the default codec (which
+      // encodes outbound) here; the matched profile's codec is updated below.
+      node._codec.noteInboundMagic(header.magic, header.sysid);
 
       // 1. Route on the framed header (sysid/compid) before decoding.
       const decision = node._router.route(header.sysid, header.compid);
@@ -321,6 +348,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
       // 2. Decode with the matched profile's dialect (routed connections may
       //    carry systems on different dialects).
       const codec = getCodecForProfile(profile);
+      // Give the matched profile's codec the same per-peer version observation,
+      // so a send that encodes with that profile's codec frames to the peer's
+      // version too (#69). No-op when it is the default codec (already noted).
+      if (codec !== node._codec) {
+        codec.noteInboundMagic(header.magic, header.sysid);
+      }
 
       // 3. MAVLink 2 signature verification (issue #15), using the *matched
       //    profile's* codec so a routed system is checked against its own

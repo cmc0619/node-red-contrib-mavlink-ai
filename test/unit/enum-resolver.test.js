@@ -32,3 +32,20 @@ test('passes through numbers and unknown strings', () => {
 test('nameFor maps numbers back to names', () => {
   assert.strictEqual(enums.nameFor(bundle.enums, 'MavType', 2), 'MAV_TYPE_QUADROTOR');
 });
+
+test('nameFor reverse-resolves base MAV_CMD values through a split enum (#64)', () => {
+  // MavCmd is declared by both common and ardupilotmega; each module exports
+  // only its own members. enumsByName must merge them, or reverse lookups of
+  // the base (common) commands return undefined.
+  assert.strictEqual(enums.nameFor(bundle.enums, 'MavCmd', 400), 'MAV_CMD_COMPONENT_ARM_DISARM');
+  assert.strictEqual(enums.nameFor(bundle.enums, 'MavCmd', 16), 'MAV_CMD_NAV_WAYPOINT');
+  // ArduPilot-specific commands still reverse-resolve after the merge.
+  assert.strictEqual(enums.nameFor(bundle.enums, 'MavCmd', 42006), 'MAV_CMD_FIXED_MAG_CAL_YAW');
+});
+
+test('getEnum/enumsByName carries both common and ardupilot commands (#64)', () => {
+  const mavCmd = bundle.enums.enumsByName.MavCmd;
+  assert.strictEqual(mavCmd.COMPONENT_ARM_DISARM, 400); // common
+  assert.strictEqual(mavCmd[400], 'COMPONENT_ARM_DISARM'); // reverse, common
+  assert.ok(Object.keys(mavCmd).some((k) => Number(k) >= 42000)); // ardupilot extras present
+});

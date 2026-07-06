@@ -131,3 +131,45 @@ test('routed connection decodes with the matched profile dialect', async (t) => 
   assert.strictEqual(custom.payload.profile, 'Custom');
   assert.strictEqual(custom.payload.fields.mode, 7);
 });
+
+/**
+ * connection.send must encode with the codec of the profile named on the
+ * message, not always the default profile (#68). Here the default profile is
+ * `minimal` with source sysid 255, while a second profile uses source sysid 42.
+ * A HEARTBEAT sent with that profile must go out framed from sysid 42.
+ */
+test('outbound send honors the message profile codec (#68)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-profile', {
+    id: 'p_def', name: 'Def', profileType: 'gcs', dialect: 'minimal', mavlinkVersion: 'v2',
+    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-profile', {
+    id: 'p_alt', name: 'Alt', profileType: 'gcs', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    sourceSystemId: 42, sourceComponentId: 200, defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c_send', name: 'Send UDP', profile: 'p_def',
+    transport: 'udp-peer', routingMode: 'single-profile',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
+  });
+  // Stop the real UDP transport up front and capture outbound frames instead of
+  // putting them on the wire. The fake exposes stop() so teardown stays clean.
+  await new Promise((resolve) => conn._transport.once('listening', resolve));
+  await conn._transport.stop();
+  const sent = [];
+  conn._transport = {
+    descriptor: { type: 'fake' },
+    send: (buf) => { sent.push(buf); return Promise.resolve(); },
+    stop: () => Promise.resolve()
+  };
+  t.after(async () => RED.close(conn));
+
+  // Default profile: source sysid 255 (offset 5 in a v2 frame).
+  await conn.send({ name: 'HEARTBEAT', fields: { type: 'MAV_TYPE_GCS' } });
+  assert.strictEqual(sent[sent.length - 1][5], 255);
+
+  // Named profile: source sysid 42.
+  await conn.send({ name: 'HEARTBEAT', profile: 'p_alt', fields: { type: 'MAV_TYPE_GCS' } });
+  assert.strictEqual(sent[sent.length - 1][5], 42);
+});

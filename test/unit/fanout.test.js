@@ -118,7 +118,7 @@ test('non-numeric params and coordinates fail fast instead of emitting NaN (#46)
   );
   assert.throws(
     () => buildFanout({ command: 'MAV_CMD_NAV_LAND', targets: [{ sysid: 1, target_component: 'gimbal' }] }),
-    (e) => e.code === 'BAD_PARAM' && /target_component/.test(e.message)
+    (e) => e.code === 'INVALID_FIELD' && /target_component/.test(e.message)
   );
   assert.throws(
     () => buildFanout({ command: 'MAV_CMD_DO_REPOSITION', useInt: true, targets: [{ sysid: 1, x: null, y: 1 }] }),
@@ -135,6 +135,45 @@ test('fan-out rejects an out-of-range target latitude (#55)', () => {
     () => buildFanout({ command: 'MAV_CMD_DO_REPOSITION', targets: [{ sysid: 2, lat: 39, lon: -999 }] }),
     (e) => e.code === 'INVALID_FIELD' && e.context.field === 'lon'
   );
+});
+
+test('fan-out range-checks target ids and COMMAND_INT wire coordinates (#72)', () => {
+  // Out-of-range target system.
+  assert.throws(
+    () => buildFanout({ command: 'MAV_CMD_NAV_LAND', targets: [999] }),
+    (e) => e.code === 'INVALID_FIELD' && e.context.field === 'target_system'
+  );
+  // sysid 0 is broadcast, not a fan-out target.
+  assert.throws(
+    () => buildFanout({ command: 'MAV_CMD_NAV_LAND', targets: [0] }),
+    (e) => e.code === 'BAD_TARGET' && /broadcast/.test(e.message)
+  );
+  // Out-of-range target component.
+  assert.throws(
+    () => buildFanout({ command: 'MAV_CMD_NAV_LAND', targets: [{ sysid: 1, target_component: 300 }] }),
+    (e) => e.code === 'INVALID_FIELD' && e.context.field === 'target_component'
+  );
+  // COMMAND_INT raw x/y outside int32.
+  assert.throws(
+    () => buildFanout({ command: 'MAV_CMD_DO_REPOSITION', useInt: true, targets: [{ sysid: 1, x: 3e9, y: 1 }] }),
+    (e) => e.code === 'BAD_COORDINATES' && e.context.field === 'x'
+  );
+  // COMMAND_INT param5/param6 fallback treated as degrees must be in range.
+  assert.throws(
+    () =>
+      buildFanout({
+        command: 'MAV_CMD_DO_REPOSITION',
+        useInt: true,
+        targets: [{ sysid: 1, param5: 200, param6: 8 }]
+      }),
+    (e) => e.code === 'INVALID_FIELD' && e.context.field === 'param5'
+  );
+});
+
+test('broadcast mode still builds a target_system-0 message despite the fan-out sysid guard (#72)', () => {
+  const messages = buildFanout({ command: 'MAV_CMD_NAV_LAND', broadcast: true, targets: [1, 2] });
+  assert.strictEqual(messages.length, 1);
+  assert.strictEqual(messages[0].target_system, 0);
 });
 
 test('empty target list and missing command fail with structured codes (#46)', () => {
