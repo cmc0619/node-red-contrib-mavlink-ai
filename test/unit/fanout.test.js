@@ -103,8 +103,10 @@ test('non-numeric params and coordinates fail fast instead of emitting NaN (#46)
     (e) => e.code === 'BAD_PARAM'
   );
   assert.throws(
+    // Non-numeric lat/lon now go through the shared range validator (#55),
+    // which reports the more specific INVALID_FIELD.
     () => buildFanout({ command: 'MAV_CMD_DO_REPOSITION', targets: [{ sysid: 1, lat: 'x', lon: 8.5 }] }),
-    (e) => e.code === 'BAD_COORDINATES'
+    (e) => e.code === 'INVALID_FIELD'
   );
   assert.throws(
     () =>
@@ -121,6 +123,17 @@ test('non-numeric params and coordinates fail fast instead of emitting NaN (#46)
   assert.throws(
     () => buildFanout({ command: 'MAV_CMD_DO_REPOSITION', useInt: true, targets: [{ sysid: 1, x: null, y: 1 }] }),
     (e) => e.code === 'BAD_PARAM'
+  );
+});
+
+test('fan-out rejects an out-of-range target latitude (#55)', () => {
+  assert.throws(
+    () => buildFanout({ command: 'MAV_CMD_DO_REPOSITION', targets: [{ sysid: 1, lat: 200, lon: 8.5 }] }),
+    (e) => e.code === 'INVALID_FIELD' && e.context.field === 'lat' && e.context.sysid === 1
+  );
+  assert.throws(
+    () => buildFanout({ command: 'MAV_CMD_DO_REPOSITION', targets: [{ sysid: 2, lat: 39, lon: -999 }] }),
+    (e) => e.code === 'INVALID_FIELD' && e.context.field === 'lon'
   );
 });
 

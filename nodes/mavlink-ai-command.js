@@ -5,6 +5,12 @@ const { firstDefined, toInt, toBool } = require('../lib/util/validation');
 const { registerEditorApi } = require('../lib/editor-api');
 const { resolveFlightMode } = require('../lib/command/flight-modes');
 const { CommandSend } = require('../lib/command/command-workflow');
+const {
+  validateTargetSystem,
+  validateTargetComponent,
+  validateLatitude,
+  validateLongitude
+} = require('../lib/util/field-validation');
 
 /**
  * True if `value` looks like a raw MAV_CMD reference (enum name or number)
@@ -366,6 +372,29 @@ module.exports = function registerMavlinkAiCommand(RED) {
 
       const targetSystem = firstDefined(merged.target_system, defaults.defaultTargetSystem, 1);
       const targetComponent = firstDefined(merged.target_component, defaults.defaultTargetComponent, 1);
+
+      // Workflow-level validation (#55): reject out-of-range targets and, when
+      // the user supplied lat/lon degrees, out-of-range coordinates — before a
+      // command reaches a vehicle. Raw x/y wire values are left to the finite
+      // check above (they're degE7/arbitrary, not degrees). In the COMMAND_INT
+      // path lat/lon also fall back to editor-saved param5/param6 (degrees), so
+      // validate that source too; in COMMAND_LONG those params are generic and
+      // not treated as coordinates.
+      try {
+        validateTargetSystem(targetSystem);
+        validateTargetComponent(targetComponent);
+        const latInput = firstDefined(merged.lat, useInt ? configParams.param5 : undefined);
+        const lonInput = firstDefined(merged.lon, useInt ? configParams.param6 : undefined);
+        if (latInput !== undefined) {
+          validateLatitude(latInput, { command: selected });
+        }
+        if (lonInput !== undefined) {
+          validateLongitude(lonInput, { command: selected });
+        }
+      } catch (err) {
+        const e = toMavlinkError(err, 'INVALID_FIELD');
+        return sendError(msg, send, done, e.code, e.message, e.context);
+      }
 
       // --- await-ack mode (issue #16): run the command protocol ourselves ----
       if (node.awaitAck) {

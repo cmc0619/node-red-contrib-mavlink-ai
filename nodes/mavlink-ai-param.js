@@ -2,6 +2,7 @@
 
 const { ParamRead, ParamSet, ParamList } = require('../lib/param/param-workflow');
 const { toInt, firstDefined } = require('../lib/util/validation');
+const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 
 /**
@@ -48,6 +49,22 @@ module.exports = function registerMavlinkAiParam(RED) {
 
       const targetSystem = firstDefined(payload.target_system, defaults.defaultTargetSystem, 1);
       const targetComponent = firstDefined(payload.target_component, defaults.defaultTargetComponent, 1);
+
+      // Reject out-of-range targets before locking/sending (#55).
+      try {
+        validateTargetSystem(targetSystem);
+        validateTargetComponent(targetComponent);
+      } catch (err) {
+        const e = toMavlinkError(err, 'INVALID_FIELD');
+        node.status({ fill: 'red', shape: 'ring', text: e.code });
+        return finishError(node, send, done, errorPayload({
+          node: 'mavlink-ai-param',
+          connection: node.connection.name,
+          code: e.code,
+          message: e.message,
+          context: e.context
+        }));
+      }
 
       // Only one PARAM workflow per connection/profile/target at a time — the
       // param list stream and a concurrent read/set would otherwise interleave.

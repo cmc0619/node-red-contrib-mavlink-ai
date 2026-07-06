@@ -13,12 +13,13 @@ protocol/dialect layer, the UDP / TCP / serial connection runtime, routing with
 per-profile decode, subscriptions, the in/out/build/filter/command nodes, and
 the mission download/upload/clear workflows. Serial is optional and lazy-loaded.
 
-Dialect support now includes both bundled dialects and runtime-compiled custom
-local/Docker-mounted MAVLink XML dialects. Custom XML loading resolves the file's
-real `<include>` graph, compiles the resulting definitions into the same runtime
-bundle shape used by bundled dialects, and fails loudly with structured errors
-for invalid XML, missing includes, include cycles, or unsupported remote includes.
-There is no silent fallback to `common`.
+Dialect support has two sources: **bundled** dialects and a **custom** MAVLink
+XML path. A custom dialect is simply an XML file readable by the Node-RED
+process (local or mounted — not separate modes). Custom XML loading resolves the
+file's real `<include>` graph, compiles the resulting definitions into the same
+runtime bundle shape used by bundled dialects, and fails loudly with structured
+errors for invalid XML, missing includes, include cycles, or unsupported remote
+includes. There is no silent fallback to `common`.
 
 Remaining release/readiness items live in [`RELEASE_SCOPE.md`](RELEASE_SCOPE.md)
 and the open sections of [`ROADMAP.md`](ROADMAP.md).
@@ -113,6 +114,25 @@ protocol library exposes only the authenticity check and stateful, persisted
 replay tracking is out of scope for this minimal support. A captured, validly
 signed frame can therefore be replayed; do not rely on signing alone as an
 anti-replay control.
+
+## Validation model
+
+Two layers, on purpose:
+
+- The **raw/advanced builder** (`mavlink-ai-build`) and the low-level encoder stay
+  permissive. MAVLink zero-fills absent fields, so under-specified messages are
+  valid wire traffic — unknown field names are reported as warnings, not errors,
+  so wire-level experimentation and custom dialects keep working.
+- The **workflow/action nodes** validate more strictly, because a vehicle-control
+  action built with an out-of-range or nonsensical value should fail loudly, not
+  encode as "valid" MAVLink with unsafe defaults. `mavlink-ai-command`,
+  `mavlink-ai-mission` (upload items), `mavlink-ai-fanout` (coordinate targets),
+  and `mavlink-ai-param` reject out-of-range `target_system`/`target_component`
+  (0–255) and out-of-range `lat`/`lon` (±90 / ±180), and require a command on
+  each mission item. Failures are structured `mavlink/error` payloads with
+  `code: "INVALID_FIELD"` and a context naming the field, the offending value,
+  and the expected range — not opaque serialization errors. Reusable helpers live
+  in `lib/util/field-validation.js`.
 
 ## Quick start
 

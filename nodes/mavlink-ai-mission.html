@@ -6,7 +6,7 @@
       name: { value: '' },
       connection: { value: '', type: 'mavlink-ai-connection', required: true },
       action: { value: 'download', required: true },
-      timeoutMs: { value: 3000, validate: RED.validators.number() },
+      timeoutMs: { value: 10000, validate: RED.validators.number() },
       maxRetries: { value: 3, validate: RED.validators.number() }
     },
     inputs: 1,
@@ -38,11 +38,14 @@
   </div>
   <div class="form-row">
     <label for="node-input-timeoutMs">Timeout ms</label>
-    <input type="number" id="node-input-timeoutMs">
+    <input type="number" id="node-input-timeoutMs" placeholder="10000">
   </div>
   <div class="form-row">
     <label for="node-input-maxRetries">Retries</label>
-    <input type="number" id="node-input-maxRetries">
+    <input type="number" id="node-input-maxRetries" placeholder="3">
+  </div>
+  <div class="form-tips">
+    Timeout is per protocol step (each count/item/ack), not the whole transfer; on expiry the step is retransmitted up to <b>Retries</b> times before failing. Default <b>10000 ms</b> suits real radio/serial links — lower it (e.g. 2000–3000) for SITL or fast local links, raise it for slow/lossy links.
   </div>
 </script>
 
@@ -51,14 +54,21 @@
   <h3>Actions</h3>
   <ul>
     <li><b>Download</b> — request the mission and assemble all items.</li>
-    <li><b>Upload</b> — send <code>msg.payload.items</code> to the vehicle.</li>
+    <li><b>Upload</b> — send <code>msg.payload.items</code> (or <code>waypoints</code>) to the vehicle.</li>
     <li><b>Clear</b> — clear the mission of the selected type.</li>
   </ul>
+  <p>The action is resolved in priority order: <code>msg.action</code>, <code>msg.payload.action</code>, an Aigen-style topic (<code>upload_mission</code> / <code>download_mission</code> / <code>clear_mission</code>), then the node config default.</p>
   <h3>Inputs</h3>
   <p><code>msg.payload</code> may set <code>target_system</code>, <code>target_component</code>, <code>mission_type</code> (mission/fence/rally/all), and for upload an <code>items</code> array.</p>
+  <h3>Upload items</h3>
+  <p><code>payload.waypoints</code> is accepted as a friendly alias for <code>payload.items</code>. A simple entry with just <code>lat</code>/<code>lon</code>/<code>alt</code> and no <code>command</code> defaults to <code>MAV_CMD_NAV_WAYPOINT</code>. Explicit <code>command</code>/params/raw <code>x</code>-<code>y</code>/frame still work and take precedence. The vehicle's request type controls the item wire message: a <code>MISSION_REQUEST_INT</code> is answered with <code>MISSION_ITEM_INT</code> (degE7), a plain <code>MISSION_REQUEST</code> with <code>MISSION_ITEM</code> (float degrees).</p>
+  <h3>Clear</h3>
+  <p>Clear is best-effort by default: it resolves once <code>MISSION_CLEAR_ALL</code> is sent (some stacks do not ack clearing an already-empty mission). Set <code>msg.wait_ack</code> or <code>msg.payload.wait_ack</code> to <code>true</code> to instead wait for a <code>MISSION_ACK</code> — resolving on accepted (with numeric <code>result</code> and readable <code>result_name</code>) or failing on rejection/timeout. An optional <code>timeout_ms</code> overrides the node timeout for the wait. The result's <code>acked</code> flag says whether it was acknowledged.</p>
   <h3>Coordinates</h3>
   <p>For upload items, give <code>lat</code>/<code>lon</code> in plain <b>float degrees</b> (plus <code>z</code> or <code>alt</code> in meters) — they are converted to the wire scaling automatically (degE7 int32 for <code>MISSION_ITEM_INT</code>). Explicit <code>x</code>/<code>y</code> are treated as raw wire values and win over <code>lat</code>/<code>lon</code>.</p>
   <p>Downloaded items keep raw <code>x</code>/<code>y</code> and add <code>lat</code>/<code>lon</code> in float degrees for global frames, plus <code>wire_message</code> naming the message type they arrived as.</p>
+  <h3>Timeout &amp; retries</h3>
+  <p><b>Timeout ms</b> applies to each protocol step (waiting for a count, an item, or an ack), not the whole transfer. On expiry the last message is retransmitted, up to <b>Retries</b> times, before the workflow fails with <code>MISSION_TIMEOUT</code>. The default is <b>10000 ms</b> (matching the legacy driver and safe for real radio/serial links) — lower it to ~2000–3000 ms on SITL or fast local links, raise it for slow/lossy links.</p>
   <h3>Outputs</h3>
   <ol class="node-ports">
     <li>Completed mission object.</li>
