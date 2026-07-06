@@ -1,6 +1,7 @@
 'use strict';
 
 const { parseList, parseIdList, toNum, toBool, idAccepted } = require('../lib/util/validation');
+const { fieldsSignature } = require('../lib/util/fields-signature');
 const { registerEditorApi } = require('../lib/editor-api');
 
 /**
@@ -95,7 +96,7 @@ module.exports = function registerMavlinkAiFilter(RED) {
       }
 
       if (node.changedOnly) {
-        const sig = JSON.stringify(fields);
+        const sig = fieldsSignature(fields);
         if (lastSignature.get(key) === sig) {
           return done();
         }

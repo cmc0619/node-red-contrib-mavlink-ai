@@ -96,6 +96,19 @@ test('ParamRead by name completes on the matching PARAM_VALUE', async () => {
   assert.strictEqual(req.fields.param_index, -1); // read-by-name uses index -1
 });
 
+test('ParamRead ignores a PARAM_VALUE from a different component (#67)', async () => {
+  const conn = new FakeConnection();
+  const wf = new ParamRead({ connection: conn, targetSystem: 1, targetComponent: 1, paramId: 'RC1_MIN' });
+  const p = wf.run();
+  // Same sysid + matching param_id, but a different component (e.g. a gimbal)
+  // must not settle a read aimed at component 1.
+  conn.deliverParamValue(Object.assign(paramValue({ id: 'RC1_MIN', value: 999 }), { compid: 2 }));
+  // The addressed component's echo settles it with the right value.
+  conn.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 1100 }));
+  const res = await p;
+  assert.strictEqual(res.payload.param_value, 1100);
+});
+
 test('ParamRead by index matches on param_index', async () => {
   const conn = new FakeConnection();
   const wf = new ParamRead({ connection: conn, targetSystem: 1, targetComponent: 1, paramIndex: 5 });

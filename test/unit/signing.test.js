@@ -166,6 +166,21 @@ test('empty signing config is treated as no signing (#15)', () => {
   assert.strictEqual(codec.verifyInboundPacket({ signature: null }), null);
 });
 
+test('requireSignature implies inbound verification (#70)', () => {
+  // 'Require signature' is fail-closed and is meaningless without verification,
+  // so it must reject unsigned frames even when verifyInbound is not also set.
+  const codec = new MavlinkCodec({
+    bundle,
+    sysid: 1,
+    compid: 1,
+    signing: { passphrase: 'k', requireSignature: true } // verifyInbound omitted
+  });
+  assert.strictEqual(codec.signing.verifyInbound, true);
+  const decision = codec.verifyInboundPacket({ signature: null });
+  assert.strictEqual(decision.accepted, false);
+  assert.strictEqual(decision.reason, 'signature-required');
+});
+
 test('sign-outbound with no passphrase warns about the silent downgrade (#15)', () => {
   const original = console.warn;
   const warnings = [];

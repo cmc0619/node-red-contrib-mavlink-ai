@@ -146,7 +146,13 @@ module.exports = function registerMavlinkAiProfile(RED) {
       autopilot: node.heartbeatAutopilot || 'MAV_AUTOPILOT_INVALID',
       base_mode: 0,
       custom_mode: 0,
-      system_status: 'MAV_STATE_ACTIVE'
+      system_status: 'MAV_STATE_ACTIVE',
+      // HEARTBEAT.mavlink_version is the wire protocol version of the dialect
+      // (the XML `uint8_t_mavlink_version` magic field that mavgen auto-fills
+      // with MAVLINK_VERSION = 3). node-mavlink leaves it 0, which then gets
+      // truncated away and makes our heartbeats advertise version 0 (#66). The
+      // current common message set is version 3 regardless of v1/v2 framing.
+      mavlink_version: 3
     });
 
     /**

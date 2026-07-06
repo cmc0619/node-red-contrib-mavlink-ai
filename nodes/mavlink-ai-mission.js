@@ -6,6 +6,7 @@ const { MissionClear } = require('../lib/mission/mission-clear');
 const { missionTypeToNumber } = require('../lib/mission/mission-state-machine');
 const { topicAction, normalizeUploadItems, validateMissionItems } = require('../lib/mission/upload-input');
 const { toInt, toBool, firstDefined } = require('../lib/util/validation');
+const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 
 /**
@@ -68,6 +69,24 @@ module.exports = function registerMavlinkAiMission(RED) {
         }));
       }
       const useInt = (defaults.preferredMissionItemType || 'MISSION_ITEM_INT') === 'MISSION_ITEM_INT';
+
+      // Reject out-of-range targets before locking/sending (#74), matching the
+      // param/command paths. Done before acquiring the lock so invalid input
+      // never occupies the lock or starts a workflow.
+      try {
+        validateTargetSystem(targetSystem);
+        validateTargetComponent(targetComponent);
+      } catch (err) {
+        const e = toMavlinkError(err, 'INVALID_FIELD');
+        node.status({ fill: 'red', shape: 'ring', text: e.code });
+        return finishError(node, send, done, errorPayload({
+          node: 'mavlink-ai-mission',
+          connection: node.connection.name,
+          code: e.code,
+          message: e.message,
+          context: e.context
+        }));
+      }
 
       const lockKey = `mission:${node.connection.id}:${profile ? profile.id : 'default'}:${missionTypeNum}`;
       let lock;

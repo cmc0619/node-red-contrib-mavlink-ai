@@ -60,3 +60,21 @@ test('single-profile mode applies accept filters', () => {
   assert.strictEqual(router.route(1, 1).accepted, true);
   assert.strictEqual(router.route(2, 1).accepted, false);
 });
+
+test('malformed non-empty sysid/compid throws instead of collapsing to wildcard (#71)', () => {
+  // A typo must fail loudly, not silently widen the route to every system.
+  assert.throws(() => new RouteTable([{ sysid: '1O', compid: 1, profile: 'Copter' }]), /Invalid route sysid at index 0/);
+  assert.throws(() => new RouteTable([{ sysid: 1, compid: 'autopilot', profile: 'Copter' }]), /Invalid route compid at index 0/);
+  // Out-of-range uint8 ids also fail.
+  assert.throws(() => new RouteTable([{ sysid: 300, compid: 1, profile: 'Copter' }]), /out of the MAVLink 0\.\.255 id range/);
+  // Explicit wildcards and valid ids still work.
+  const ok = new RouteTable([
+    { sysid: '*', compid: 'any', profile: 'A' },
+    { sysid: 5, compid: 0, profile: 'B' }
+  ]);
+  assert.strictEqual(ok.size, 2);
+});
+
+test('a routing typo surfaces through RouteTable.parse (#71)', () => {
+  assert.throws(() => RouteTable.parse('[{"sysid":"1O","compid":1,"profile":"Copter"}]'), /Invalid route sysid/);
+});

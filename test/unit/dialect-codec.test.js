@@ -104,6 +104,27 @@ test('auto version follows the detected inbound wire version (#19)', () => {
   assert.strictEqual(codec.effectiveVersion(), 'v2');
 });
 
+test('auto tracks wire version per peer sysid (#69)', () => {
+  const b = loadDialect('ardupilotmega');
+  const codec = new MavlinkCodec({ bundle: b, version: 'auto', sysid: 255, compid: 190 });
+  const hb = { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 };
+
+  // Vehicle 1 speaks v1, vehicle 2 speaks v2 on the same connection.
+  codec.noteInboundMagic(0xfe, 1);
+  codec.noteInboundMagic(0xfd, 2);
+
+  // Each peer's outbound framing follows its own observed version, regardless
+  // of who spoke last.
+  assert.strictEqual(codec.effectiveVersion(1), 'v1');
+  assert.strictEqual(codec.effectiveVersion(2), 'v2');
+  assert.strictEqual(codec.encode('HEARTBEAT', hb, { targetSystem: 1 })[0], 0xfe);
+  assert.strictEqual(codec.encode('HEARTBEAT', hb, { targetSystem: 2 })[0], 0xfd);
+
+  // An unknown/untargeted peer falls back to the most recent inbound version.
+  assert.strictEqual(codec.effectiveVersion(99), 'v2');
+  assert.strictEqual(codec.effectiveVersion(), 'v2');
+});
+
 test('auto keeps v2 framing for message ids above 255 even with a v1 peer (#19)', () => {
   const b = loadDialect('ardupilotmega');
   const codec = new MavlinkCodec({ bundle: b, version: 'auto', sysid: 255, compid: 190 });
