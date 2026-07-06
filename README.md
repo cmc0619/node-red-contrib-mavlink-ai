@@ -115,6 +115,25 @@ replay tracking is out of scope for this minimal support. A captured, validly
 signed frame can therefore be replayed; do not rely on signing alone as an
 anti-replay control.
 
+## Validation model
+
+Two layers, on purpose:
+
+- The **raw/advanced builder** (`mavlink-ai-build`) and the low-level encoder stay
+  permissive. MAVLink zero-fills absent fields, so under-specified messages are
+  valid wire traffic — unknown field names are reported as warnings, not errors,
+  so wire-level experimentation and custom dialects keep working.
+- The **workflow/action nodes** validate more strictly, because a vehicle-control
+  action built with an out-of-range or nonsensical value should fail loudly, not
+  encode as "valid" MAVLink with unsafe defaults. `mavlink-ai-command`,
+  `mavlink-ai-mission` (upload items), `mavlink-ai-fanout` (coordinate targets),
+  and `mavlink-ai-param` reject out-of-range `target_system`/`target_component`
+  (0–255) and out-of-range `lat`/`lon` (±90 / ±180), and require a command on
+  each mission item. Failures are structured `mavlink/error` payloads with
+  `code: "INVALID_FIELD"` and a context naming the field, the offending value,
+  and the expected range — not opaque serialization errors. Reusable helpers live
+  in `lib/util/field-validation.js`.
+
 ## Quick start
 
 1. Drop a **MAVLink AI In** node onto a flow.

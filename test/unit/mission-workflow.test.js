@@ -7,7 +7,7 @@ const { MissionDownload, extractItem } = require('../../lib/mission/mission-down
 const { MissionUpload, buildItemFields } = require('../../lib/mission/mission-upload');
 const { MissionClear } = require('../../lib/mission/mission-clear');
 const { DEFAULT_TIMEOUT_MS } = require('../../lib/mission/mission-state-machine');
-const { topicAction, normalizeUploadItems } = require('../../lib/mission/upload-input');
+const { topicAction, normalizeUploadItems, validateMissionItems } = require('../../lib/mission/upload-input');
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -270,6 +270,21 @@ test('MissionClear rejects a denied clear with the result name (#59)', async () 
     assert.strictEqual(e.context.result, 3);
     return true;
   });
+});
+
+// --- #55: mission item validation ------------------------------------------
+
+test('validateMissionItems rejects a missing command and out-of-range coords (#55)', () => {
+  const ok = validateMissionItems([{ command: 'MAV_CMD_NAV_WAYPOINT', lat: 37, lon: -122 }]);
+  assert.strictEqual(ok.length, 1);
+  assert.throws(
+    () => validateMissionItems([{ lat: 1, lon: 2 }]),
+    (e) => e.code === 'INVALID_FIELD' && e.context.field === 'command' && e.context.seq === 0
+  );
+  assert.throws(
+    () => validateMissionItems([{ command: 16, lat: 200, lon: 2 }]),
+    (e) => e.code === 'INVALID_FIELD' && e.context.field === 'lat'
+  );
 });
 
 test('MissionClear times out cleanly with no ACK (#59)', async () => {

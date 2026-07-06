@@ -4,7 +4,7 @@ const { MissionDownload } = require('../lib/mission/mission-download');
 const { MissionUpload } = require('../lib/mission/mission-upload');
 const { MissionClear } = require('../lib/mission/mission-clear');
 const { missionTypeToNumber } = require('../lib/mission/mission-state-machine');
-const { topicAction, normalizeUploadItems } = require('../lib/mission/upload-input');
+const { topicAction, normalizeUploadItems, validateMissionItems } = require('../lib/mission/upload-input');
 const { toInt, toBool, firstDefined } = require('../lib/util/validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 
@@ -111,7 +111,7 @@ module.exports = function registerMavlinkAiMission(RED) {
         if (action === 'download') {
           result = await new MissionDownload(opts).run();
         } else if (action === 'upload') {
-          opts.items = normalizeUploadItems(payload);
+          opts.items = validateMissionItems(normalizeUploadItems(payload));
           result = await new MissionUpload(opts).run();
         } else if (action === 'clear') {
           // Best-effort by default (resolve once sent); opt into waiting for a

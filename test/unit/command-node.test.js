@@ -290,6 +290,31 @@ test('arm force via presetFields sets the force magic value (#49)', async () => 
   assert.strictEqual(collected[0].payload.fields.param2, 21196);
 });
 
+// --- #55: workflow-level validation ----------------------------------------
+
+test('command rejects an out-of-range target_system (#55)', async () => {
+  const { RED, node } = setup({ command: 'arm' });
+  const { collected } = await RED.inject(node, { payload: { target_system: 999 } });
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'INVALID_FIELD');
+  assert.strictEqual(collected[0].payload.context.field, 'target_system');
+});
+
+test('command rejects an out-of-range latitude before sending (#55)', async () => {
+  const { RED, node } = setup({ command: 'goto' }); // COMMAND_INT position preset
+  const { collected } = await RED.inject(node, { payload: { lat: 200, lon: 8.5, alt: 30 } });
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'INVALID_FIELD');
+  assert.strictEqual(collected[0].payload.context.field, 'lat');
+});
+
+test('command still accepts valid targets and coordinates (#55)', async () => {
+  const { RED, node } = setup({ command: 'goto' });
+  const { collected } = await RED.inject(node, { payload: { lat: 39.1, lon: -75.1, alt: 40 } });
+  assert.strictEqual(collected[0].payload.name, 'COMMAND_INT');
+  assert.strictEqual(collected[0].payload.fields.x, 391000000);
+});
+
 test('reboot requires explicit runtime confirmation (#49)', async () => {
   // No confirmation anywhere (imported/legacy flow shape): structured error,
   // never a silent reboot.

@@ -199,6 +199,25 @@ real minimal support rather than a "not supported" note.
   credential (never in exported flow JSON).
 - [x] Unit + UDP-loopback integration tests for the sign/verify matrix.
 
+## Phase 15: Mission UX, validation, dialect UI (#55–#60)
+
+- [x] **Dialect source collapse** (#60): profile editor offers only Bundled and
+  Custom (local/mounted were never separate runtime modes); legacy configs map
+  to Custom on load.
+- [x] **Mission timeout default 10s** (#58): legacy parity, safe for real
+  radio/serial links; editor help explains the per-step timeout/retry.
+- [x] **Request-type-aware upload** (#57): answer MISSION_REQUEST with
+  MISSION_ITEM and MISSION_REQUEST_INT with MISSION_ITEM_INT, per request.
+- [x] **Friendly upload input** (#56): `upload_mission` topic + `waypoints`
+  alias; a bare `{lat,lon,alt}` item defaults to MAV_CMD_NAV_WAYPOINT.
+- [x] **Clear with ACK** (#59): optional `wait_ack` clear via a MissionClear
+  workflow; best-effort clear stays the default.
+- [x] **Stricter workflow validation** (#55): reusable range/coordinate helpers
+  (`lib/util/field-validation.js`) wired into the command, mission, fanout, and
+  param nodes with structured `INVALID_FIELD` errors; raw builder stays
+  permissive.
+- [ ] Downloadable MAVLink XML catalog with bundled comparison (#61) — follow-up.
+
 ## Open 1.0 gaps (not yet implemented)
 
 These are stated 1.0 requirements in `RELEASE_SCOPE.md` that the current
