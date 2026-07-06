@@ -13,12 +13,15 @@ const RED = {
   httpAdmin: {
     get(path, ...handlers) {
       routes[path] = handlers[handlers.length - 1];
+    },
+    post(path, ...handlers) {
+      routes['POST ' + path] = handlers[handlers.length - 1];
     }
   }
 };
 registerEditorApi(RED);
 
-function invoke(handler, query) {
+function invoke(handler, query, body) {
   return new Promise((resolve) => {
     const res = {
       _status: 200,
@@ -26,11 +29,11 @@ function invoke(handler, query) {
         this._status = code;
         return this;
       },
-      json(body) {
-        resolve({ status: this._status, body });
+      json(payload) {
+        resolve({ status: this._status, body: payload });
       }
     };
-    handler({ query: query || {} }, res);
+    handler({ query: query || {}, body: body || {} }, res);
   });
 }
 
@@ -114,6 +117,9 @@ test('registerEditorApi registers routes per RED instance, not once per process 
       httpAdmin: {
         get(path, ...handlers) {
           captured[path] = handlers[handlers.length - 1];
+        },
+        post(path, ...handlers) {
+          captured['POST ' + path] = handlers[handlers.length - 1];
         }
       }
     };
@@ -129,4 +135,71 @@ test('registerEditorApi registers routes per RED instance, not once per process 
   const before = Object.keys(redA.captured).length;
   registerEditorApi(redA);
   assert.strictEqual(Object.keys(redA.captured).length, before);
+});
+
+test('xml-catalog endpoints: update (fetch-stubbed), list, and compare (#61)', async () => {
+  const os = require('os');
+  const fs = require('fs');
+  const path = require('path');
+  const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mav-red-'));
+
+  const captured = {};
+  const RED2 = {
+    settings: { userDir },
+    auth: { needsPermission: () => (req, res, next) => next() },
+    httpAdmin: {
+      get(p, ...h) {
+        captured['GET ' + p] = h[h.length - 1];
+      },
+      post(p, ...h) {
+        captured['POST ' + p] = h[h.length - 1];
+      }
+    }
+  };
+  registerEditorApi(RED2);
+
+  // A self-contained minimal.xml (differs from the bundled 'minimal').
+  const minimalXml =
+    '<?xml version="1.0"?><mavlink><messages>' +
+    '<message id="0" name="HEARTBEAT"><field type="uint8_t" name="type">t</field></message>' +
+    '<message id="9600" name="CATALOG_ENDPOINT_MSG"><field type="uint8_t" name="v">v</field></message>' +
+    '</messages></mavlink>';
+
+  const origFetch = global.fetch;
+  global.fetch = async (url) => {
+    if (/minimal\.xml$/.test(url)) {
+      return { ok: true, status: 200, statusText: 'OK', text: async () => minimalXml };
+    }
+    // commit resolution + any other file: not found.
+    return { ok: false, status: 404, statusText: 'Not Found', text: async () => '' };
+  };
+  try {
+    const upd = await invoke(captured['POST /mavlink-ai/xml-catalog/update'], {}, {
+      repo: 'mavlink/mavlink',
+      ref: 'master',
+      files: ['minimal.xml']
+    });
+    assert.strictEqual(upd.status, 200);
+    assert.strictEqual(upd.body.ok, true);
+    assert.deepStrictEqual(upd.body.manifest.files.map((f) => f.name), ['minimal.xml']);
+
+    const list = await invoke(captured['GET /mavlink-ai/xml-catalog']);
+    assert.strictEqual(list.body.ok, true);
+    assert.strictEqual(list.body.snapshots.length, 1);
+    const fileEntry = list.body.snapshots[0].files[0];
+    assert.strictEqual(fileEntry.dialect, 'minimal');
+    assert.strictEqual(fileEntry.bundledExists, true); // 'minimal' is bundled
+
+    const cmp = await invoke(captured['GET /mavlink-ai/xml-catalog/compare'], { file: 'minimal.xml' });
+    assert.strictEqual(cmp.body.ok, true);
+    assert.strictEqual(cmp.body.comparison.comparable, true);
+    assert.ok(cmp.body.comparison.diff.addedMessages.includes('CATALOG_ENDPOINT_MSG'));
+
+    // Comparing a file that was never downloaded is a 404.
+    const missing = await invoke(captured['GET /mavlink-ai/xml-catalog/compare'], { file: 'nope.xml' });
+    assert.strictEqual(missing.status, 404);
+    assert.strictEqual(missing.body.ok, false);
+  } finally {
+    global.fetch = origFetch;
+  }
 });

@@ -216,7 +216,12 @@ real minimal support rather than a "not supported" note.
   (`lib/util/field-validation.js`) wired into the command, mission, fanout, and
   param nodes with structured `INVALID_FIELD` errors; raw builder stays
   permissive.
-- [ ] Downloadable MAVLink XML catalog with bundled comparison (#61) — follow-up.
+- [x] **Downloadable MAVLink XML catalog** (#61): `lib/dialects/xml-catalog.js`
+  downloads official MAVLink XML sets (following includes) into a provenance-
+  tracked local cache, and compares a downloaded dialect against the same-named
+  bundled one (message/enum diff). Surfaced via `/mavlink-ai/xml-catalog`
+  admin endpoints and a profile-editor picker. Downloaded XMLs are managed
+  Custom paths — no third runtime mode, no auto-update, no bundled replacement.
 
 ## Open 1.0 gaps (not yet implemented)
 

@@ -21,6 +21,16 @@ runtime bundle shape used by bundled dialects, and fails loudly with structured
 errors for invalid XML, missing includes, include cycles, or unsupported remote
 includes. There is no silent fallback to `common`.
 
+The profile editor can also **download an official MAVLink XML catalog** into a
+local cache (`<userDir>/mavlink-ai/xml/`) and pick a downloaded file as the
+custom XML path. Downloaded XMLs are **managed Custom paths, not a replacement
+for bundled dialects** — there is no third runtime mode, active profiles are
+never auto-updated, and includes are fetched together at download time (the
+runtime compiler never fetches remote includes). Each snapshot records its
+provenance (repo, ref, resolved commit, timestamp, per-file SHA-256), and the
+editor can show whether a same-named bundled dialect exists plus a message/enum
+diff against it. See `lib/dialects/xml-catalog.js`.
+
 Remaining release/readiness items live in [`RELEASE_SCOPE.md`](RELEASE_SCOPE.md)
 and the open sections of [`ROADMAP.md`](ROADMAP.md).
 
