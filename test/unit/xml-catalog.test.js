@@ -92,6 +92,19 @@ test('update downloads the seed and follows includes, with manifest + hashes (#6
   assert.strictEqual(cat.filePath('nope.xml'), null);
 });
 
+test('filePath rejects traversal / absolute snapshot ids (#61)', async () => {
+  const cat = makeCatalog(FILES);
+  await cat.update({ files: ['common.xml'] });
+  // A malicious snapshot id must not be able to escape snapshots/ even when the
+  // file name itself is a valid basename.
+  assert.strictEqual(cat.filePath('common.xml', '../latest'), null);
+  assert.strictEqual(cat.filePath('common.xml', '../../etc'), null);
+  assert.strictEqual(cat.filePath('common.xml', '..'), null);
+  assert.strictEqual(cat.filePath('common.xml', 'a/../../b'), null);
+  assert.strictEqual(cat.filePath('common.xml', '/abs/path'), null);
+  assert.strictEqual(cat.filePath('common.xml', 'nested/id'), null);
+});
+
 test('a missing seed file is skipped, not fatal (#61)', async () => {
   const cat = makeCatalog(FILES);
   const manifest = await cat.update({ files: ['minimal.xml', 'doesnotexist.xml'] });

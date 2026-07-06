@@ -125,7 +125,10 @@
                 const when = snap.downloadedAt ? new Date(snap.downloadedAt).toISOString().slice(0, 10) : '';
                 const label = f.name + '  [' + snap.repo + '@' + snap.ref + ' ' + when + ']' +
                   (f.bundledExists ? ' (bundled exists)' : ' (not bundled)');
-                $('<option></option>').val(f.path).text(label).attr('data-file', f.name).appendTo($catalog);
+                $('<option></option>').val(f.path).text(label)
+                  .attr('data-file', f.name)
+                  .attr('data-snapshot', snap.snapshotId)
+                  .appendTo($catalog);
                 count += 1;
               });
             });
@@ -166,12 +169,13 @@
         e.preventDefault();
         const opt = $catalog.find('option:selected');
         const file = opt.attr('data-file');
+        const snapshot = opt.attr('data-snapshot');
         if (!file) {
           $catalogStatus.text('Pick a downloaded XML to compare.');
           return;
         }
         $catalogStatus.text('Comparing ' + file + ' with the bundled dialect...');
-        $.getJSON('mavlink-ai/xml-catalog/compare', { file: file })
+        $.getJSON('mavlink-ai/xml-catalog/compare', snapshot ? { file: file, snapshot: snapshot } : { file: file })
           .done(function (data) {
             const c = data && data.comparison;
             if (!c) {
