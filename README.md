@@ -13,16 +13,15 @@ protocol/dialect layer, the UDP / TCP / serial connection runtime, routing with
 per-profile decode, subscriptions, the in/out/build/filter/command nodes, and
 the mission download/upload/clear workflows. Serial is optional and lazy-loaded.
 
-**Known limitations (not yet complete — see [`RELEASE_SCOPE.md`](RELEASE_SCOPE.md)
-and the "Open 1.0 gaps" section of [`ROADMAP.md`](ROADMAP.md)):**
+Dialect support now includes both bundled dialects and runtime-compiled custom
+local/Docker-mounted MAVLink XML dialects. Custom XML loading resolves the file's
+real `<include>` graph, compiles the resulting definitions into the same runtime
+bundle shape used by bundled dialects, and fails loudly with structured errors
+for invalid XML, missing includes, include cycles, or unsupported remote includes.
+There is no silent fallback to `common`.
 
-- Dialects load only from the **bundled** set. A custom local/Docker **XML
-  dialect path is not compiled at runtime** — it fails loudly rather than
-  loading.
-- The dialect loader uses fixed include chains (assumes `common` for vehicle
-  dialects) rather than resolving the MAVLink include graph.
-- The editor's dialect dropdown lists a hand-maintained subset, not every
-  bundled dialect the loader can serve.
+Remaining release/readiness items live in [`RELEASE_SCOPE.md`](RELEASE_SCOPE.md)
+and the open sections of [`ROADMAP.md`](ROADMAP.md).
 
 ## Install
 
@@ -146,7 +145,7 @@ to numbers automatically when building messages.
 ```text
 nodes/   Node-RED node registration + editor HTML (thin)
 lib/
-  dialects/   dialect loader (bundled common/ardupilotmega/... via node-mavlink)
+  dialects/   dialect loader (bundled dialects + runtime-compiled custom XML)
   protocol/   codec, normalizer, enum resolver, validator
   transport/  udp / tcp / serial (serial lazy-loaded)
   routing/    route table + packet router
