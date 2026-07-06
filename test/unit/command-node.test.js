@@ -315,6 +315,20 @@ test('command still accepts valid targets and coordinates (#55)', async () => {
   assert.strictEqual(collected[0].payload.fields.x, 391000000);
 });
 
+test('COMMAND_INT editor-saved param5/param6 degrees are range-validated (#55 review)', async () => {
+  // A raw MAV_CMD sent as COMMAND_INT with out-of-range editor param5 (lat) must
+  // be rejected, not silently scaled to degE7 and sent.
+  const { RED, node } = setup({
+    command: 'MAV_CMD_DO_REPOSITION',
+    sendAs: 'int',
+    fields: '{"param5":200,"param6":8.5}'
+  });
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'INVALID_FIELD');
+  assert.strictEqual(collected[0].payload.context.field, 'lat');
+});
+
 test('reboot requires explicit runtime confirmation (#49)', async () => {
   // No confirmation anywhere (imported/legacy flow shape): structured error,
   // never a silent reboot.

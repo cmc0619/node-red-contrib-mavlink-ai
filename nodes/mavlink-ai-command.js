@@ -376,15 +376,20 @@ module.exports = function registerMavlinkAiCommand(RED) {
       // Workflow-level validation (#55): reject out-of-range targets and, when
       // the user supplied lat/lon degrees, out-of-range coordinates — before a
       // command reaches a vehicle. Raw x/y wire values are left to the finite
-      // check above (they're degE7/arbitrary, not degrees).
+      // check above (they're degE7/arbitrary, not degrees). In the COMMAND_INT
+      // path lat/lon also fall back to editor-saved param5/param6 (degrees), so
+      // validate that source too; in COMMAND_LONG those params are generic and
+      // not treated as coordinates.
       try {
         validateTargetSystem(targetSystem);
         validateTargetComponent(targetComponent);
-        if (merged.lat !== undefined) {
-          validateLatitude(merged.lat, { command: selected });
+        const latInput = firstDefined(merged.lat, useInt ? configParams.param5 : undefined);
+        const lonInput = firstDefined(merged.lon, useInt ? configParams.param6 : undefined);
+        if (latInput !== undefined) {
+          validateLatitude(latInput, { command: selected });
         }
-        if (merged.lon !== undefined) {
-          validateLongitude(merged.lon, { command: selected });
+        if (lonInput !== undefined) {
+          validateLongitude(lonInput, { command: selected });
         }
       } catch (err) {
         const e = toMavlinkError(err, 'INVALID_FIELD');
