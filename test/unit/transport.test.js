@@ -3,10 +3,22 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const dgram = require('dgram');
+const net = require('net');
 const { createTransport } = require('../../lib/transport');
-const { UdpTransport } = require('../../lib/transport/udp-transport');
+const { UdpTransport, validateDestination } = require('../../lib/transport/udp-transport');
 const { TcpTransport } = require('../../lib/transport/tcp-transport');
 const { SerialTransport } = require('../../lib/transport/serial-transport');
+
+/** Poll `cond` until it returns truthy or the timeout elapses. */
+async function waitFor(cond, timeoutMs = 1000) {
+  const start = Date.now();
+  while (!cond()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error('waitFor timed out');
+    }
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
 
 test('factory maps transport types (no serialport required for udp/tcp)', () => {
   assert.ok(createTransport({ transport: 'udp-peer' }) instanceof UdpTransport);
@@ -119,4 +131,59 @@ test('udp-peer message handler learns per-sysid peers from sniffed frames (#21)'
   await transport.stop();
   await new Promise((r) => v1.close(r));
   await new Promise((r) => v2.close(r));
+});
+
+test('validateDestination accepts good targets and rejects bad ones (#77)', () => {
+  assert.strictEqual(validateDestination({ address: '127.0.0.1', port: 14550 }), null);
+
+  const emptyAddr = validateDestination({ address: '', port: 14550 });
+  assert.strictEqual(emptyAddr.code, 'UDP_INVALID_DEST');
+  assert.deepStrictEqual(emptyAddr.context, { address: '', port: 14550 });
+
+  assert.strictEqual(validateDestination({ address: null, port: 14550 }).code, 'UDP_INVALID_DEST');
+  assert.strictEqual(validateDestination({ address: '127.0.0.1', port: 0 }).code, 'UDP_INVALID_DEST');
+  assert.strictEqual(validateDestination({ address: '127.0.0.1', port: 70000 }).code, 'UDP_INVALID_DEST');
+  assert.strictEqual(validateDestination({ address: '127.0.0.1', port: 1.5 }).code, 'UDP_INVALID_DEST');
+});
+
+test('udp send rejects an out-of-range manual destination before the socket send (#77)', async () => {
+  // A truthy-but-invalid manual remote port passes _target's presence check and
+  // must be caught by destination validation instead of reaching the socket.
+  const transport = new UdpTransport({ mode: 'udp-out', remoteHost: '127.0.0.1', remotePort: 70000 });
+  await new Promise((resolve) => {
+    transport.on('listening', resolve);
+    transport.start();
+  });
+  await assert.rejects(
+    () => transport.send(Buffer.from([1])),
+    (err) => err.code === 'UDP_INVALID_DEST' && err.context.port === 70000
+  );
+  await transport.stop();
+});
+
+test('tcp server destroys a client socket after its error and drops it (#78)', async () => {
+  const transport = new TcpTransport({ mode: 'tcp-server', host: '127.0.0.1' });
+  transport.port = 0; // ephemeral port to avoid fixed-port conflicts in CI
+  const errorsSeen = [];
+  transport.on('error', (e) => errorsSeen.push(e));
+  const addr = await new Promise((resolve) => {
+    transport.on('listening', resolve);
+    transport.start();
+  });
+
+  const client = net.connect(addr.port, '127.0.0.1');
+  await new Promise((resolve) => client.on('connect', resolve));
+  await waitFor(() => transport.sockets.size === 1);
+  const [tracked] = [...transport.sockets];
+
+  const closed = new Promise((resolve) => tracked.on('close', resolve));
+  tracked.emit('error', new Error('boom'));
+  await closed;
+
+  assert.strictEqual(tracked.destroyed, true);
+  assert.strictEqual(transport.sockets.size, 0);
+  assert.ok(errorsSeen.some((e) => e.code === 'TCP_ERROR'));
+
+  client.destroy();
+  await transport.stop();
 });

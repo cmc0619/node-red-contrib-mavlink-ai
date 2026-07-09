@@ -12,6 +12,14 @@ const { toInt, toBool, parseIdList, firstDefined } = require('../lib/util/valida
 const { MavlinkError, toMavlinkError, errorPayload } = require('../lib/util/errors');
 
 /**
+ * Minimum HEARTBEAT interval. HEARTBEAT is a low-rate presence/status message,
+ * not a telemetry stream, so intervals below this are clamped (and warned about)
+ * to keep an imported/edited flow from silently configuring an aggressive rate
+ * that floods the outbound queue. The default remains 1000 ms.
+ */
+const HEARTBEAT_MIN_INTERVAL_MS = 1000;
+
+/**
  * mavlink-ai-connection (DESIGN.md §8, §11, §19).
  *
  * The connection config node owns the wire: transport/session, the codec built
@@ -36,9 +44,16 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node.serialBaud = toInt(config.serialBaud, 57600);
     node.reconnect = toBool(config.reconnect, true);
     node.heartbeatEnabled = toBool(config.heartbeat, false);
-    // Floor the interval so an imported/edited flow can't create a tight loop
-    // that floods the outbound queue.
-    node.heartbeatIntervalMs = Math.max(100, toInt(config.heartbeatIntervalMs, 1000));
+    // Clamp the interval to a safe minimum so an imported/edited flow can't
+    // silently configure an aggressive HEARTBEAT rate (e.g. 100 ms / 10 Hz).
+    // Warn when clamping so the misconfiguration is visible instead of hidden.
+    const requestedHeartbeatMs = toInt(config.heartbeatIntervalMs, HEARTBEAT_MIN_INTERVAL_MS);
+    node.heartbeatIntervalMs = Math.max(HEARTBEAT_MIN_INTERVAL_MS, requestedHeartbeatMs);
+    if (requestedHeartbeatMs < HEARTBEAT_MIN_INTERVAL_MS) {
+      node.warn(
+        `heartbeat interval ${requestedHeartbeatMs} ms is below the ${HEARTBEAT_MIN_INTERVAL_MS} ms minimum; clamping to ${HEARTBEAT_MIN_INTERVAL_MS} ms.`
+      );
+    }
     node.acceptedSysids = parseIdList(config.acceptedSysids);
     node.acceptedCompids = parseIdList(config.acceptedCompids);
     node.unmatchedPolicy = config.unmatchedPolicy || (node.routingMode === 'routed' ? 'reject' : 'default');
