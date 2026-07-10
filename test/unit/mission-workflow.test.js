@@ -301,3 +301,25 @@ test('MissionClear times out cleanly with no ACK (#59)', async () => {
     clearInterval(keepAlive);
   }
 });
+
+test('mission workflow sends carry the profile reference end-to-end', async () => {
+  const conn = new FakeConnection();
+  const wf = new MissionClear(downloadOpts(conn, { profile: 'p_routed' }));
+  const p = wf.run();
+  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  const res = await p;
+  assert.strictEqual(res.payload.acked, true);
+  assert.strictEqual(conn.sent[0].name, 'MISSION_CLEAR_ALL');
+  for (const m of conn.sent) {
+    assert.strictEqual(m.profile, 'p_routed');
+  }
+});
+
+test('mission workflow without a profile sends no profile reference', async () => {
+  const conn = new FakeConnection();
+  const wf = new MissionClear(downloadOpts(conn));
+  const p = wf.run();
+  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  await p;
+  assert.ok(!('profile' in conn.sent[0]));
+});

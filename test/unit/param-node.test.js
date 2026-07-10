@@ -35,10 +35,10 @@ function fakeConnection() {
   return conn;
 }
 
-function paramValue({ id = 'RC1_MIN', value = 1100, type = 9, index = 0, count = 1 }) {
+function paramValue({ id = 'RC1_MIN', value = 1100, type = 9, index = 0, count = 1, sysid = 1 }) {
   return {
     name: 'PARAM_VALUE',
-    sysid: 1,
+    sysid,
     compid: 1,
     fields: {
       param_id: id + NUL.repeat(Math.max(0, 16 - id.length)),
@@ -123,4 +123,58 @@ test('param node rejects an unsupported action', async () => {
   const outputs = await run(node, { action: 'bogus', payload: {} });
   const error = outputs[0][2];
   assert.strictEqual(error.payload.code, 'UNSUPPORTED_ACTION');
+});
+
+// Workflow profile propagation (#81): an explicit profile override rides on
+// every outbound send and supplies the workflow's defaults; a reference that
+// can't be resolved to a real profile fails loudly instead of silently
+// running under the connection's default.
+
+/** @returns {object} a PX4-firmware profile stand-in with target defaults */
+function px4Profile() {
+  return {
+    id: 'p2',
+    name: 'PX4 Rover',
+    isValid: () => true,
+    getDialect: () => ({ enums: loadDialect('ardupilotmega').enums }),
+    getDefaults: () => ({ defaultTargetSystem: 3, defaultTargetComponent: 1, firmware: 'px4' })
+  };
+}
+
+test('param node explicit profile rides on sends and supplies target defaults', async () => {
+  const { conn, node } = setup({ action: 'read', paramId: 'RC1_MIN', profile: 'p2' });
+  const profile2 = px4Profile();
+  conn.resolveProfile = (ref) => (ref === 'p2' ? profile2 : { name: ref });
+  const outputs = await run(node, { payload: {} }, () => conn.deliver(paramValue({ value: 1100, sysid: 3 })));
+  const req = conn.sent[0];
+  assert.strictEqual(req.name, 'PARAM_REQUEST_READ');
+  assert.strictEqual(req.profile, 'p2');
+  assert.strictEqual(req.fields.target_system, 3);
+  const result = outputs.map((o) => o[0]).filter(Boolean).pop();
+  assert.strictEqual(result.payload.param_value, 1100);
+});
+
+test('param node rejects an unresolvable msg profile with UNKNOWN_PROFILE', async () => {
+  const { conn, node } = setup({ action: 'read', paramId: 'RC1_MIN' });
+  conn.resolveProfile = (ref) => ({ name: ref });
+  const outputs = await run(node, { payload: { profile: 'missing' } });
+  const error = outputs[0][2];
+  assert.strictEqual(error.topic, 'mavlink/error');
+  assert.strictEqual(error.payload.code, 'UNKNOWN_PROFILE');
+  assert.strictEqual(conn.sent.length, 0);
+});
+
+test('param node route-resolves the target to its profile when no override is set', async () => {
+  const { conn, node } = setup({ action: 'read', paramId: 'RC1_MIN' });
+  const routed = {
+    id: 'p_routed',
+    name: 'Routed',
+    isValid: () => true,
+    getDialect: () => ({ enums: loadDialect('ardupilotmega').enums }),
+    getDefaults: () => ({ defaultTargetSystem: 1, defaultTargetComponent: 1, firmware: 'generic' })
+  };
+  conn.getProfileForPacket = ({ sysid }) => (sysid === 2 ? routed : conn.profile);
+  await run(node, { payload: { target_system: 2 } }, () => conn.deliver(paramValue({ value: 1100, sysid: 2 })));
+  assert.strictEqual(conn.sent[0].profile, 'p_routed');
+  assert.strictEqual(conn.sent[0].fields.target_system, 2);
 });

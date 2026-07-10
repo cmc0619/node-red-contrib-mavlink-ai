@@ -5,6 +5,7 @@
     defaults: {
       name: { value: '' },
       connection: { value: '', type: 'mavlink-ai-connection', required: true },
+      profile: { value: '', type: 'mavlink-ai-profile', required: false },
       action: { value: 'read', required: true },
       paramId: { value: '' },
       paramType: { value: 'MAV_PARAM_TYPE_REAL32' },
@@ -40,6 +41,10 @@
   <div class="form-row">
     <label for="node-input-connection">Connection</label>
     <input type="text" id="node-input-connection">
+  </div>
+  <div class="form-row">
+    <label for="node-input-profile">Profile</label>
+    <input type="text" id="node-input-profile">
   </div>
   <div class="form-row">
     <label for="node-input-action">Action</label>
@@ -84,10 +89,12 @@
     <li><b>Set one</b> — set <code>Param ID</code> to <code>msg.payload.param_value</code> with the chosen <code>Param type</code>, then confirm via the echoed <code>PARAM_VALUE</code>.</li>
     <li><b>Request list</b> — request the full parameter list and assemble it; missing items are re-requested on a lossy link.</li>
   </ul>
+  <h3>Profile</h3>
+  <p><b>Profile</b> (optional) pins the workflow to a specific profile: its dialect, firmware behavior, source identity, signing, and target defaults are used, and every outbound message is encoded with it. Left empty, the target system/component is resolved through the connection's route table (the same resolution inbound packets get) and falls back to the connection's default profile. <code>msg.payload.profile</code> overrides per message. On routed connections with component-specific routes, set an explicit profile — target defaults can make route resolution ambiguous.</p>
   <h3>Inputs</h3>
-  <p><code>msg.payload</code> may set <code>target_system</code>, <code>target_component</code>, <code>action</code>, <code>param_id</code>, <code>param_index</code>, <code>param_value</code>, and <code>param_type</code>, overriding the editor values.</p>
+  <p><code>msg.payload</code> may set <code>target_system</code>, <code>target_component</code>, <code>action</code>, <code>profile</code>, <code>param_id</code>, <code>param_index</code>, <code>param_value</code>, and <code>param_type</code>, overriding the editor values.</p>
   <h3>Details</h3>
-  <p>Param IDs are matched case-insensitively (<code>rc1_min</code> works). When the connection's profile firmware is <b>px4</b>, integer-typed parameter values are encoded/decoded using the PX4 byte-union convention automatically; other firmwares use the plain cast convention.</p>
+  <p>Param IDs are matched case-insensitively (<code>rc1_min</code> works). When the effective profile's firmware is <b>px4</b>, integer-typed parameter values are encoded/decoded using the PX4 byte-union convention automatically; other firmwares use the plain cast convention.</p>
   <h3>Outputs</h3>
   <ol class="node-ports">
     <li><b>result</b> — <code>param/value</code> (read), <code>param/set</code> (set, includes <code>applied</code>), or <code>param/list</code> (<code>{ count, params }</code>).</li>

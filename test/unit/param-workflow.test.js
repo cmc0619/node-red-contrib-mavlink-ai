@@ -304,3 +304,34 @@ test('ParamRead times out after exhausting retries', async () => {
     clearInterval(keepAlive);
   }
 });
+
+test('param workflow sends carry the profile reference end-to-end', async () => {
+  const conn = new FakeConnection();
+  const wf = new ParamRead({
+    connection: conn,
+    profile: 'p_routed',
+    targetSystem: 1,
+    targetComponent: 1,
+    paramId: 'RC1_MIN',
+    timeoutMs: 30,
+    maxRetries: 1
+  });
+  const p = wf.run();
+  await delay(40); // let one retransmit fire
+  conn.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 1100 }));
+  await p;
+  assert.ok(conn.sent.length >= 2, 'expected the initial send plus a retransmit');
+  for (const m of conn.sent) {
+    assert.strictEqual(m.name, 'PARAM_REQUEST_READ');
+    assert.strictEqual(m.profile, 'p_routed');
+  }
+});
+
+test('param workflow without a profile sends no profile reference', async () => {
+  const conn = new FakeConnection();
+  const wf = new ParamRead({ connection: conn, targetSystem: 1, targetComponent: 1, paramId: 'RC1_MIN' });
+  const p = wf.run();
+  conn.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 1100 }));
+  await p;
+  assert.ok(!('profile' in conn.sent[0]));
+});

@@ -4,6 +4,7 @@ const { ParamRead, ParamSet, ParamList } = require('../lib/param/param-workflow'
 const { toInt, firstDefined } = require('../lib/util/validation');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
+const { resolveWorkflowContext } = require('../lib/util/workflow-profile');
 
 /**
  * mavlink-ai-param (planner #8).
@@ -22,6 +23,10 @@ module.exports = function registerMavlinkAiParam(RED) {
 
     node.name = config.name;
     node.connection = RED.nodes.getNode(config.connection);
+    // Optional profile override. Kept as the raw config-node id (not resolved
+    // here) so a dangling reference fails the workflow loudly instead of
+    // silently running under the connection's default profile.
+    node.profileRef = config.profile || '';
     node.action = config.action || 'read';
     node.paramId = config.paramId || '';
     node.paramType = config.paramType || 'MAV_PARAM_TYPE_REAL32';
@@ -49,12 +54,30 @@ module.exports = function registerMavlinkAiParam(RED) {
 
       const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
       const action = msg.action || payload.action || node.action;
-      const profile = node.connection.profile;
-      const defaults = profile && profile.getDefaults ? profile.getDefaults() : {};
-      const bundle = profile && profile.getDialect ? profile.getDialect() : null;
 
-      const targetSystem = firstDefined(payload.target_system, defaults.defaultTargetSystem, 1);
-      const targetComponent = firstDefined(payload.target_component, defaults.defaultTargetComponent, 1);
+      // Effective profile for the whole workflow: an explicit override (msg or
+      // node config) or the target's routed profile, not blindly the
+      // connection's default. It supplies dialect/enums, firmware behavior,
+      // target defaults, and rides on every send.
+      let profile, defaults, targetSystem, targetComponent;
+      try {
+        ({ profile, defaults, targetSystem, targetComponent } = resolveWorkflowContext(node.connection, {
+          profile: firstDefined(payload.profile, node.profileRef || undefined),
+          targetSystem: payload.target_system,
+          targetComponent: payload.target_component
+        }));
+      } catch (err) {
+        const e = toMavlinkError(err, 'UNKNOWN_PROFILE');
+        node.status({ fill: 'red', shape: 'ring', text: e.code });
+        return finishError(node, send, done, errorPayload({
+          node: 'mavlink-ai-param',
+          connection: node.connection.name,
+          code: e.code,
+          message: e.message,
+          context: e.context
+        }));
+      }
+      const bundle = profile && profile.getDialect ? profile.getDialect() : null;
 
       // Reject out-of-range targets before locking/sending (#55).
       try {
@@ -97,6 +120,9 @@ module.exports = function registerMavlinkAiParam(RED) {
 
       const opts = {
         connection: node.connection,
+        // Carried on every send so the connection encodes with the effective
+        // profile's dialect/identity/signing, not its default.
+        profile: profile ? profile.id : null,
         targetSystem,
         targetComponent,
         enums: bundle ? bundle.enums : null,
