@@ -96,7 +96,14 @@ module.exports = function registerMavlinkAiFanout(RED) {
         const e = toMavlinkError(err, 'FANOUT_FAILED');
         return sendError(msg, send, done, e.code, e.message, e.context);
       }
-      const decorated = messages.map((m) => Object.assign({ profile: node.profile && node.profile.name }, m));
+      // `profile` carries the config-node id — the canonical reference the
+      // connection resolves a codec by. The name is display-only.
+      const decorated = messages.map((m) =>
+        Object.assign(
+          { profile: node.profile && node.profile.id, profile_name: node.profile && node.profile.name },
+          m
+        )
+      );
 
       // Dry-run: show exactly what would be sent (per issue #46, formation and
       // frame mistakes should be visible before anything reaches a vehicle).

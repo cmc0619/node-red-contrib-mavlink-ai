@@ -161,14 +161,32 @@ Decoded messages and outbound messages use stable shapes (see `DESIGN.md`
 
 ```js
 // decoded (from mavlink-ai-in)
-{ topic: "mavlink/HEARTBEAT", payload: { name, id, sysid, compid, profile, fields, raw, transport, receivedAt } }
+{ topic: "mavlink/HEARTBEAT", payload: { name, id, sysid, compid, profile, profile_id, fields, raw, transport, receivedAt } }
 
 // outbound (into mavlink-ai-out)
-{ topic: "mavlink/send", payload: { name: "COMMAND_LONG", target_system, target_component, fields: { ... } } }
+{ topic: "mavlink/send", payload: { name: "COMMAND_LONG", profile, profile_name, target_system, target_component, fields: { ... } } }
 ```
 
 Enum names such as `MAV_CMD_COMPONENT_ARM_DISARM` or `MAV_TYPE_GCS` are resolved
 to numbers automatically when building messages.
+
+Profile references are canonical **by config-node id**. Outbound
+`payload.profile` (set by the build/command/fan-out nodes) carries the profile
+config-node id the connection resolves a codec by; `profile_name` is the
+display name. Decoded payloads keep the display name in `payload.profile`
+(what filters and subscriptions historically match — they now match the id
+too) and add the canonical `payload.profile_id`. An outbound message that
+explicitly references a profile the connection cannot resolve is rejected with
+`PROFILE_UNRESOLVED` — it is never silently encoded with the default profile.
+A plain profile name is accepted for backward compatibility only while exactly
+one profile config node has that name; an ambiguous name is an error.
+
+The same rule applies to **routes**: in routed mode each route entry maps a
+`sysid`/`compid` pattern to a profile config node, picked in the connection
+editor (stored by id). A matched route whose profile cannot be resolved
+rejects its packets (`reason: "profile-unresolved"`) and raises errors at
+deploy time and once per packet identity — routed traffic is never silently
+decoded, signature-checked, or labeled with the wrong profile.
 
 ## Architecture
 

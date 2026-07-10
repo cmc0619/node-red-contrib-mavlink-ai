@@ -30,6 +30,14 @@ test('preset arm builds COMMAND_LONG with fixed param1', async () => {
   assert.strictEqual(out.target_system, 1);
 });
 
+test('build-only output references the profile by config-node id, name for display', async () => {
+  const { RED, node } = setup({ command: 'arm' });
+  const { collected } = await RED.inject(node, { payload: {} });
+  const out = collected[0].payload;
+  assert.strictEqual(out.profile, 'p1');
+  assert.strictEqual(out.profile_name, 'Copter');
+});
+
 test('preset param1 override is ignored (safety-critical)', async () => {
   const { RED, node } = setup({ command: 'arm' });
   const { collected } = await RED.inject(node, { payload: { param1: 0 } });

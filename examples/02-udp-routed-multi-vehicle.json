@@ -79,7 +79,7 @@
     "acceptedSysids": "",
     "acceptedCompids": "",
     "unmatchedPolicy": "reject",
-    "routeTable": "[{\"sysid\":1,\"compid\":\"*\",\"profile\":\"AI Profile - Copter\"},{\"sysid\":2,\"compid\":\"*\",\"profile\":\"AI Profile - Rover\"},{\"sysid\":3,\"compid\":\"*\",\"profile\":\"AI Profile - Plane\"}]",
+    "routeTable": "[{\"sysid\":1,\"compid\":\"*\",\"profile\":\"ai_profile_copter\"},{\"sysid\":2,\"compid\":\"*\",\"profile\":\"ai_profile_rover\"},{\"sysid\":3,\"compid\":\"*\",\"profile\":\"ai_profile_plane\"}]",
     "outboundQueue": true
   },
   {
