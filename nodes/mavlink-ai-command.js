@@ -449,9 +449,12 @@ module.exports = function registerMavlinkAiCommand(RED) {
 
       // --- build-only mode (default): hand off to mavlink-ai-out -------------
       msg.topic = 'mavlink/send';
+      // `profile` carries the config-node id — the canonical reference the
+      // connection resolves a codec by. The name is display-only.
       msg.payload = {
         name: messageName,
-        profile: node.profile && node.profile.name,
+        profile: node.profile && node.profile.id,
+        profile_name: node.profile && node.profile.name,
         target_system: targetSystem,
         target_component: targetComponent,
         fields

@@ -48,7 +48,9 @@ module.exports = function registerMavlinkAiFilter(RED) {
       if (node.messageIds.length && !node.messageIds.includes(Number(payload.id))) {
         return done();
       }
-      if (node.profileFilter && payload.profile !== node.profileFilter) {
+      // Matches the profile display name or the config-node id (the canonical
+      // reference carried in payload.profile_id).
+      if (node.profileFilter && payload.profile !== node.profileFilter && payload.profile_id !== node.profileFilter) {
         return done();
       }
       if (!idAccepted(payload.sysid, node.sysids)) {

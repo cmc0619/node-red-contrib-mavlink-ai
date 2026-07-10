@@ -18,11 +18,161 @@
       acceptedSysids: { value: '' },
       acceptedCompids: { value: '' },
       unmatchedPolicy: { value: 'default' },
-      routeTable: { value: '' },
+      routeTable: {
+        value: '',
+        /**
+         * Structural check: empty, or a JSON array whose entries each name a
+         * profile. Reference resolution is validated by the runtime at deploy.
+         *
+         * @param {string} v  the stored route table JSON
+         * @returns {boolean}
+         */
+        validate: function (v) {
+          if (!v) {
+            return true;
+          }
+          try {
+            const arr = JSON.parse(v);
+            return Array.isArray(arr) && arr.every(function (r) {
+              return r && typeof r === 'object' && r.profile;
+            });
+          } catch (e) {
+            return false;
+          }
+        }
+      },
       outboundQueue: { value: true }
     },
     label: function () {
       return this.name || 'MAVLink AI Connection';
+    },
+    /**
+     * Build the route-table editor: an editable list of sysid/compid inputs
+     * plus a profile picker (a dropdown of profile config nodes, stored by
+     * id), and wire routed-only/single-profile-only row visibility to the
+     * routing mode.
+     *
+     * @returns {void}
+     */
+    oneditprepare: function () {
+      // Profile config nodes available as route targets. Routes store the
+      // config-node id (canonical); the picker shows the display name.
+      const profiles = [];
+      RED.nodes.eachConfig(function (n) {
+        if (n.type === 'mavlink-ai-profile') {
+          profiles.push({ id: n.id, name: n.name || n.id });
+        }
+        return true;
+      });
+
+      let routes = [];
+      try {
+        const raw = this.routeTable;
+        if (Array.isArray(raw)) {
+          routes = raw;
+        } else if (typeof raw === 'string' && raw.trim()) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            routes = parsed;
+          }
+        }
+      } catch (e) {
+        // Malformed legacy JSON: start empty; the old value is preserved until
+        // the user saves, and the validator flags it.
+      }
+
+      $('#node-config-route-list').editableList({
+        addButton: 'add route',
+        removable: true,
+        sortable: true,
+        height: 160,
+        header: $('<div>').css({ 'padding-left': '32px', color: 'var(--red-ui-secondary-text-color, #888)' })
+          .append('<span style="display:inline-block;width:70px">SysID</span>')
+          .append('<span style="display:inline-block;width:70px">CompID</span>')
+          .append('<span>Profile</span>'),
+        /**
+         * Render one route row (sysid, compid, profile picker) into the list.
+         *
+         * @param {jQuery} container  the row container provided by editableList
+         * @param {number} index  row index
+         * @param {object} data  the route entry ({ sysid, compid, profile })
+         * @returns {void}
+         */
+        addItem: function (container, index, data) {
+          const row = $(container);
+          row.css({ display: 'flex', 'align-items': 'center', gap: '6px' });
+          const sysid = $('<input/>', { type: 'text', class: 'route-sysid', placeholder: '*' })
+            .css({ width: '64px', 'flex-shrink': 0 })
+            .appendTo(row);
+          const compid = $('<input/>', { type: 'text', class: 'route-compid', placeholder: '*' })
+            .css({ width: '64px', 'flex-shrink': 0 })
+            .appendTo(row);
+          const select = $('<select/>', { class: 'route-profile' }).css({ flex: 1, width: 'auto' }).appendTo(row);
+          profiles.forEach(function (p) {
+            $('<option/>').val(p.id).text(p.name).appendTo(select);
+          });
+
+          let ref = data && data.profile;
+          if (ref && !profiles.some(function (p) { return p.id === ref; })) {
+            // Legacy name reference: migrate to the config-node id when the
+            // name is unambiguous; otherwise keep it visible and flagged.
+            const byName = profiles.filter(function (p) { return p.name === ref; });
+            if (byName.length === 1) {
+              ref = byName[0].id;
+            } else {
+              $('<option/>').val(ref).text(ref + ' (unknown profile)').appendTo(select);
+            }
+          }
+          if (ref) {
+            select.val(ref);
+          }
+          if (data && data.sysid !== undefined && data.sysid !== '*') {
+            sysid.val(data.sysid);
+          }
+          if (data && data.compid !== undefined && data.compid !== '*') {
+            compid.val(data.compid);
+          }
+        }
+      });
+      const list = $('#node-config-route-list');
+      routes.forEach(function (r) {
+        list.editableList('addItem', r || {});
+      });
+
+      // Routed-only vs single-profile-only rows.
+      $('#node-config-input-routingMode')
+        .on('change', function () {
+          const routed = $(this).val() === 'routed';
+          $('.routed-only').toggle(routed);
+          $('.single-profile-only').toggle(!routed);
+        })
+        .trigger('change');
+    },
+    /**
+     * Serialize the route list back into the routeTable JSON string. Blank
+     * sysid/compid mean wildcard; rows without a profile are dropped.
+     *
+     * @returns {void}
+     */
+    oneditsave: function () {
+      const routes = [];
+      $('#node-config-route-list')
+        .editableList('items')
+        .each(function () {
+          const row = $(this);
+          const sysid = (row.find('.route-sysid').val() || '').trim();
+          const compid = (row.find('.route-compid').val() || '').trim();
+          const profile = row.find('.route-profile').val();
+          if (!profile) {
+            return;
+          }
+          routes.push({
+            sysid: sysid === '' ? '*' : sysid,
+            compid: compid === '' ? '*' : compid,
+            profile: profile
+          });
+        });
+      $('#node-config-input-routeTable').val(routes.length ? JSON.stringify(routes) : '');
     }
   });
 </script>
@@ -90,24 +240,27 @@
     <label for="node-config-input-heartbeatIntervalMs">HB ms</label>
     <input type="number" id="node-config-input-heartbeatIntervalMs" min="1000" step="1000" placeholder="1000 (min 1000)">
   </div>
-  <div class="form-row">
+  <div class="form-row single-profile-only">
     <label for="node-config-input-acceptedSysids">Accept SysIDs</label>
     <input type="text" id="node-config-input-acceptedSysids" placeholder="any (e.g. 1 or 1,2)">
   </div>
-  <div class="form-row">
+  <div class="form-row single-profile-only">
     <label for="node-config-input-acceptedCompids">Accept CompIDs</label>
     <input type="text" id="node-config-input-acceptedCompids" placeholder="any">
   </div>
-  <div class="form-row">
+  <div class="form-row routed-only">
     <label for="node-config-input-unmatchedPolicy">Unmatched</label>
     <select id="node-config-input-unmatchedPolicy">
       <option value="default">Use default profile</option>
       <option value="reject">Reject</option>
     </select>
   </div>
-  <div class="form-row">
-    <label for="node-config-input-routeTable">Routes (JSON)</label>
-    <input type="text" id="node-config-input-routeTable" placeholder='[{"sysid":1,"compid":"*","profile":"Copter"}]'>
+  <div class="form-row routed-only" style="margin-bottom: 0;">
+    <label>Routes</label>
+    <input type="hidden" id="node-config-input-routeTable">
+  </div>
+  <div class="form-row routed-only">
+    <ol id="node-config-route-list"></ol>
   </div>
   <div class="form-row">
     <label for="node-config-input-outboundQueue">Queue</label>
@@ -120,4 +273,5 @@
   <p><b>udp-peer</b> tracks a reply endpoint per source sysid, so with multiple vehicles on one port an outbound message addressed to a specific <code>target_system</code> goes to that vehicle's endpoint. Broadcast/untargeted sends go to the most recent sender; a manual remote host/port overrides both.</p>
   <p>When the profile version is <b>auto</b>, outbound framing follows the peer: packets are MAVLink v2 until inbound traffic shows a v1 peer, then v1 (messages with ids above 255 always stay v2 — v1 framing cannot carry them).</p>
   <p><b>Heartbeat</b> emits a periodic HEARTBEAT so peers see this node as present. <b>HB ms</b> is the interval in milliseconds; HEARTBEAT is a low-rate presence message, so the minimum is <b>1000 ms</b> (the default). Lower values are clamped to 1000 ms and a warning is logged.</p>
+  <p><b>Routes</b> (routed mode) map a packet's sysid/compid to the profile that decodes it. Each route references a profile config node by id (the picker handles this); leaving SysID/CompID blank means <code>*</code> (any). A route whose profile no longer exists rejects its packets and raises an error — it never silently falls back to the default profile. Flows edited as JSON may reference a profile by name only if exactly one profile has that name.</p>
 </script>

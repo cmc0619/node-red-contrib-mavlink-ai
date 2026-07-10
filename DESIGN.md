@@ -471,16 +471,24 @@ fallback profile
 reject unmatched
 ```
 
-Example route config:
+Example route config (`profile` is the profile **config-node id** — the
+canonical reference; the connection editor's route picker stores it for you):
 
 ```json
 [
-  { "sysid": 1, "compid": "*", "profile": "Copter" },
-  { "sysid": 2, "compid": "*", "profile": "Rover" },
-  { "sysid": 3, "compid": 1, "profile": "Plane Autopilot" },
-  { "sysid": 3, "compid": 154, "profile": "Plane Camera" }
+  { "sysid": 1, "compid": "*", "profile": "a1b2c3d4e5f60708" },
+  { "sysid": 2, "compid": "*", "profile": "b2c3d4e5f6071809" },
+  { "sysid": 3, "compid": 1, "profile": "c3d4e5f607182910" },
+  { "sysid": 3, "compid": 154, "profile": "d4e5f60718293a1b" }
 ]
 ```
+
+A plain profile name is accepted for backward compatibility only while exactly
+one profile config node has that name. A route whose profile reference cannot
+be resolved rejects its packets and reports the misconfiguration loudly (at
+deploy time and once per packet identity) — it must never silently fall back
+to the default profile, which would decode, signature-check, and label the
+packet with the wrong dialect.
 
 Routing decisions should be deterministic.
 
@@ -572,7 +580,7 @@ connection.subscribe(filter, callback)
 connection.unsubscribe(subscriptionId)
 connection.getStatus()
 connection.getProfileForPacket(packet)
-connection.resolveProfile(nameOrId)
+connection.resolveProfile(idOrUniqueName) // throws PROFILE_UNRESOLVED/PROFILE_AMBIGUOUS
 connection.acquireLock(lockName, owner, options)
 connection.releaseLock(lockName, owner)
 ```

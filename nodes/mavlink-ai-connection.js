@@ -150,19 +150,29 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
-     * Resolve (and cache) the codec for a routed profile. Falls back to the
-     * default codec for the default profile, for lightweight name-only route
-     * targets, or for any profile whose dialect failed to load.
+     * Resolve (and cache) the codec for a resolved profile. The default
+     * profile uses the connection codec; any other profile must be a valid
+     * profile config node — an invalid dialect or a failed codec build throws
+     * instead of silently falling back to the default codec, which would
+     * decode/sign/encode with the wrong dialect while claiming the profile.
      *
-     * @param {object} profile  resolved profile (config node or { name })
+     * @param {object} profile  a resolved profile config node
      * @returns {MavlinkCodec}
+     * @throws {MavlinkError} PROFILE_INVALID | CODEC_INIT_FAILED
      */
     function getCodecForProfile(profile) {
-      if (!profile || typeof profile.getDialect !== 'function' || !profile.isValid || !profile.isValid()) {
+      if (!profile || profile === node.profile) {
         return node._codec;
       }
       if (profile.id && node._codecByProfile.has(profile.id)) {
         return node._codecByProfile.get(profile.id);
+      }
+      if (typeof profile.getDialect !== 'function' || !profile.isValid || !profile.isValid()) {
+        const detail = profile.getError && profile.getError() ? `: ${profile.getError().message}` : '';
+        throw new MavlinkError(
+          'PROFILE_INVALID',
+          `Profile '${profile.name || profile.id}' has no valid dialect${detail}`
+        );
       }
       let codec;
       try {
@@ -170,7 +180,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
           Object.assign({ bundle: profile.getDialect() }, profile.getProtocolOptions())
         );
       } catch (err) {
-        return node._codec;
+        throw new MavlinkError(
+          'CODEC_INIT_FAILED',
+          `Cannot build codec for profile '${profile.name || profile.id}': ${err.message}`
+        );
       }
       if (profile.id) {
         node._codecByProfile.set(profile.id, codec);
@@ -180,13 +193,16 @@ module.exports = function registerMavlinkAiConnection(RED) {
 
     /**
      * Pick the codec to encode an outbound message with, honoring the profile
-     * named on the message (#68). A name/id that resolves to a real valid
-     * profile uses that profile's codec (its dialect + source identity); a blank
-     * profile, a name-only label the connection can't resolve, or an invalid
-     * profile falls back to the connection's default codec.
+     * referenced on the message (#68). A reference that resolves to a real
+     * valid profile uses that profile's codec (its dialect + source identity);
+     * a blank reference uses the connection's default codec. An explicitly
+     * requested profile that cannot be resolved throws — it must never
+     * silently encode with the default profile.
      *
-     * @param {string|object} [profileRef]  message.profile (name, id, or object)
+     * @param {string|object} [profileRef]  message.profile (config-node id,
+     *   legacy unique name, or profile object)
      * @returns {MavlinkCodec}
+     * @throws {MavlinkError} PROFILE_UNRESOLVED | PROFILE_INVALID | CODEC_INIT_FAILED
      */
     function resolveOutboundCodec(profileRef) {
       if (profileRef === undefined || profileRef === null || profileRef === '') {
@@ -196,32 +212,74 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     // --- routing -------------------------------------------------------------
+    // Memoized legacy name -> profile node resolutions (a name lookup scans all
+    // config nodes; packets arrive at wire rate). Successful lookups only —
+    // a profile deployed later must still become resolvable.
+    const profileByName = new Map();
+
     /**
-     * Resolve a route's profile reference (config-node id, name, or object) to
-     * a profile. Falls back to a lightweight `{ name }` label for name-only
-     * references so routed messages still carry the profile name.
+     * Resolve a profile reference to a profile config node. The canonical
+     * reference in route entries and internal messages is the profile
+     * config-node id; a plain profile name is accepted for backward
+     * compatibility when exactly one profile config node has that name.
      *
-     * @param {string|object} ref
-     * @returns {object} a profile node or `{ name }`
+     * An explicitly requested profile that cannot be resolved throws — never
+     * falls back to the default profile (a routed packet must not be decoded,
+     * signature-checked, or encoded with a dialect other than the one its
+     * route names).
+     *
+     * @param {string|object} ref  config-node id, unique profile name, or a
+     *   profile object; blank means the connection's default profile
+     * @returns {object} a profile config node
+     * @throws {MavlinkError} PROFILE_UNRESOLVED | PROFILE_AMBIGUOUS
      */
     node.resolveProfile = (ref) => {
       if (!ref) {
         return node.profile;
       }
       if (typeof ref === 'object') {
-        return ref;
+        if (typeof ref.getDialect === 'function') {
+          return ref;
+        }
+        throw new MavlinkError(
+          'PROFILE_UNRESOLVED',
+          `Profile reference ${JSON.stringify(ref && ref.name ? ref.name : ref)} is not a mavlink-ai-profile config node.`
+        );
       }
-      // A route may reference a profile config-node id or, when authored as
-      // JSON, a plain profile name. Prefer a real node; otherwise surface the
-      // name as a lightweight label so routed messages still carry it.
       const byId = RED.nodes.getNode(ref);
-      if (byId) {
+      if (byId && typeof byId.getDialect === 'function') {
         return byId;
       }
-      if (node.profile && node.profile.name === ref) {
-        return node.profile;
+      // Legacy name reference (flows authored before route entries carried
+      // config-node ids). Resolve only an unambiguous name.
+      if (profileByName.has(ref)) {
+        return profileByName.get(ref);
       }
-      return { name: ref };
+      const matchIds = [];
+      if (typeof RED.nodes.eachNode === 'function') {
+        RED.nodes.eachNode((n) => {
+          if (n.type === 'mavlink-ai-profile' && n.name === ref) {
+            matchIds.push(n.id);
+          }
+        });
+      } else if (node.profile && node.profile.name === ref) {
+        matchIds.push(node.profile.id);
+      }
+      if (matchIds.length > 1) {
+        throw new MavlinkError(
+          'PROFILE_AMBIGUOUS',
+          `Profile name '${ref}' matches ${matchIds.length} profile config nodes; reference the profile by config-node id.`
+        );
+      }
+      const byName = matchIds.length === 1 ? RED.nodes.getNode(matchIds[0]) : null;
+      if (byName && typeof byName.getDialect === 'function') {
+        profileByName.set(ref, byName);
+        return byName;
+      }
+      throw new MavlinkError(
+        'PROFILE_UNRESOLVED',
+        `Profile '${ref}' does not match any mavlink-ai-profile config node (by id or unique name).`
+      );
     };
 
     try {
@@ -238,6 +296,60 @@ module.exports = function registerMavlinkAiConnection(RED) {
       fatal('ROUTE_TABLE_INVALID', err.message);
       registerNoop(node);
       return;
+    }
+
+    const ROUTE_ERROR_DETAIL = 'Route table has unresolved profiles';
+    // The status the route-validation error replaced, so a later validation
+    // pass can restore it instead of guessing at the transport state.
+    let statusBeforeRouteError = null;
+
+    /**
+     * Validate that every route-table profile reference resolves to a valid
+     * profile with a buildable codec, and report every problem loudly. Runs
+     * once all flows have started (config nodes may register in any order
+     * within a deploy, so constructor-time resolution could falsely fail).
+     * Packets matching a broken route are rejected per-packet regardless;
+     * this just surfaces the misconfiguration at deploy time instead of
+     * waiting for traffic.
+     *
+     * Re-runs on every deploy: when a partial deploy fixes the routes without
+     * recreating this connection node, a clean pass clears the stale error
+     * status (restoring whatever status the error replaced) — but only if the
+     * current status is still ours, so a transport-driven status set in the
+     * meantime is left alone.
+     *
+     * @returns {void}
+     */
+    function validateRouteProfiles() {
+      const problems = [];
+      for (const route of node._router.routeTable.routes) {
+        try {
+          getCodecForProfile(node.resolveProfile(route.profile));
+        } catch (err) {
+          problems.push(`route (sysid ${route.sysid}, compid ${route.compid} -> '${route.profile}'): ${err.message}`);
+        }
+      }
+      if (problems.length) {
+        if (node.statusDetail !== ROUTE_ERROR_DETAIL) {
+          statusBeforeRouteError = { state: node.statusState, detail: node.statusDetail };
+        }
+        setStatus('error', ROUTE_ERROR_DETAIL);
+        node.error(
+          `mavlink-ai-connection '${node.name || node.id}': ROUTE_TABLE_INVALID: ` +
+            `${problems.length} route(s) reference a profile that cannot be used; ` +
+            `matching packets will be rejected, not decoded with the default profile. ${problems.join('; ')}`
+        );
+      } else if (node.statusState === 'error' && node.statusDetail === ROUTE_ERROR_DETAIL) {
+        const previous = statusBeforeRouteError || { state: 'idle', detail: '' };
+        statusBeforeRouteError = null;
+        setStatus(previous.state, previous.detail);
+      }
+    }
+
+    if (RED.events && typeof RED.events.on === 'function') {
+      const onFlowsStarted = () => validateRouteProfiles();
+      RED.events.on('flows:started', onFlowsStarted);
+      node.on('close', () => RED.events.removeListener('flows:started', onFlowsStarted));
     }
 
     // --- public runtime API (DESIGN.md §12) ---------------------------------
@@ -301,13 +413,19 @@ module.exports = function registerMavlinkAiConnection(RED) {
         fields.target_component,
         defaults.defaultTargetComponent
       );
-      // Encode with the codec of the profile named on the message when it
-      // resolves to a real, valid profile (routed / custom-dialect sends carry
-      // the builder's profile), so the right dialect, source identity, version
-      // and signing are used — not always the connection's default profile
-      // (#68). Falls back to the default codec when no profile is named or the
-      // name can't be resolved to a valid profile node.
-      const codec = resolveOutboundCodec(message.profile);
+      // Encode with the codec of the profile referenced on the message
+      // (routed / custom-dialect sends carry the builder's profile config-node
+      // id), so the right dialect, source identity, version and signing are
+      // used — not always the connection's default profile (#68). No profile
+      // reference means the default codec; an explicit reference that cannot
+      // be resolved rejects the send rather than silently encoding with the
+      // default profile.
+      let codec;
+      try {
+        codec = resolveOutboundCodec(message.profile);
+      } catch (err) {
+        return Promise.reject(toMavlinkError(err, 'PROFILE_UNRESOLVED'));
+      }
       let buffer;
       try {
         buffer = codec.encode(message.name, fields, { targetSystem, targetComponent });
@@ -334,6 +452,30 @@ module.exports = function registerMavlinkAiConnection(RED) {
     };
 
     // --- inbound packet handling --------------------------------------------
+    // Route/profile problems repeat at packet rate for the same identity; log
+    // each distinct (identity, problem) once so it is loud but not a flood.
+    const loggedRouteProblems = new Set();
+
+    /**
+     * Log a route-resolution problem for a packet identity, once per distinct
+     * identity + error.
+     *
+     * @param {object} header  packet header (sysid/compid)
+     * @param {Error} err
+     * @returns {void}
+     */
+    function logRouteProblemOnce(header, err) {
+      const key = `${header.sysid}:${header.compid}:${err.message}`;
+      if (loggedRouteProblems.has(key)) {
+        return;
+      }
+      loggedRouteProblems.add(key);
+      node.error(
+        `mavlink-ai-connection '${node.name || node.id}': rejecting packets from ` +
+          `sysid ${header.sysid} compid ${header.compid}: ${err.message}`
+      );
+    }
+
     /**
      * Route, decode, and distribute one inbound packet (DESIGN.md §4):
      * route on the header, decode with the matched profile's dialect, then
@@ -351,9 +493,15 @@ module.exports = function registerMavlinkAiConnection(RED) {
       // encodes outbound) here; the matched profile's codec is updated below.
       node._codec.noteInboundMagic(header.magic, header.sysid);
 
-      // 1. Route on the framed header (sysid/compid) before decoding.
+      // 1. Route on the framed header (sysid/compid) before decoding. A
+      //    matched route whose profile cannot be resolved rejects the packet
+      //    (never falls back to the default dialect) and logs once per
+      //    identity so the broken route is loud without flooding at wire rate.
       const decision = node._router.route(header.sysid, header.compid);
       if (!decision.accepted) {
+        if (decision.error) {
+          logRouteProblemOnce(header, decision.error);
+        }
         node.emitter.emit('rejected', { sysid: header.sysid, compid: header.compid, reason: decision.reason });
         return;
       }
@@ -361,8 +509,16 @@ module.exports = function registerMavlinkAiConnection(RED) {
       const transportDescriptor = node._transport ? node._transport.descriptor : { type: node.transportType };
 
       // 2. Decode with the matched profile's dialect (routed connections may
-      //    carry systems on different dialects).
-      const codec = getCodecForProfile(profile);
+      //    carry systems on different dialects). A matched profile whose
+      //    dialect/codec is unusable rejects the packet, same as above.
+      let codec;
+      try {
+        codec = getCodecForProfile(profile);
+      } catch (err) {
+        logRouteProblemOnce(header, err);
+        node.emitter.emit('rejected', { sysid: header.sysid, compid: header.compid, reason: 'profile-invalid' });
+        return;
+      }
       // Give the matched profile's codec the same per-peer version observation,
       // so a send that encodes with that profile's codec frames to the peer's
       // version too (#69). No-op when it is the default codec (already noted).
@@ -397,6 +553,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       try {
         payload = codec.decode(packet, {
           profile: profile ? profile.name : undefined,
+          profile_id: profile ? profile.id : undefined,
           transport: transportDescriptor
         });
       } catch (err) {
@@ -437,6 +594,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
           msgid: header.msgid,
           dialect: codec.bundle.name,
           profile: profile ? profile.name : undefined,
+          profile_id: profile ? profile.id : undefined,
           raw: packet.buffer.toString('hex')
         }
       });

@@ -20,10 +20,25 @@ class MockRED {
     this.nodes = {
       createNode: (node, config) => this._createNode(node, config),
       registerType: (type, ctor) => this._types.set(type, ctor),
-      getNode: (id) => this._nodes.get(id) || null
+      getNode: (id) => this._nodes.get(id) || null,
+      /**
+       * Iterate all registered nodes. Real Node-RED iterates node
+       * *definitions*; iterating the created instances gives the same
+       * id/type/name surface the nodes rely on.
+       *
+       * @param {function(object): void} cb  called with each node
+       */
+      eachNode: (cb) => {
+        for (const n of this._nodes.values()) {
+          cb(n);
+        }
+      }
     };
     this.validators = { number: () => () => true };
     this.util = { cloneMessage: (m) => JSON.parse(JSON.stringify(m)) };
+    // Runtime event bus stand-in (e.g. 'flows:started'); tests emit on it.
+    this.events = new EventEmitter();
+    this.events.setMaxListeners(0);
   }
 
   /** Load all package nodes' registration functions. */

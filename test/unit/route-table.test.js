@@ -38,6 +38,25 @@ test('routed mode rejects unmatched by default', () => {
   assert.strictEqual(router.route(2, 1).accepted, false);
 });
 
+test('a matched route with an unresolvable profile rejects, never falls back', () => {
+  const router = new PacketRouter({
+    mode: 'routed',
+    unmatched: 'default',
+    defaultProfile: 'DefaultProfile',
+    routes: [{ sysid: 1, compid: '*', profile: 'Ghost' }],
+    resolveProfile: (p) => {
+      throw new Error(`Profile '${p}' does not match any profile config node.`);
+    }
+  });
+  const decision = router.route(1, 1);
+  assert.strictEqual(decision.accepted, false);
+  assert.strictEqual(decision.profile, null);
+  assert.strictEqual(decision.reason, 'profile-unresolved');
+  assert.match(decision.error.message, /Ghost/);
+  // profiles() skips the unresolved route target instead of throwing.
+  assert.deepStrictEqual(router.profiles(), ['DefaultProfile']);
+});
+
 test('routed mode can fall back to default profile', () => {
   const router = new PacketRouter({
     mode: 'routed',

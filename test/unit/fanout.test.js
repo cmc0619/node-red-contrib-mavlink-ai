@@ -258,6 +258,9 @@ test('node fans out to payload.sysids as mavlink/send messages (#46)', async () 
   assert.strictEqual(batch[0].topic, 'mavlink/send');
   assert.strictEqual(batch[0].payload.target_system, 1);
   assert.strictEqual(batch[1].payload.target_system, 2);
+  // The profile rides along as the canonical config-node id, name for display.
+  assert.strictEqual(batch[0].payload.profile, 'p1');
+  assert.strictEqual(batch[0].payload.profile_name, 'Copter');
 });
 
 test('node accepts a swarm registry output (payload.vehicles) directly (#46)', async () => {

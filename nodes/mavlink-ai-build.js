@@ -85,9 +85,12 @@ module.exports = function registerMavlinkAiBuild(RED) {
       }
       const defaults = node.profile.getDefaults();
 
+      // `profile` carries the config-node id — the canonical reference the
+      // connection resolves a codec by. The name is display-only.
       const out = {
         name: clazz.MSG_NAME,
-        profile: node.profile.name,
+        profile: node.profile.id,
+        profile_name: node.profile.name,
         fields
       };
       if (node.applyDefaults) {
