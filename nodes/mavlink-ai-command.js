@@ -282,6 +282,12 @@ module.exports = function registerMavlinkAiCommand(RED) {
       }
     }
 
+    // Active await-ack workflows, so a node close (partial deploy / delete)
+    // aborts them instead of leaving subscriptions, retransmit timers, and
+    // the command lock alive on an obsolete node (#83).
+    const activeWorkflows = new Set();
+    let closed = false;
+
     /**
      * Emit a structured error on the output and finish the input handler.
      *
@@ -494,9 +500,14 @@ module.exports = function registerMavlinkAiCommand(RED) {
           const e = toMavlinkError(err, 'BAD_COMMAND');
           return sendError(msg, send, done, e.code, e.message, e.context);
         }
+        activeWorkflows.add(workflow);
         workflow
           .run()
           .then((result) => {
+            activeWorkflows.delete(workflow);
+            if (closed) {
+              return done(); // aborted by close: no output from an obsolete node
+            }
             node.status({ fill: 'green', shape: 'dot', text: `${selected} accepted` });
             msg.topic = result.topic;
             msg.payload = result.payload;
@@ -504,6 +515,10 @@ module.exports = function registerMavlinkAiCommand(RED) {
             done();
           })
           .catch((err) => {
+            activeWorkflows.delete(workflow);
+            if (closed) {
+              return done(); // aborted by close: no output from an obsolete node
+            }
             const e = toMavlinkError(err, 'COMMAND_FAILED');
             node.status({ fill: 'red', shape: 'ring', text: e.code });
             msg.topic = 'mavlink/error';
@@ -535,6 +550,18 @@ module.exports = function registerMavlinkAiCommand(RED) {
 
       node.status({ fill: 'green', shape: 'dot', text: selected });
       send(msg);
+      done();
+    });
+
+    // Abort in-flight await-ack workflows on close (#83): a partial deploy or
+    // node delete must stop retransmits, drop subscriptions, and release the
+    // command lock instead of running to success/timeout on an obsolete node.
+    node.on('close', function closeCommand(done) {
+      closed = true;
+      for (const workflow of activeWorkflows) {
+        workflow.abort('mavlink-ai-command node closed');
+      }
+      activeWorkflows.clear();
       done();
     });
   }
