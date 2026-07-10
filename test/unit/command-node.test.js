@@ -372,3 +372,77 @@ test('COMMAND_INT coerces numeric-string coordinates into real numbers (#53 revi
   assert.strictEqual(raw.collected[0].payload.fields.x, 473977420);
   assert.strictEqual(typeof raw.collected[0].payload.fields.x, 'number');
 });
+
+// --- Preset required inputs (#87) --------------------------------------------
+
+test('goto without coordinates errors instead of repositioning to 0,0 (#87)', async () => {
+  const { RED, node } = setup({ command: 'goto' });
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'MISSING_REQUIRED_FIELD');
+  assert.strictEqual(collected[0].payload.context.field, 'lat');
+});
+
+test('goto with one-sided lat/lon errors and names the missing field (#87)', async () => {
+  const { RED, node } = setup({ command: 'goto' });
+  const onlyLat = await RED.inject(node, { payload: { lat: 39.1 } });
+  assert.strictEqual(onlyLat.collected[0].payload.code, 'MISSING_REQUIRED_FIELD');
+  assert.strictEqual(onlyLat.collected[0].payload.context.field, 'lon');
+  const onlyLon = await RED.inject(node, { payload: { lon: -75.1 } });
+  assert.strictEqual(onlyLon.collected[0].payload.code, 'MISSING_REQUIRED_FIELD');
+  assert.strictEqual(onlyLon.collected[0].payload.context.field, 'lat');
+});
+
+test('goto accepts explicit zero coordinates (#87)', async () => {
+  // 0/0 chosen on purpose is legitimate; only *omitted* coordinates fail.
+  const { RED, node } = setup({ command: 'goto' });
+  const { collected } = await RED.inject(node, { payload: { lat: 0, lon: 0 } });
+  assert.strictEqual(collected[0].topic, 'mavlink/send');
+  assert.strictEqual(collected[0].payload.fields.x, 0);
+  assert.strictEqual(collected[0].payload.fields.y, 0);
+});
+
+test('goto accepts raw wire x/y but requires both (#87)', async () => {
+  const { RED, node } = setup({ command: 'goto' });
+  const ok = await RED.inject(node, { payload: { x: 391000000, y: -751000000 } });
+  assert.strictEqual(ok.collected[0].topic, 'mavlink/send');
+  assert.strictEqual(ok.collected[0].payload.fields.x, 391000000);
+  const oneSided = await RED.inject(node, { payload: { x: 391000000 } });
+  assert.strictEqual(oneSided.collected[0].payload.code, 'MISSING_REQUIRED_FIELD');
+  assert.strictEqual(oneSided.collected[0].payload.context.field, 'y');
+});
+
+test('goto editor preset lat/lon still satisfies the requirement (#87)', async () => {
+  const { RED, node } = setup({ command: 'goto', presetFields: '{"lat":39.1,"lon":-75.1}' });
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected[0].topic, 'mavlink/send');
+  assert.strictEqual(collected[0].payload.fields.x, 391000000);
+});
+
+test('message selector presets require message_id (#87)', async () => {
+  for (const command of ['request_message', 'set_message_interval', 'stop_message_interval']) {
+    const { RED, node } = setup({ command });
+    const missing = await RED.inject(node, { payload: {} });
+    assert.strictEqual(missing.collected[0].topic, 'mavlink/error', `${command} without message_id must error`);
+    assert.strictEqual(missing.collected[0].payload.code, 'MISSING_REQUIRED_FIELD');
+    assert.strictEqual(missing.collected[0].payload.context.field, 'message_id');
+    // Explicit 0 (HEARTBEAT) is a legitimate selection.
+    const zero = await RED.inject(node, { payload: { message_id: 0 } });
+    assert.strictEqual(zero.collected[0].topic, 'mavlink/send');
+    assert.strictEqual(zero.collected[0].payload.fields.param1, 0);
+  }
+});
+
+test('non-numeric required preset input errors (#87)', async () => {
+  const { RED, node } = setup({ command: 'goto' });
+  const { collected } = await RED.inject(node, { payload: { lat: 'north', lon: -75.1 } });
+  assert.strictEqual(collected[0].payload.code, 'MISSING_REQUIRED_FIELD');
+  assert.strictEqual(collected[0].payload.context.field, 'lat');
+});
+
+test('raw MAV_CMD mode stays permissive with no params (#87)', async () => {
+  const { RED, node } = setup({ command: 'MAV_CMD_DO_SET_MODE' });
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected[0].topic, 'mavlink/send');
+  assert.strictEqual(collected[0].payload.fields.param1, 0);
+});

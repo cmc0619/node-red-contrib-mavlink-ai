@@ -181,32 +181,59 @@ test('requireSignature implies inbound verification (#70)', () => {
   assert.strictEqual(decision.reason, 'signature-required');
 });
 
-test('sign-outbound with no passphrase warns about the silent downgrade (#15)', () => {
-  const original = console.warn;
-  const warnings = [];
-  console.warn = (msg) => warnings.push(String(msg));
-  try {
-    const codec = new MavlinkCodec({
-      bundle,
-      sysid: 1,
-      compid: 1,
-      signing: { signOutbound: true } // enabled, but no passphrase
-    });
-    assert.strictEqual(codec.signsOutbound(), false); // still cannot sign
-    assert.ok(warnings.some((w) => /UNSIGNED/.test(w)), 'warned about the downgrade');
-  } finally {
-    console.warn = original;
-  }
+test('sign-outbound with no passphrase fails closed (#91)', () => {
+  // 'Sign outbound' without a key cannot do what it promises; the codec (and
+  // therefore the connection) must refuse to start, never send unsigned.
+  assert.throws(
+    () =>
+      new MavlinkCodec({
+        bundle,
+        sysid: 1,
+        compid: 1,
+        signing: { signOutbound: true } // enabled, but no passphrase
+      }),
+    (err) => err.code === 'SIGNING_NO_KEY'
+  );
 });
 
-test('linkId is clamped into a byte (#15)', () => {
+test('sign-outbound with a passphrase still builds and signs (#91)', async () => {
   const codec = new MavlinkCodec({
     bundle,
     sysid: 1,
     compid: 1,
-    signing: { passphrase: 'k', linkId: 259, signOutbound: true }
+    signing: { passphrase: 'k', signOutbound: true }
   });
-  assert.strictEqual(codec.signing.linkId, 3); // 259 % 256
+  assert.strictEqual(codec.signsOutbound(), true);
+  const pkt = await decodeOne(codec, codec.encode('HEARTBEAT', HEARTBEAT));
+  assert.ok(pkt.signature, 'outbound frame is signed');
+});
+
+test('out-of-range linkId is rejected, not wrapped modulo 256 (#90)', () => {
+  for (const linkId of [259, -1, 256, 1.5, 'abc']) {
+    assert.throws(
+      () =>
+        new MavlinkCodec({
+          bundle,
+          sysid: 1,
+          compid: 1,
+          signing: { passphrase: 'k', linkId, signOutbound: true }
+        }),
+      (err) => err.code === 'SIGNING_BAD_LINK_ID',
+      `linkId ${JSON.stringify(linkId)} should be rejected`
+    );
+  }
+  // Boundary values stay valid; blank defaults to 0.
+  for (const linkId of [0, 255]) {
+    const codec = new MavlinkCodec({
+      bundle,
+      sysid: 1,
+      compid: 1,
+      signing: { passphrase: 'k', linkId, signOutbound: true }
+    });
+    assert.strictEqual(codec.signing.linkId, linkId);
+  }
+  const blank = new MavlinkCodec({ bundle, sysid: 1, compid: 1, signing: { passphrase: 'k', signOutbound: true } });
+  assert.strictEqual(blank.signing.linkId, 0);
 });
 
 // --- profile threading (#15) -------------------------------------------------

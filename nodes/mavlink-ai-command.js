@@ -1,6 +1,6 @@
 'use strict';
 
-const { errorPayload, toMavlinkError } = require('../lib/util/errors');
+const { MavlinkError, errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { firstDefined, toInt, toBool } = require('../lib/util/validation');
 const { registerEditorApi } = require('../lib/editor-api');
 const { resolveFlightMode } = require('../lib/command/flight-modes');
@@ -21,6 +21,71 @@ const {
  */
 function isRawCommand(value) {
   return /^MAV_CMD_[A-Z0-9_]+$/.test(String(value)) || /^\d+$/.test(String(value));
+}
+
+// Presets whose friendly action selects a specific message: sending message id
+// 0 (HEARTBEAT) because the selector was omitted is a mistake, not a default.
+const MESSAGE_SELECTOR_PRESETS = new Set(['request_message', 'set_message_interval', 'stop_message_interval']);
+
+/**
+ * Require a preset input to be present and a finite number (#87). Explicit
+ * zeros are legitimate values and pass; blank/absent or non-numeric input
+ * throws a structured error naming the field.
+ *
+ * @param {string} selected  preset name (for the error)
+ * @param {string} field     input name (for the error)
+ * @param {*} value
+ * @returns {number}
+ * @throws {MavlinkError} MISSING_REQUIRED_FIELD
+ */
+function requirePresetValue(selected, field, value) {
+  if (value === undefined || value === null || value === '') {
+    throw new MavlinkError(
+      'MISSING_REQUIRED_FIELD',
+      `Preset '${selected}' requires '${field}' — it does not default. Set it in the editor or in msg.payload.`,
+      { command: selected, field }
+    );
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    throw new MavlinkError(
+      'MISSING_REQUIRED_FIELD',
+      `Preset '${selected}' requires a finite numeric '${field}' (got ${JSON.stringify(value)}).`,
+      { command: selected, field, value }
+    );
+  }
+  return n;
+}
+
+/**
+ * Preset-specific required inputs (#87). The raw MAV_CMD path and the generic
+ * builder stay permissive (MAVLink zero-fills), but a friendly preset must not
+ * silently turn an omitted value into a semantically different command — the
+ * clearest case being goto without coordinates becoming a reposition to 0,0.
+ *
+ * @param {string} selected  preset name
+ * @param {object} merged    preset params merged with the runtime payload
+ * @param {object} configParams  editor-saved raw param values
+ * @returns {void}
+ * @throws {MavlinkError} MISSING_REQUIRED_FIELD
+ */
+function validatePresetInputs(selected, merged, configParams) {
+  if (selected === 'goto') {
+    // Raw wire x/y (degE7/arbitrary) is the advanced escape hatch; using it
+    // requires both. Otherwise lat AND lon (degrees) must both be supplied —
+    // one-sided input is always a mistake.
+    if (merged.x !== undefined || merged.y !== undefined) {
+      requirePresetValue(selected, 'x', merged.x);
+      requirePresetValue(selected, 'y', merged.y);
+      return;
+    }
+    requirePresetValue(selected, 'lat', firstDefined(merged.lat, configParams.param5));
+    requirePresetValue(selected, 'lon', firstDefined(merged.lon, configParams.param6));
+    return;
+  }
+  if (MESSAGE_SELECTOR_PRESETS.has(selected)) {
+    requirePresetValue(selected, 'message_id', firstDefined(merged.message_id, merged.param1));
+  }
 }
 
 /**
@@ -217,6 +282,12 @@ module.exports = function registerMavlinkAiCommand(RED) {
       }
     }
 
+    // Active await-ack workflows, so a node close (partial deploy / delete)
+    // aborts them instead of leaving subscriptions, retransmit timers, and
+    // the command lock alive on an obsolete node (#83).
+    const activeWorkflows = new Set();
+    let closed = false;
+
     /**
      * Emit a structured error on the output and finish the input handler.
      *
@@ -284,6 +355,14 @@ module.exports = function registerMavlinkAiCommand(RED) {
         if (selected === 'reboot' && !toBool(params.confirm, false)) {
           return sendError(msg, send, done, 'REBOOT_NOT_CONFIRMED',
             "Reboot requires explicit confirmation: check 'Confirm reboot' in the editor or set msg.payload.confirm = true.");
+        }
+        // Friendly presets validate their semantically required inputs (#87)
+        // instead of inheriting the permissive zero defaults of the raw path.
+        try {
+          validatePresetInputs(selected, merged, configParams);
+        } catch (err) {
+          const e = toMavlinkError(err, 'MISSING_REQUIRED_FIELD');
+          return sendError(msg, send, done, e.code, e.message, e.context);
         }
         built = builder(params);
       } else if (isRawCommand(selected)) {
@@ -421,9 +500,14 @@ module.exports = function registerMavlinkAiCommand(RED) {
           const e = toMavlinkError(err, 'BAD_COMMAND');
           return sendError(msg, send, done, e.code, e.message, e.context);
         }
+        activeWorkflows.add(workflow);
         workflow
           .run()
           .then((result) => {
+            activeWorkflows.delete(workflow);
+            if (closed) {
+              return done(); // aborted by close: no output from an obsolete node
+            }
             node.status({ fill: 'green', shape: 'dot', text: `${selected} accepted` });
             msg.topic = result.topic;
             msg.payload = result.payload;
@@ -431,6 +515,10 @@ module.exports = function registerMavlinkAiCommand(RED) {
             done();
           })
           .catch((err) => {
+            activeWorkflows.delete(workflow);
+            if (closed) {
+              return done(); // aborted by close: no output from an obsolete node
+            }
             const e = toMavlinkError(err, 'COMMAND_FAILED');
             node.status({ fill: 'red', shape: 'ring', text: e.code });
             msg.topic = 'mavlink/error';
@@ -442,7 +530,10 @@ module.exports = function registerMavlinkAiCommand(RED) {
               context: e.context
             });
             send(msg);
-            done(err);
+            // The structured error on the output is the one delivery of this
+            // failure (#89): done() — not done(err) — so a Catch node doesn't
+            // also fire for it.
+            done();
           });
         return;
       }
@@ -462,6 +553,18 @@ module.exports = function registerMavlinkAiCommand(RED) {
 
       node.status({ fill: 'green', shape: 'dot', text: selected });
       send(msg);
+      done();
+    });
+
+    // Abort in-flight await-ack workflows on close (#83): a partial deploy or
+    // node delete must stop retransmits, drop subscriptions, and release the
+    // command lock instead of running to success/timeout on an obsolete node.
+    node.on('close', function closeCommand(done) {
+      closed = true;
+      for (const workflow of activeWorkflows) {
+        workflow.abort('mavlink-ai-command node closed');
+      }
+      activeWorkflows.clear();
       done();
     });
   }

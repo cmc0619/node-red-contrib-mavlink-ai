@@ -32,6 +32,12 @@ module.exports = function registerMavlinkAiParam(RED) {
       node.status({ fill: 'red', shape: 'ring', text: 'missing connection' });
     }
 
+    // Active workflow objects, aborted when the node closes (#83) so a partial
+    // deploy doesn't leave subscriptions, response timers, and the param lock
+    // running until success/timeout on an obsolete node.
+    const activeWorkflows = new Set();
+    let closed = false;
+
     node.on('input', async (msg, send, done) => {
       if (!node.connection) {
         return finishError(node, send, done, errorPayload({
@@ -130,14 +136,21 @@ module.exports = function registerMavlinkAiParam(RED) {
         }));
       }
 
+      activeWorkflows.add(workflow);
       try {
         const result = await workflow.run();
         lock.release();
+        if (closed) {
+          return done(); // aborted by close: no output from an obsolete node
+        }
         node.status({ fill: 'green', shape: 'dot', text: `${action} ok` });
         send([result, null, null]);
         done();
       } catch (err) {
         lock.release();
+        if (closed) {
+          return done(); // aborted by close: no output from an obsolete node
+        }
         const e = toMavlinkError(err, 'PARAM_FAILED');
         node.status({ fill: 'red', shape: 'ring', text: e.code });
         finishError(node, send, done, errorPayload({
@@ -146,8 +159,22 @@ module.exports = function registerMavlinkAiParam(RED) {
           code: e.code,
           message: e.message,
           context: e.context
-        }), err);
+        }));
+      } finally {
+        activeWorkflows.delete(workflow);
       }
+    });
+
+    // Abort in-flight PARAM workflows on close (#83). Their run() promises
+    // reject with PARAM_ABORTED, which settles the pending input handlers
+    // (releasing the param lock) through the catch above.
+    node.on('close', function closeParam(done) {
+      closed = true;
+      for (const active of activeWorkflows) {
+        active.abort('mavlink-ai-param node closed');
+      }
+      activeWorkflows.clear();
+      done();
     });
   }
 
@@ -170,14 +197,18 @@ function progressText(p) {
 /**
  * Emit an error on output 3 and finish the input handler.
  *
+ * Package rule (#89): a node with a dedicated error output delivers an
+ * operational failure exactly once — as a structured message on that output —
+ * and finishes with done(), so the same failure does not also fire Catch
+ * nodes. Nodes without outputs (e.g. mavlink-ai-out) use done(err) instead.
+ *
  * @param {object} node
  * @param {function} send
  * @param {function} done
  * @param {object} payload  error payload (§14.5)
- * @param {Error} [rawErr]  optional error to pass to done()
  * @returns {void}
  */
-function finishError(node, send, done, payload, rawErr) {
+function finishError(node, send, done, payload) {
   send([null, null, { topic: 'mavlink/error', payload }]);
-  done(rawErr);
+  done();
 }

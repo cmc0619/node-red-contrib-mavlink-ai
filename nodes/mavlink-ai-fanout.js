@@ -57,6 +57,12 @@ module.exports = function registerMavlinkAiFanout(RED) {
 
     const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+    // Close-time abort state (#83): the currently running per-target ACK
+    // workflow, and a flag the loops check so a closed node stops fanning out
+    // to the remaining targets instead of pacing on until success/timeout.
+    let activeWorkflow = null;
+    let closed = false;
+
     node.on('input', async (msg, send, done) => {
       const incoming = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
 
@@ -136,6 +142,9 @@ module.exports = function registerMavlinkAiFanout(RED) {
         for (let i = 0; i < decorated.length; i += 1) {
           const m = decorated[i];
           const sysid = m.target_system;
+          if (closed) {
+            break; // node closed mid-run: stop processing remaining targets (#83)
+          }
           if (aborted) {
             skipped.push(sysid);
             results[sysid] = { error: 'SKIPPED', reason: 'stop-on-error aborted remaining targets' };
@@ -154,6 +163,7 @@ module.exports = function registerMavlinkAiFanout(RED) {
               timeoutMs: node.timeoutMs,
               maxRetries: node.maxRetries
             });
+            activeWorkflow = workflow;
             const res = await workflow.run();
             accepted.push(sysid);
             results[sysid] = { result: res.payload.result_name || res.payload.result, command: res.payload.command_name };
@@ -169,12 +179,17 @@ module.exports = function registerMavlinkAiFanout(RED) {
             if (node.stopOnError) {
               aborted = true;
             }
+          } finally {
+            activeWorkflow = null;
           }
           if (node.spacingMs > 0 && i < decorated.length - 1) {
             await delay(node.spacingMs);
           }
         }
 
+        if (closed) {
+          return done(); // aborted by close: no output from an obsolete node
+        }
         msg.topic = 'swarm/ack';
         msg.payload = { accepted, failed, timedOut, skipped, results };
         const ok = failed.length === 0 && timedOut.length === 0 && skipped.length === 0;
@@ -197,6 +212,9 @@ module.exports = function registerMavlinkAiFanout(RED) {
       if (node.spacingMs > 0 && toSend.length > 1) {
         // Pace the emission so a downstream out node doesn't burst the link.
         for (let i = 0; i < toSend.length; i += 1) {
+          if (closed) {
+            return done(); // node closed mid-pacing: stop emitting (#83)
+          }
           send(toSend[i]);
           if (i < toSend.length - 1) {
             await delay(node.spacingMs);
@@ -210,6 +228,18 @@ module.exports = function registerMavlinkAiFanout(RED) {
         shape: 'dot',
         text: broadcast ? 'broadcast' : `fan-out ${toSend.length}`
       });
+      done();
+    });
+
+    // Abort the in-flight per-target ACK workflow and stop the fan-out loops
+    // on close (#83), so a partial deploy doesn't keep commanding the
+    // remaining targets from an obsolete node.
+    node.on('close', function closeFanout(done) {
+      closed = true;
+      if (activeWorkflow) {
+        activeWorkflow.abort('mavlink-ai-fanout node closed');
+        activeWorkflow = null;
+      }
       done();
     });
   }

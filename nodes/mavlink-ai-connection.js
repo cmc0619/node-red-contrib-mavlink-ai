@@ -133,7 +133,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
     if (!node.profile.isValid()) {
       const err = node.profile.getError();
-      fatal('DIALECT_INVALID', `Profile dialect invalid: ${err && err.message}`);
+      fatal((err && err.code) || 'PROFILE_INVALID', `Profile invalid: ${err && err.message}`);
       registerNoop(node);
       return;
     }
@@ -298,6 +298,55 @@ module.exports = function registerMavlinkAiConnection(RED) {
       return;
     }
 
+    /**
+     * Build the merged CRC-extra (magic number) table covering every routed
+     * profile's dialect. The splitter validates CRC against this table before
+     * routing, so it must know message ids defined only by a routed (e.g.
+     * custom XML) dialect — otherwise those packets are dropped silently
+     * inside the splitter.
+     *
+     * Two profiles defining the *same* message id with *different* CRC extras
+     * cannot share one splitter: silently keeping either value makes the other
+     * dialect's packets fail CRC or decode unpredictably. That configuration
+     * is unsupported and fails loudly here (#86) instead of picking a winner.
+     * Identical duplicate definitions (e.g. two profiles including common.xml)
+     * are fine.
+     *
+     * @returns {object} msgid -> CRC extra
+     * @throws {MavlinkError} DIALECT_CRC_CONFLICT
+     */
+    function buildMergedMagic() {
+      const merged = {};
+      const contributor = new Map(); // msgid -> { magic, profile, dialect }
+      const conflicts = [];
+      for (const profile of node._router.profiles()) {
+        const bundle = profile && typeof profile.getDialect === 'function' ? profile.getDialect() : null;
+        if (!bundle || !bundle.valid) {
+          continue;
+        }
+        const label = `profile '${profile.name || profile.id}' (dialect '${bundle.name}')`;
+        for (const [id, magic] of Object.entries(bundle.magicNumbers)) {
+          if (!(id in merged)) {
+            merged[id] = magic;
+            contributor.set(id, { magic, label });
+          } else if (merged[id] !== magic) {
+            const first = contributor.get(id);
+            conflicts.push(
+              `message id ${id}: ${first.label} CRC extra ${first.magic} vs ${label} CRC extra ${magic}`
+            );
+          }
+        }
+      }
+      if (conflicts.length) {
+        throw new MavlinkError(
+          'DIALECT_CRC_CONFLICT',
+          `Routed profiles define the same MAVLink message id with different CRC extras and cannot share one connection: ${conflicts.join('; ')}.`,
+          { conflicts }
+        );
+      }
+      return merged;
+    }
+
     const ROUTE_ERROR_DETAIL = 'Route table has unresolved profiles';
     // The status the route-validation error replaced, so a later validation
     // pass can restore it instead of guessing at the transport state.
@@ -329,6 +378,14 @@ module.exports = function registerMavlinkAiConnection(RED) {
           problems.push(`route (sysid ${route.sysid}, compid ${route.compid} -> '${route.profile}'): ${err.message}`);
         }
       }
+      // The routed profiles must also agree on one splitter CRC table (#86):
+      // a message-id CRC conflict is a deploy-time configuration error, not
+      // something to discover packet by packet.
+      try {
+        buildMergedMagic();
+      } catch (err) {
+        problems.push(err.message);
+      }
       if (problems.length) {
         if (node.statusDetail !== ROUTE_ERROR_DETAIL) {
           statusBeforeRouteError = { state: node.statusState, detail: node.statusDetail };
@@ -336,7 +393,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
         setStatus('error', ROUTE_ERROR_DETAIL);
         node.error(
           `mavlink-ai-connection '${node.name || node.id}': ROUTE_TABLE_INVALID: ` +
-            `${problems.length} route(s) reference a profile that cannot be used; ` +
+            `${problems.length} problem(s) with routed profiles; ` +
             `matching packets will be rejected, not decoded with the default profile. ${problems.join('; ')}`
         );
       } else if (node.statusState === 'error' && node.statusDetail === ROUTE_ERROR_DETAIL) {
@@ -406,13 +463,36 @@ module.exports = function registerMavlinkAiConnection(RED) {
         return Promise.reject(new MavlinkError('BAD_OUTBOUND', 'Outbound message must be an object.'));
       }
       const defaults = node.profile.getDefaults();
-      const fields = message.fields && typeof message.fields === 'object' ? message.fields : {};
-      const targetSystem = firstDefined(message.target_system, fields.target_system, defaults.defaultTargetSystem);
-      const targetComponent = firstDefined(
-        message.target_component,
-        fields.target_component,
-        defaults.defaultTargetComponent
-      );
+      const fields = message.fields && typeof message.fields === 'object' ? { ...message.fields } : {};
+      // Normalize targets once, before encoding and transport routing (#84).
+      // A message can carry target ids top-level and inside fields; the two
+      // used to be resolved independently (top-level for the udp-peer routing
+      // metadata, field-level preserved by the codec), so a conflicting pair
+      // sent the packet to one endpoint while the payload addressed another.
+      // One location wins when only one is set, defaults fill when neither is,
+      // equal values (numeric string == number) are fine, and a disagreement
+      // rejects the send instead of picking silently.
+      let targetSystem;
+      let targetComponent;
+      try {
+        targetSystem = resolveTargetId('target_system', message.target_system, fields.target_system, defaults.defaultTargetSystem);
+        targetComponent = resolveTargetId(
+          'target_component',
+          message.target_component,
+          fields.target_component,
+          defaults.defaultTargetComponent
+        );
+      } catch (err) {
+        return Promise.reject(toMavlinkError(err, 'TARGET_CONFLICT'));
+      }
+      // Stamp the resolved numeric values back into the fields so the encoded
+      // payload and the transport routing metadata below cannot diverge.
+      if (targetSystem !== undefined && fields.target_system !== undefined) {
+        fields.target_system = targetSystem;
+      }
+      if (targetComponent !== undefined && fields.target_component !== undefined) {
+        fields.target_component = targetComponent;
+      }
       // Encode with the codec of the profile referenced on the message
       // (routed / custom-dialect sends carry the builder's profile config-node
       // id), so the right dialect, source identity, version and signing are
@@ -540,6 +620,16 @@ module.exports = function registerMavlinkAiConnection(RED) {
           reason: sigDecision.reason
         });
         return;
+      }
+
+      // Only now is the sender trusted enough to route replies to (#85): the
+      // frame passed CRC in the splitter, its identity passed routing, and it
+      // satisfied the matched profile's signature policy. Tell a udp-peer
+      // transport to commit the observed endpoint for this sysid — malformed,
+      // route-rejected, or signature-rejected traffic never reaches here, so
+      // it can never redirect outbound packets.
+      if (node._transport && typeof node._transport.confirmPeer === 'function') {
+        node._transport.confirmPeer(header.sysid);
       }
 
       // 4. If the matched dialect has no definition for this message id, or
@@ -691,46 +781,58 @@ module.exports = function registerMavlinkAiConnection(RED) {
         return;
       }
 
-      // The splitter validates CRC against a magic-number table before routing,
-      // so it must cover every routed profile's dialect — not just the default.
-      // Otherwise message ids defined only by a routed (e.g. custom XML) dialect
-      // are dropped silently inside the splitter. First profile wins on
-      // conflicting ids: the default dialect keeps canonical CRCs and routed
-      // custom dialects contribute only their new message ids (two dialects
-      // redefining the same id with different layouts cannot share a splitter).
-      // Built lazily on first data so route profiles registered after this
-      // connection during the same deploy still contribute their tables.
-      function buildMergedMagic() {
-        const merged = {};
-        for (const profile of node._router.profiles()) {
-          const bundle = profile && typeof profile.getDialect === 'function' ? profile.getDialect() : null;
-          if (!bundle || !bundle.valid) {
-            continue;
-          }
-          for (const [id, magic] of Object.entries(bundle.magicNumbers)) {
-            if (!(id in merged)) {
-              merged[id] = magic;
-            }
-          }
-        }
-        return merged;
-      }
+      // A CRC conflict across routed profiles (#86) is a fatal configuration
+      // error for this connection: remember it so it is surfaced once, not
+      // re-raised for every inbound datagram.
+      let decoderFatal = null;
 
-      /** Create the decoder on first use, with the merged CRC table. */
+      /**
+       * Create the decoder on first use, with the merged CRC table covering
+       * every routed profile's dialect. Built lazily on first data so route
+       * profiles registered after this connection during the same deploy
+       * still contribute their tables. A merge conflict makes the connection
+       * refuse to decode (an ambiguous splitter table must never pick a
+       * winner silently), sets the error status, and throws once.
+       */
       function ensureDecoder() {
+        if (decoderFatal) {
+          throw decoderFatal;
+        }
         if (!node._decoder) {
+          let magicNumbers;
+          try {
+            magicNumbers = buildMergedMagic();
+          } catch (err) {
+            decoderFatal = toMavlinkError(err, 'DIALECT_CRC_CONFLICT');
+            setStatus('error', 'Routed dialects have conflicting message CRCs');
+            throw decoderFatal;
+          }
           node._decoder = node._codec.createDecoder(
             onPacket,
             (err) => node.emitter.emit('error', toMavlinkError(err, 'DECODE_ERROR')),
-            { magicNumbers: buildMergedMagic() }
+            { magicNumbers }
           );
         }
         return node._decoder;
       }
 
+      let decoderFatalReported = false;
       node._transport.on('data', (buffer) => {
+        if (decoderFatal) {
+          return; // fatal config error already surfaced; don't re-log per datagram
+        }
+        let decoder;
         try {
-          ensureDecoder().write(buffer);
+          decoder = ensureDecoder();
+        } catch (err) {
+          if (!decoderFatalReported) {
+            decoderFatalReported = true;
+            node.emitter.emit('error', toMavlinkError(err, 'DIALECT_CRC_CONFLICT'));
+          }
+          return;
+        }
+        try {
+          decoder.write(buffer);
         } catch (err) {
           node.emitter.emit('error', toMavlinkError(err, 'DECODE_ERROR'));
         }
@@ -795,6 +897,55 @@ module.exports = function registerMavlinkAiConnection(RED) {
 };
 
 // --- helpers ----------------------------------------------------------------
+
+/**
+ * Resolve one outbound target id from its two possible locations (#84):
+ * top-level `message.target_system` / `message.target_component` and the
+ * field-level copy inside `message.fields`. Numeric strings and numbers that
+ * represent the same id are equal; a real disagreement throws so the packet
+ * can never be routed to one system while addressing another. When neither
+ * location is set the profile default applies.
+ *
+ * @param {string} name  'target_system' | 'target_component' (for the error)
+ * @param {*} topLevel   message-level value
+ * @param {*} fieldLevel value inside message.fields
+ * @param {*} fallback   profile default
+ * @returns {number|undefined} the resolved numeric id
+ * @throws {MavlinkError} TARGET_CONFLICT | BAD_TARGET
+ */
+function resolveTargetId(name, topLevel, fieldLevel, fallback) {
+  /** Coerce a supplied value to a number, rejecting non-numeric input. */
+  const coerce = (value, where) => {
+    // Blank means "not set" (a common shape for an empty Node-RED field) and
+    // falls through to the other location / profile default — Number('') is
+    // 0, which would silently address the broadcast target instead.
+    if (value === undefined || value === null || String(value).trim() === '') {
+      return undefined;
+    }
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      throw new MavlinkError('BAD_TARGET', `${name} (${where}) must be numeric (got ${JSON.stringify(value)}).`, {
+        field: name,
+        value
+      });
+    }
+    return n;
+  };
+  const top = coerce(topLevel, 'top-level');
+  const field = coerce(fieldLevel, 'fields');
+  if (top !== undefined && field !== undefined && top !== field) {
+    throw new MavlinkError(
+      'TARGET_CONFLICT',
+      `Conflicting ${name}: top-level ${top} != fields.${name} ${field}. Set one location, or make them agree.`,
+      { field: name, top_level: top, field_level: field }
+    );
+  }
+  const chosen = top !== undefined ? top : field;
+  if (chosen !== undefined) {
+    return chosen;
+  }
+  return coerce(fallback, 'profile default');
+}
 
 /**
  * Build a human-readable status detail describing what the transport bound to

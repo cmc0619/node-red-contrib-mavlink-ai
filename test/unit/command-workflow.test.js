@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { CommandSend } = require('../../lib/command/command-workflow');
 const { resolveFlightMode, knownModes } = require('../../lib/command/flight-modes');
+const { LockManager } = require('../../lib/runtime/lock-manager');
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 const ENUMS = loadDialect('ardupilotmega').enums;
@@ -15,6 +16,15 @@ class FakeConnection {
     this.sent = [];
     this._subs = new Map();
     this._id = 1;
+    this.locks = new LockManager();
+  }
+
+  acquireLock(key, owner) {
+    return this.locks.acquire(key, owner);
+  }
+
+  releaseLock(key, owner) {
+    return this.locks.release(key, owner);
   }
 
   subscribe(filter, cb) {
@@ -220,4 +230,92 @@ test('CommandSend with broadcast component accepts any responder', async () => {
     cb({ topic: 'mavlink/COMMAND_ACK', payload: { name: 'COMMAND_ACK', sysid: 1, compid: 154, fields: { command: 400, result: 0 } } });
   }
   await p;
+});
+
+// --- Concurrent identical commands share no ACK (#82) ------------------------
+
+test('a second identical ACK-waiting command fails fast with COMMAND_BUSY (#82)', async () => {
+  const conn = new FakeConnection();
+  const first = new CommandSend(opts(conn, { timeoutMs: 1000, maxRetries: 0 }));
+  const p1 = first.run();
+  await delay(0);
+  assert.strictEqual(conn.sent.length, 1);
+
+  // Identical command/target while the first still awaits its ack: must not
+  // subscribe, must not send, must reject immediately.
+  const second = new CommandSend(opts(conn, { timeoutMs: 1000, maxRetries: 0 }));
+  await assert.rejects(second.run(), (err) => err.code === 'COMMAND_BUSY');
+  assert.strictEqual(conn.sent.length, 1, 'the busy command sent nothing');
+
+  // Exactly one workflow consumes the ack.
+  conn.deliverAck({ command: 400, result: 0 });
+  const res = await p1;
+  assert.strictEqual(res.payload.result, 0);
+});
+
+test('different commands or targets are not serialized (#82)', async () => {
+  const conn = new FakeConnection();
+  const arm = new CommandSend(opts(conn, { timeoutMs: 1000, maxRetries: 0 }));
+  const armOther = new CommandSend(opts(conn, { targetSystem: 2, timeoutMs: 1000, maxRetries: 0 }));
+  const takeoff = new CommandSend(opts(conn, { command: 'MAV_CMD_NAV_TAKEOFF', fields: {}, timeoutMs: 1000, maxRetries: 0 }));
+  const p1 = arm.run();
+  const p2 = armOther.run();
+  const p3 = takeoff.run();
+  await delay(0);
+  assert.strictEqual(conn.sent.length, 3, 'all three distinct workflows sent');
+  conn.deliverAck({ command: 400, result: 0 }, 1);
+  conn.deliverAck({ command: 400, result: 0 }, 2);
+  conn.deliverAck({ command: 22, result: 0 }, 1);
+  await Promise.all([p1, p2, p3]);
+});
+
+test('the command lock is released on every settle path (#82)', async () => {
+  const conn = new FakeConnection();
+  const key = 'command:1:1:400';
+
+  // Accepted.
+  const ok = new CommandSend(opts(conn));
+  const pOk = ok.run();
+  await delay(0);
+  assert.strictEqual(conn.locks.isHeld(key), true);
+  conn.deliverAck({ command: 400, result: 0 });
+  await pOk;
+  assert.strictEqual(conn.locks.isHeld(key), false);
+
+  // Rejected result.
+  const rejected = new CommandSend(opts(conn));
+  const pRej = rejected.run();
+  await delay(0);
+  conn.deliverAck({ command: 400, result: 2 });
+  await assert.rejects(pRej, (err) => err.code === 'COMMAND_REJECTED');
+  assert.strictEqual(conn.locks.isHeld(key), false);
+
+  // Timeout (workflow timers are unref'd, so keep the loop alive).
+  const timedOut = new CommandSend(opts(conn, { timeoutMs: 10, maxRetries: 0 }));
+  const keepAlive = setInterval(() => {}, 5);
+  try {
+    await assert.rejects(timedOut.run(), (err) => err.code === 'COMMAND_TIMEOUT');
+  } finally {
+    clearInterval(keepAlive);
+  }
+  assert.strictEqual(conn.locks.isHeld(key), false);
+
+  // Send failure.
+  const failing = new CommandSend(opts(conn));
+  conn.send = () => Promise.reject(new Error('boom'));
+  await assert.rejects(failing.run());
+  assert.strictEqual(conn.locks.isHeld(key), false);
+  conn.send = (message) => {
+    conn.sent.push(message);
+    return Promise.resolve();
+  };
+
+  // Abort.
+  const aborted = new CommandSend(opts(conn, { timeoutMs: 1000, maxRetries: 0 }));
+  const pAbort = aborted.run();
+  await delay(0);
+  assert.strictEqual(conn.locks.isHeld(key), true);
+  aborted.abort('node closed');
+  await assert.rejects(pAbort, (err) => err.code === 'COMMAND_ABORTED');
+  assert.strictEqual(conn.locks.isHeld(key), false);
 });

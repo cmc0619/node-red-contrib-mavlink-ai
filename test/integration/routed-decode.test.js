@@ -9,7 +9,11 @@ const { MockRED } = require('../helpers/mock-red');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
 
-const CUSTOM_XML = path.join(__dirname, '..', 'fixtures', 'dialects', 'custom_vehicle.xml');
+// A standalone custom dialect that only *adds* message id 9100. It must not
+// include the trimmed fixture common.xml: that copy redefines HEARTBEAT and
+// ATTITUDE with different layouts, which is a routed CRC-extra conflict the
+// connection now rejects (#86) rather than merging silently.
+const CUSTOM_XML = path.join(__dirname, '..', 'fixtures', 'dialects', 'custom_addon.xml');
 
 /**
  * Wait for an event while re-sending a datagram: UDP loopback can drop a lone

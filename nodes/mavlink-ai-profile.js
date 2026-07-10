@@ -3,7 +3,8 @@
 const { loadDialect, getMessageClass } = require('../lib/dialects/dialect-loader');
 const enumResolver = require('../lib/protocol/enum-resolver');
 const normalizer = require('../lib/protocol/message-normalizer');
-const { toInt, toBool } = require('../lib/util/validation');
+const { toBool } = require('../lib/util/validation');
+const { MavlinkError } = require('../lib/util/errors');
 const { registerEditorApi } = require('../lib/editor-api');
 
 /**
@@ -44,10 +45,37 @@ module.exports = function registerMavlinkAiProfile(RED) {
     node.dialect = config.dialect || 'ardupilotmega';
     node.customDialectPath = config.customDialectPath || '';
     node.mavlinkVersion = config.mavlinkVersion || 'auto';
-    node.sourceSystemId = toInt(config.sourceSystemId, 255);
-    node.sourceComponentId = toInt(config.sourceComponentId, 190);
-    node.defaultTargetSystem = toInt(config.defaultTargetSystem, 1);
-    node.defaultTargetComponent = toInt(config.defaultTargetComponent, 1);
+    // MAVLink identity fields are uint8s on the wire (#90). Validate here —
+    // not just in the editor — so imported/API-created flows get the same
+    // enforcement. A blank value takes the default; anything else must be an
+    // integer in range, never silently truncated, wrapped, or defaulted.
+    const identityProblems = [];
+    /**
+     * Validate one uint8 identity config value, collecting the problem
+     * instead of throwing so every bad field is reported at once.
+     *
+     * @param {*} value  raw config value
+     * @param {string} field  readable field name
+     * @param {number} fallback  default when blank
+     * @param {number} [min=0]  lower bound (source sysid disallows 0)
+     * @returns {number}
+     */
+    function identityUint8(value, field, fallback, min = 0) {
+      if (value === undefined || value === null || value === '') {
+        return fallback;
+      }
+      const n = Number(value);
+      if (!Number.isInteger(n) || n < min || n > 255) {
+        identityProblems.push(`${field} must be an integer in [${min}, 255] (got ${JSON.stringify(value)})`);
+        return fallback;
+      }
+      return n;
+    }
+    // Source sysid 0 means "unknown/broadcast" and is not a valid sender id.
+    node.sourceSystemId = identityUint8(config.sourceSystemId, 'Source system ID', 255, 1);
+    node.sourceComponentId = identityUint8(config.sourceComponentId, 'Source component ID', 190, 0);
+    node.defaultTargetSystem = identityUint8(config.defaultTargetSystem, 'Default target system', 1, 0);
+    node.defaultTargetComponent = identityUint8(config.defaultTargetComponent, 'Default target component', 1, 0);
     node.preferredMissionItemType = config.preferredMissionItemType || 'MISSION_ITEM_INT';
     node.defaultMissionType = config.defaultMissionType || 'mission';
     node.heartbeatType = config.heartbeatType || '';
@@ -61,7 +89,20 @@ module.exports = function registerMavlinkAiProfile(RED) {
     node.signOutbound = toBool(config.signOutbound, false);
     node.verifyInbound = toBool(config.verifyInbound, false);
     node.requireSignature = toBool(config.requireSignature, false);
-    node.signingLinkId = toInt(config.signingLinkId, 0);
+    // The signing link id is also a uint8; wrapping it modulo 256 would turn a
+    // config mistake into a *different* valid link id (#90).
+    node.signingLinkId = identityUint8(config.signingLinkId, 'Signing link ID', 0, 0);
+
+    // Invalid identity values make the whole profile invalid (#90): the codec
+    // and connections must refuse to start rather than send with a wrong id.
+    node._identityError = identityProblems.length
+      ? new MavlinkError('IDENTITY_INVALID', `Invalid MAVLink identity configuration: ${identityProblems.join('; ')}.`, {
+          problems: identityProblems
+        })
+      : null;
+    if (node._identityError) {
+      node.error(`MAVLink profile '${node.name || node.id}': ${node._identityError.message}`);
+    }
 
     // Load the dialect at construction. On failure mark invalid and report a
     // useful error — never silently fall back to a different dialect (§15).
@@ -72,10 +113,10 @@ module.exports = function registerMavlinkAiProfile(RED) {
       );
     }
 
-    /** @returns {boolean} whether the profile's dialect loaded successfully */
-    node.isValid = () => node.bundle.valid;
-    /** @returns {?object} structured dialect-load error, or null */
-    node.getError = () => node.bundle.error;
+    /** @returns {boolean} whether the dialect loaded and identity config is valid */
+    node.isValid = () => node.bundle.valid && !node._identityError;
+    /** @returns {?object} structured dialect-load/identity error, or null */
+    node.getError = () => (node.bundle.valid ? node._identityError : node.bundle.error);
     /** @returns {DialectBundle} the loaded dialect bundle */
     node.getDialect = () => node.bundle;
 
