@@ -141,6 +141,24 @@ test('single-location targets and profile defaults still work (#84)', async (t) 
   assert.strictEqual(third.fields.target_component, 3);
 });
 
+test('blank target values mean "not set" and fall through to defaults (#84)', async (t) => {
+  // Number('') is 0, so a blank Node-RED field must not silently address the
+  // broadcast target — it falls through to the profile default (7 / 3).
+  const { RED, conn, sent } = setup();
+  t.after(() => RED.close(conn));
+  await conn.send({
+    name: 'COMMAND_LONG',
+    target_system: '',
+    target_component: '  ',
+    fields: { ...COMMAND_FIELDS }
+  });
+  assert.strictEqual(sent.length, 1);
+  assert.strictEqual(sent[0].meta.targetSystem, 7);
+  const decoded = await decodeOne(conn, sent[0].buffer);
+  assert.strictEqual(decoded.fields.target_system, 7);
+  assert.strictEqual(decoded.fields.target_component, 3);
+});
+
 test('non-numeric target values reject with BAD_TARGET (#84)', async (t) => {
   const { RED, conn, sent } = setup();
   t.after(() => RED.close(conn));

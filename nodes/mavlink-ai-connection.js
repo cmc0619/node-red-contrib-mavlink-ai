@@ -916,7 +916,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
 function resolveTargetId(name, topLevel, fieldLevel, fallback) {
   /** Coerce a supplied value to a number, rejecting non-numeric input. */
   const coerce = (value, where) => {
-    if (value === undefined || value === null) {
+    // Blank means "not set" (a common shape for an empty Node-RED field) and
+    // falls through to the other location / profile default — Number('') is
+    // 0, which would silently address the broadcast target instead.
+    if (value === undefined || value === null || String(value).trim() === '') {
       return undefined;
     }
     const n = Number(value);
