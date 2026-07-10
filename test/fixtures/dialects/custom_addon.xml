@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<mavlink>
+  <version>3</version>
+  <messages>
+    <message id="9100" name="CUSTOM_VEHICLE_STATUS">
+      <description>A custom vehicle message that only adds a new id (no redefined common messages).</description>
+      <field type="uint8_t" name="mode">Vehicle mode.</field>
+    </message>
+  </messages>
+</mavlink>

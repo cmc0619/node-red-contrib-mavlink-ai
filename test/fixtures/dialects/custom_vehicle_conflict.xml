@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<mavlink>
+  <version>3</version>
+  <messages>
+    <message id="9100" name="CUSTOM_VEHICLE_STATUS_V2">
+      <description>Redefines message id 9100 with a different layout (different CRC extra).</description>
+      <field type="uint16_t" name="mode">Vehicle mode, wider.</field>
+      <field type="uint8_t" name="submode">Sub mode.</field>
+    </message>
+  </messages>
+</mavlink>
