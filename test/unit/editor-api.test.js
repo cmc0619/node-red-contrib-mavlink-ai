@@ -166,11 +166,18 @@ test('xml-catalog endpoints: update (fetch-stubbed), list, and compare (#61)', a
     '</messages></mavlink>';
 
   const origFetch = global.fetch;
+  const COMMIT = '1234567890abcdef1234567890abcdef12345678';
   global.fetch = async (url) => {
+    if (/\/commits\//.test(url)) {
+      // The ref is pinned to a commit before any download (#88).
+      return { ok: true, status: 200, statusText: 'OK', text: async () => COMMIT };
+    }
     if (/minimal\.xml$/.test(url)) {
+      // Files must be fetched at the pinned commit, not the mutable ref.
+      assert.ok(String(url).includes(COMMIT), `file fetched at the pinned commit: ${url}`);
       return { ok: true, status: 200, statusText: 'OK', text: async () => minimalXml };
     }
-    // commit resolution + any other file: not found.
+    // any other file: not found.
     return { ok: false, status: 404, statusText: 'Not Found', text: async () => '' };
   };
   try {

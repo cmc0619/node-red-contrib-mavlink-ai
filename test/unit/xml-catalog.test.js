@@ -171,7 +171,7 @@ test('list returns manifests newest-first (#61)', async () => {
   const cat = new XmlCatalog({
     baseDir: dir,
     fetchFile: fakeFetcher(FILES),
-    resolveCommit: async () => null,
+    resolveCommit: async () => 'b'.repeat(40),
     now: () => (clock += 1000)
   });
   await cat.update({ files: ['minimal.xml'] });
@@ -179,5 +179,107 @@ test('list returns manifests newest-first (#61)', async () => {
   const list = cat.list();
   assert.strictEqual(list.length, 2);
   assert.ok(list[0].downloadedAt > list[1].downloadedAt); // newest first
-  assert.strictEqual(list[0].commit, null); // provenance honest when unresolved
+});
+
+// --- Provenance / discovery (#88) --------------------------------------------
+
+test('update resolves the ref to a commit first and fetches at that commit (#88)', async () => {
+  const fetchedRefs = [];
+  const cat = new XmlCatalog({
+    baseDir: tmpDir(),
+    fetchFile: async (repo, ref, file) => {
+      fetchedRefs.push(ref);
+      if (!(file in FILES)) {
+        throw new Error(`404 ${file}`);
+      }
+      return FILES[file];
+    },
+    resolveCommit: async () => 'c'.repeat(40),
+    now: () => 1751000000000
+  });
+  const manifest = await cat.update({ ref: 'master', files: ['ardupilotmega.xml'] });
+  assert.strictEqual(manifest.commit, 'c'.repeat(40));
+  // Every single download (roots AND includes) used the pinned commit, never
+  // the mutable branch name, so manifest.commit matches all files exactly.
+  assert.ok(fetchedRefs.length >= 3);
+  assert.ok(fetchedRefs.every((r) => r === 'c'.repeat(40)), `fetched at: ${fetchedRefs}`);
+  assert.ok(manifest.sourceUrlBase.includes('c'.repeat(40)));
+});
+
+test('update fails when the ref cannot be pinned to a commit (#88)', async () => {
+  const cat = new XmlCatalog({
+    baseDir: tmpDir(),
+    fetchFile: fakeFetcher(FILES),
+    resolveCommit: async () => null,
+    now: () => 1751000000000
+  });
+  await assert.rejects(cat.update({ files: ['minimal.xml'] }), (e) => e.code === 'XML_CATALOG_COMMIT_UNRESOLVED');
+});
+
+test('update discovers the full upstream dialect list by default (#88)', async () => {
+  const listedAt = [];
+  const cat = new XmlCatalog({
+    baseDir: tmpDir(),
+    fetchFile: fakeFetcher(FILES),
+    resolveCommit: async () => 'd'.repeat(40),
+    listFiles: async (repo, commit) => {
+      listedAt.push(commit);
+      return Object.keys(FILES); // the complete upstream directory listing
+    },
+    now: () => 1751000000000
+  });
+  const manifest = await cat.update({});
+  assert.deepStrictEqual(listedAt, ['d'.repeat(40)], 'listing happens at the pinned commit');
+  assert.deepStrictEqual(
+    manifest.files.map((f) => f.name).sort(),
+    ['ardupilotmega.xml', 'common.xml', 'minimal.xml']
+  );
+  assert.deepStrictEqual(manifest.usable.sort(), ['ardupilotmega.xml', 'common.xml', 'minimal.xml']);
+  assert.deepStrictEqual(manifest.unusable, []);
+});
+
+test('update fails loudly when discovery is unavailable, not a partial seed (#88)', async () => {
+  const cat = new XmlCatalog({
+    baseDir: tmpDir(),
+    fetchFile: fakeFetcher(FILES),
+    resolveCommit: async () => 'e'.repeat(40),
+    listFiles: async () => null,
+    now: () => 1751000000000
+  });
+  await assert.rejects(cat.update({}), (e) => e.code === 'XML_CATALOG_LIST_FAILED');
+});
+
+test('a root with a missing required include is unusable, not published (#88)', async () => {
+  // ardupilotmega -> common -> minimal, but common.xml is gone upstream:
+  // ardupilotmega's include closure is incomplete, minimal stays fine.
+  const partial = { 'ardupilotmega.xml': FILES['ardupilotmega.xml'], 'minimal.xml': FILES['minimal.xml'] };
+  const cat = new XmlCatalog({
+    baseDir: tmpDir(),
+    fetchFile: fakeFetcher(partial),
+    resolveCommit: async () => 'f'.repeat(40),
+    now: () => 1751000000000
+  });
+  const manifest = await cat.update({ files: ['ardupilotmega.xml', 'minimal.xml'] });
+  assert.deepStrictEqual(manifest.missing, ['common.xml']);
+  assert.deepStrictEqual(manifest.unusable, [{ file: 'ardupilotmega.xml', missingIncludes: ['common.xml'] }]);
+  assert.deepStrictEqual(manifest.usable, ['minimal.xml']);
+});
+
+test('a transitively missing include marks the root unusable too (#88)', async () => {
+  // minimal.xml missing: common's closure breaks, and so does ardupilotmega's
+  // (through common), even though ardupilotmega's direct include downloaded.
+  const partial = { 'ardupilotmega.xml': FILES['ardupilotmega.xml'], 'common.xml': FILES['common.xml'] };
+  const cat = new XmlCatalog({
+    baseDir: tmpDir(),
+    fetchFile: fakeFetcher(partial),
+    resolveCommit: async () => 'a1'.padEnd(40, '0'),
+    now: () => 1751000000000
+  });
+  const manifest = await cat.update({ files: ['ardupilotmega.xml', 'common.xml'] });
+  assert.deepStrictEqual(manifest.missing, ['minimal.xml']);
+  assert.deepStrictEqual(manifest.unusable, [
+    { file: 'ardupilotmega.xml', missingIncludes: ['minimal.xml'] },
+    { file: 'common.xml', missingIncludes: ['minimal.xml'] }
+  ]);
+  assert.deepStrictEqual(manifest.usable, []);
 });
