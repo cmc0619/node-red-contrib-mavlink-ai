@@ -192,23 +192,39 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
-     * Pick the codec to encode an outbound message with, honoring the profile
-     * referenced on the message (#68). A reference that resolves to a real
-     * valid profile uses that profile's codec (its dialect + source identity);
-     * a blank reference uses the connection's default codec. An explicitly
-     * requested profile that cannot be resolved throws — it must never
-     * silently encode with the default profile.
+     * Resolve the effective profile for an outbound message. No reference means
+     * the connection's default profile. An explicit reference must resolve to a
+     * real, valid profile config node — silently falling back to the default
+     * would encode with the wrong dialect, source identity, version, signing,
+     * and target defaults, which is exactly the failure the reference exists to
+     * prevent (#68).
      *
      * @param {string|object} [profileRef]  message.profile (config-node id,
      *   legacy unique name, or profile object)
-     * @returns {MavlinkCodec}
-     * @throws {MavlinkError} PROFILE_UNRESOLVED | PROFILE_INVALID | CODEC_INIT_FAILED
+     * @returns {object} a valid profile config node
+     * @throws {MavlinkError} PROFILE_UNRESOLVED | PROFILE_AMBIGUOUS | UNKNOWN_PROFILE | PROFILE_INVALID
      */
-    function resolveOutboundCodec(profileRef) {
+    function resolveOutboundProfile(profileRef) {
       if (profileRef === undefined || profileRef === null || profileRef === '') {
-        return node._codec;
+        return node.profile;
       }
-      return getCodecForProfile(node.resolveProfile(profileRef));
+      const profile = node.resolveProfile(profileRef);
+      if (!profile || typeof profile.getDialect !== 'function' || typeof profile.isValid !== 'function') {
+        throw new MavlinkError(
+          'UNKNOWN_PROFILE',
+          `Outbound message names profile '${typeof profileRef === 'object' ? profileRef.name : profileRef}' but no such profile config node exists.`,
+          { profile: typeof profileRef === 'object' ? profileRef.name : profileRef }
+        );
+      }
+      if (!profile.isValid()) {
+        const err = profile.getError && profile.getError();
+        throw new MavlinkError(
+          'PROFILE_INVALID',
+          `Outbound message names profile '${profile.name || profile.id}' whose dialect failed to load${err ? `: ${err.message}` : '.'}`,
+          { profile: profile.name || profile.id }
+        );
+      }
+      return profile;
     }
 
     // --- routing -------------------------------------------------------------
@@ -452,9 +468,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
 
     /**
      * Encode and enqueue a normalized outbound message (§14.2), filling target
-     * defaults from the profile.
+     * defaults from the effective profile (message.profile, or the connection
+     * default).
      *
-     * @param {object} message  { name, fields, target_system?, target_component? }
+     * @param {object} message  { name, fields, profile?, target_system?, target_component? }
      * @param {object} [options]  { priority }
      * @returns {Promise<void>}
      */
@@ -462,7 +479,19 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (!message || typeof message !== 'object') {
         return Promise.reject(new MavlinkError('BAD_OUTBOUND', 'Outbound message must be an object.'));
       }
-      const defaults = node.profile.getDefaults();
+      // The profile named on the message is the effective profile for the whole
+      // send: it supplies the codec (dialect, source identity, version, signing
+      // — #68) *and* the target defaults, so a send addressed through a
+      // non-default profile doesn't inherit the default profile's targets. An
+      // explicit profile that can't be resolved rejects rather than silently
+      // sending as the default.
+      let profile;
+      try {
+        profile = resolveOutboundProfile(message.profile);
+      } catch (err) {
+        return Promise.reject(toMavlinkError(err, 'PROFILE_UNRESOLVED'));
+      }
+      const defaults = profile.getDefaults();
       const fields = message.fields && typeof message.fields === 'object' ? { ...message.fields } : {};
       // Normalize targets once, before encoding and transport routing (#84).
       // A message can carry target ids top-level and inside fields; the two
@@ -493,18 +522,11 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (targetComponent !== undefined && fields.target_component !== undefined) {
         fields.target_component = targetComponent;
       }
-      // Encode with the codec of the profile referenced on the message
-      // (routed / custom-dialect sends carry the builder's profile config-node
-      // id), so the right dialect, source identity, version and signing are
-      // used — not always the connection's default profile (#68). No profile
-      // reference means the default codec; an explicit reference that cannot
-      // be resolved rejects the send rather than silently encoding with the
-      // default profile.
       let codec;
       try {
-        codec = resolveOutboundCodec(message.profile);
+        codec = getCodecForProfile(profile);
       } catch (err) {
-        return Promise.reject(toMavlinkError(err, 'PROFILE_UNRESOLVED'));
+        return Promise.reject(toMavlinkError(err, 'PROFILE_INVALID'));
       }
       let buffer;
       try {

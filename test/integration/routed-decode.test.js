@@ -352,3 +352,54 @@ test('fixing a broken route table on redeploy clears the stale error status', as
   assert.strictEqual(conn.statusState, 'listening');
   assert.strictEqual(conn.errors.length, 1);
 });
+
+/**
+ * Workflow profile propagation: the profile named on an outbound message is
+ * the effective profile for the WHOLE send — codec (source identity) and
+ * target defaults — a plain profile *name* resolves to the real config node,
+ * and an explicit reference that resolves to nothing rejects instead of
+ * silently sending as the connection default.
+ */
+test('outbound send resolves profile names, applies profile target defaults, and rejects unknown profiles', async (t) => {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-profile', {
+    id: 'p_def', name: 'Def', profileType: 'gcs', dialect: 'minimal', mavlinkVersion: 'v2',
+    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-profile', {
+    id: 'p_alt', name: 'Alt', profileType: 'gcs', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    sourceSystemId: 42, sourceComponentId: 200, defaultTargetSystem: 7, defaultTargetComponent: 1
+  });
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c_send2', name: 'Send UDP 2', profile: 'p_def',
+    transport: 'udp-peer', routingMode: 'single-profile',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
+  });
+  await new Promise((resolve) => conn._transport.once('listening', resolve));
+  await conn._transport.stop();
+  const sent = [];
+  conn._transport = {
+    descriptor: { type: 'fake' },
+    send: (buf, meta) => { sent.push({ buf, meta }); return Promise.resolve(); },
+    stop: () => Promise.resolve()
+  };
+  t.after(async () => RED.close(conn));
+
+  // A profile *name* (what inbound payloads and hand-authored flows carry)
+  // resolves to the real config node: framed from sysid 42, and the target
+  // defaults come from that profile (7), not the connection default's (1).
+  await conn.send({ name: 'HEARTBEAT', profile: 'Alt', fields: { type: 'MAV_TYPE_GCS' } });
+  assert.strictEqual(sent[sent.length - 1].buf[5], 42);
+  assert.strictEqual(sent[sent.length - 1].meta.targetSystem, 7);
+
+  // No profile: connection default identity and defaults.
+  await conn.send({ name: 'HEARTBEAT', fields: { type: 'MAV_TYPE_GCS' } });
+  assert.strictEqual(sent[sent.length - 1].buf[5], 255);
+  assert.strictEqual(sent[sent.length - 1].meta.targetSystem, 1);
+
+  // Unknown explicit profile: reject, never silently fall back to the default.
+  await assert.rejects(
+    conn.send({ name: 'HEARTBEAT', profile: 'no-such-profile', fields: { type: 'MAV_TYPE_GCS' } }),
+    (err) => err.code === 'PROFILE_UNRESOLVED'
+  );
+});

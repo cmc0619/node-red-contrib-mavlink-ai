@@ -446,3 +446,58 @@ test('raw MAV_CMD mode stays permissive with no params (#87)', async () => {
   assert.strictEqual(collected[0].topic, 'mavlink/send');
   assert.strictEqual(collected[0].payload.fields.param1, 0);
 });
+
+// --- Profile propagation (#81) ------------------------------------------------
+
+test('build-only payload carries the canonical profile config-node id', async () => {
+  const { RED, node } = setup({ command: 'arm' });
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected[0].topic, 'mavlink/send');
+  // The id (not the display name) resolves unambiguously on the sending
+  // connection, even with duplicate profile names.
+  assert.strictEqual(collected[0].payload.profile, 'p1');
+});
+
+test('await-ack workflow sends carry the node profile id', async () => {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-profile', {
+    id: 'p1',
+    name: 'Copter',
+    dialect: 'ardupilotmega',
+    defaultTargetSystem: 1,
+    defaultTargetComponent: 1
+  });
+  const sent = [];
+  RED.nodes.registerType('stub-connection', function StubConnection(config) {
+    RED.nodes.createNode(this, config);
+    this.name = 'conn';
+    let deliver = null;
+    this.subscribe = (filter, cb) => {
+      deliver = cb;
+      return 1;
+    };
+    this.unsubscribe = () => true;
+    this.send = (m) => {
+      sent.push(m);
+      queueMicrotask(() =>
+        deliver({
+          topic: 'mavlink/COMMAND_ACK',
+          payload: { name: 'COMMAND_ACK', sysid: 1, compid: 1, fields: { command: 400, result: 0 } }
+        })
+      );
+      return Promise.resolve();
+    };
+  });
+  RED.create('stub-connection', { id: 'conn1' });
+  const node = RED.create('mavlink-ai-command', {
+    id: 'c2',
+    profile: 'p1',
+    connection: 'conn1',
+    command: 'arm',
+    awaitAck: true
+  });
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected[0].topic, 'command/ack');
+  assert.strictEqual(sent[0].name, 'COMMAND_LONG');
+  assert.strictEqual(sent[0].profile, 'p1');
+});

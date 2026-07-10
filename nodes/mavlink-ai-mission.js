@@ -8,6 +8,7 @@ const { topicAction, normalizeUploadItems, validateMissionItems } = require('../
 const { toInt, toBool, firstDefined } = require('../lib/util/validation');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
+const { resolveWorkflowContext } = require('../lib/util/workflow-profile');
 
 /**
  * mavlink-ai-mission (DESIGN.md §13.6, §23, §24).
@@ -25,6 +26,10 @@ module.exports = function registerMavlinkAiMission(RED) {
 
     node.name = config.name;
     node.connection = RED.nodes.getNode(config.connection);
+    // Optional profile override. Kept as the raw config-node id (not resolved
+    // here) so a dangling reference fails the workflow loudly instead of
+    // silently running under the connection's default profile.
+    node.profileRef = config.profile || '';
     node.action = config.action || 'download';
     // 10s default (#58): legacy parity and safe for real radio/serial links.
     node.timeoutMs = toInt(config.timeoutMs, 10000);
@@ -68,11 +73,30 @@ module.exports = function registerMavlinkAiMission(RED) {
       // Aigen-style topic aliases (#56): `upload_mission` etc. select the action
       // without an explicit payload.action. Explicit action still wins.
       const action = msg.action || payload.action || topicAction(msg.topic) || node.action;
-      const profile = node.connection.profile;
-      const defaults = profile && profile.getDefaults ? profile.getDefaults() : {};
 
-      const targetSystem = firstDefined(payload.target_system, defaults.defaultTargetSystem, 1);
-      const targetComponent = firstDefined(payload.target_component, defaults.defaultTargetComponent, 1);
+      // Effective profile for the whole workflow: an explicit override (msg or
+      // node config) or the target's routed profile, not blindly the
+      // connection's default. It supplies dialect/enums, source identity,
+      // mission preferences, target defaults, and rides on every send.
+      let profile, defaults, targetSystem, targetComponent;
+      try {
+        ({ profile, defaults, targetSystem, targetComponent } = resolveWorkflowContext(node.connection, {
+          profile: firstDefined(payload.profile, node.profileRef || undefined),
+          targetSystem: payload.target_system,
+          targetComponent: payload.target_component
+        }));
+      } catch (err) {
+        const e = toMavlinkError(err, 'UNKNOWN_PROFILE');
+        node.status({ fill: 'red', shape: 'ring', text: e.code });
+        return finishError(node, send, done, errorPayload({
+          node: 'mavlink-ai-mission',
+          connection: node.connection.name,
+          code: e.code,
+          message: e.message,
+          context: e.context
+        }));
+      }
+
       const missionTypeName = payload.mission_type || defaults.defaultMissionType || 'mission';
       const bundle = profile && profile.getDialect ? profile.getDialect() : null;
       let missionTypeNum;
@@ -132,6 +156,9 @@ module.exports = function registerMavlinkAiMission(RED) {
 
       const opts = {
         connection: node.connection,
+        // Carried on every send so the connection encodes with the effective
+        // profile's dialect/identity/signing, not its default.
+        profile: profile ? profile.id : null,
         targetSystem,
         targetComponent,
         // Our own identity, so responses addressed to another GCS on the same
@@ -163,7 +190,7 @@ module.exports = function registerMavlinkAiMission(RED) {
             });
             result = await runTracked(new MissionClear(clearOpts));
           } else {
-            result = await clearMission(node.connection, targetSystem, targetComponent, missionTypeNum, missionTypeName);
+            result = await clearMission(node.connection, opts.profile, targetSystem, targetComponent, missionTypeNum, missionTypeName);
           }
         } else {
           throw Object.assign(new Error(`Unsupported mission action '${action}'.`), { code: 'UNSUPPORTED_ACTION' });
@@ -214,11 +241,15 @@ module.exports = function registerMavlinkAiMission(RED) {
  * message is sent rather than blocking on an ack, since some stacks do not ack
  * a clear of an already-empty mission.
  */
-async function clearMission(connection, targetSystem, targetComponent, missionTypeNum, missionTypeName) {
-  await connection.send({
+async function clearMission(connection, profile, targetSystem, targetComponent, missionTypeNum, missionTypeName) {
+  const message = {
     name: 'MISSION_CLEAR_ALL',
     fields: { target_system: targetSystem, target_component: targetComponent, mission_type: missionTypeNum }
-  });
+  };
+  if (profile != null) {
+    message.profile = profile;
+  }
+  await connection.send(message);
   return {
     topic: 'mission/cleared',
     payload: {

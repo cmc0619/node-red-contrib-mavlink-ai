@@ -486,6 +486,9 @@ module.exports = function registerMavlinkAiCommand(RED) {
         try {
           workflow = new CommandSend({
             connection: node.connection,
+            // Canonical config-node id: the connection must encode these sends
+            // with this node's profile, not its own default.
+            profile: node.profile.id,
             targetSystem,
             targetComponent,
             command: fields.command,

@@ -350,3 +350,25 @@ test('missing targets yields a structured NO_TARGETS error (#46)', async () => {
   assert.strictEqual(collected[0].topic, 'mavlink/error');
   assert.strictEqual(collected[0].payload.code, 'NO_TARGETS');
 });
+
+test('fan-out messages carry the canonical profile config-node id', async () => {
+  const { RED, node } = setup({ command: 'MAV_CMD_NAV_RETURN_TO_LAUNCH' });
+  const { collected } = await RED.inject(node, { payload: { sysids: [1, 2] } });
+  const batch = collected[0][0];
+  // The id (not the display name) resolves unambiguously on the sending
+  // connection, even with duplicate profile names.
+  assert.strictEqual(batch[0].payload.profile, 'p1');
+  assert.strictEqual(batch[1].payload.profile, 'p1');
+});
+
+test('await-acks workflow sends carry the node profile id (#81)', async () => {
+  const { RED, node, conn } = setup(
+    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', awaitAck: true, timeoutMs: 1000, maxRetries: 0 },
+    { 1: 0, 2: 0 }
+  );
+  await RED.inject(node, { payload: { sysids: [1, 2] } });
+  assert.strictEqual(conn.sent.length, 2);
+  for (const m of conn.sent) {
+    assert.strictEqual(m.profile, 'p1');
+  }
+});

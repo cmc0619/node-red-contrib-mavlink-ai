@@ -154,6 +154,9 @@ module.exports = function registerMavlinkAiFanout(RED) {
           try {
             const workflow = new CommandSend({
               connection: node.connection,
+              // The connection must encode these sends with this node's
+              // profile, not its own default.
+              profile: node.profile.id,
               targetSystem: sysid,
               targetComponent: m.target_component,
               command: m.fields.command,

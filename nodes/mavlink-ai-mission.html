@@ -5,6 +5,7 @@
     defaults: {
       name: { value: '' },
       connection: { value: '', type: 'mavlink-ai-connection', required: true },
+      profile: { value: '', type: 'mavlink-ai-profile', required: false },
       action: { value: 'download', required: true },
       timeoutMs: { value: 10000, validate: RED.validators.number() },
       maxRetries: { value: 3, validate: RED.validators.number() }
@@ -27,6 +28,10 @@
   <div class="form-row">
     <label for="node-input-connection">Connection</label>
     <input type="text" id="node-input-connection">
+  </div>
+  <div class="form-row">
+    <label for="node-input-profile">Profile</label>
+    <input type="text" id="node-input-profile">
   </div>
   <div class="form-row">
     <label for="node-input-action">Action</label>
@@ -58,8 +63,10 @@
     <li><b>Clear</b> — clear the mission of the selected type.</li>
   </ul>
   <p>The action is resolved in priority order: <code>msg.action</code>, <code>msg.payload.action</code>, an Aigen-style topic (<code>upload_mission</code> / <code>download_mission</code> / <code>clear_mission</code>), then the node config default.</p>
+  <h3>Profile</h3>
+  <p><b>Profile</b> (optional) pins the workflow to a specific profile: its dialect, source identity, signing, and target defaults are used, and every outbound message is encoded with it. Left empty, the target system/component is resolved through the connection's route table (the same resolution inbound packets get) and falls back to the connection's default profile. <code>msg.payload.profile</code> overrides per message. On routed connections with component-specific routes, set an explicit profile — target defaults can make route resolution ambiguous.</p>
   <h3>Inputs</h3>
-  <p><code>msg.payload</code> may set <code>target_system</code>, <code>target_component</code>, <code>mission_type</code> (mission/fence/rally/all), and for upload an <code>items</code> array.</p>
+  <p><code>msg.payload</code> may set <code>target_system</code>, <code>target_component</code>, <code>mission_type</code> (mission/fence/rally/all), <code>profile</code>, and for upload an <code>items</code> array.</p>
   <h3>Upload items</h3>
   <p><code>payload.waypoints</code> is accepted as a friendly alias for <code>payload.items</code>. A simple entry with just <code>lat</code>/<code>lon</code>/<code>alt</code> and no <code>command</code> defaults to <code>MAV_CMD_NAV_WAYPOINT</code>. Explicit <code>command</code>/params/raw <code>x</code>-<code>y</code>/frame still work and take precedence. The vehicle's request type controls the item wire message: a <code>MISSION_REQUEST_INT</code> is answered with <code>MISSION_ITEM_INT</code> (degE7), a plain <code>MISSION_REQUEST</code> with <code>MISSION_ITEM</code> (float degrees).</p>
   <h3>Clear</h3>
