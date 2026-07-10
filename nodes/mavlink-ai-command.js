@@ -530,7 +530,10 @@ module.exports = function registerMavlinkAiCommand(RED) {
               context: e.context
             });
             send(msg);
-            done(err);
+            // The structured error on the output is the one delivery of this
+            // failure (#89): done() — not done(err) — so a Catch node doesn't
+            // also fire for it.
+            done();
           });
         return;
       }

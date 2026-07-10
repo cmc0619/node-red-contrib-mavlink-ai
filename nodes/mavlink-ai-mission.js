@@ -189,7 +189,7 @@ module.exports = function registerMavlinkAiMission(RED) {
           code: e.code,
           message: e.message,
           context: e.context
-        }), err);
+        }));
       }
     });
 
@@ -235,14 +235,18 @@ async function clearMission(connection, targetSystem, targetComponent, missionTy
 /**
  * Emit an error on output 3 and finish the input handler.
  *
+ * Package rule (#89): a node with a dedicated error output delivers an
+ * operational failure exactly once — as a structured message on that output —
+ * and finishes with done(), so the same failure does not also fire Catch
+ * nodes. Nodes without outputs (e.g. mavlink-ai-out) use done(err) instead.
+ *
  * @param {object} node
  * @param {function} send
  * @param {function} done
  * @param {object} payload  error payload (§14.5)
- * @param {Error} [rawErr]  optional error to pass to done()
  * @returns {void}
  */
-function finishError(node, send, done, payload, rawErr) {
+function finishError(node, send, done, payload) {
   send([null, null, { topic: 'mavlink/error', payload }]);
-  done(rawErr);
+  done();
 }

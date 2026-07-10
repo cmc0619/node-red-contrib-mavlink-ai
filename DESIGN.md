@@ -899,6 +899,20 @@ The module needs stable message contracts. Do not let every node invent its own 
 }
 ```
 
+### 14.5.1 Error delivery rule
+
+A normal operational failure is delivered exactly once:
+
+- A node with a **dedicated error output** (Mission, Param) or whose single
+  output carries error envelopes (Command, Fanout, Build, Filter) sends the
+  structured `mavlink/error` message there and finishes with `done()`. The
+  wired error output is the delivery; the same failure must **not** also
+  trigger Catch nodes.
+- A node with **no outputs** (Out) finishes with `done(err)` so Catch nodes
+  can handle the failure — that is its only delivery path.
+- Programmer/internal exceptions (not operational failures) may still use
+  `node.error(...)`, but must not duplicate an already-delivered failure.
+
 ## 15. Dialect Handling
 
 Dialect handling belongs to the profile/protocol layer.
