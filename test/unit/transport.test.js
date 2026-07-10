@@ -36,12 +36,17 @@ test('udp-peer learns peer and round-trips bytes', async () => {
   const peer = dgram.createSocket('udp4');
   await new Promise((resolve) => peer.bind(0, '127.0.0.1', resolve));
 
+  // A MAVLink-shaped frame claiming sysid 5 (v2 magic; sysid at offset 5).
+  const frame = Buffer.from([0xfd, 1, 0, 0, 0, 5, 1, 0, 0, 0, 42]);
   const received = new Promise((resolve) => transport.on('data', (buf) => resolve(buf)));
-  peer.send(Buffer.from([1, 2, 3]), addr.port, '127.0.0.1');
+  peer.send(frame, addr.port, '127.0.0.1');
   const got = await received;
-  assert.deepStrictEqual([...got], [1, 2, 3]);
+  assert.deepStrictEqual([...got], [...frame]);
 
-  // After learning the peer, the transport can reply to it.
+  // Receipt alone is not trust (#85): the connection confirms the peer once
+  // the packet passes validation, and only then can the transport reply.
+  await assert.rejects(() => transport.send(Buffer.from([9, 9])), (err) => err.code === 'UDP_NO_PEER');
+  transport.confirmPeer(5);
   const replyReceived = new Promise((resolve) => peer.on('message', (buf) => resolve(buf)));
   await transport.send(Buffer.from([9, 9]));
   const reply = await replyReceived;
@@ -105,7 +110,7 @@ test('udp-peer routes sends to the addressed sysid endpoint (#21)', () => {
   assert.deepStrictEqual(transport._target({ targetSystem: 1 }), { address: '10.0.0.1', port: 14550 });
 });
 
-test('udp-peer message handler learns per-sysid peers from sniffed frames (#21)', async () => {
+test('udp-peer observes candidates but only confirmPeer commits mappings (#21, #85)', async () => {
   const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
   const addr = await new Promise((resolve) => {
     transport.on('listening', resolve);
@@ -125,12 +130,46 @@ test('udp-peer message handler learns per-sysid peers from sniffed frames (#21)'
   v2.send(Buffer.from([0xfe, 9, 0, 2, 1, 0]), addr.port, '127.0.0.1');
   await twoSeen;
 
+  // Receipt alone commits nothing (#85): no fallback peer, no sysid mapping.
+  assert.strictEqual(transport.learnedPeer, null);
+  assert.strictEqual(transport.peersBySysid.size, 0);
+  assert.strictEqual(transport._target(), null);
+
+  // The connection confirms after validation; only then do mappings appear.
+  transport.confirmPeer(1);
+  transport.confirmPeer(2);
   assert.strictEqual(transport.peersBySysid.get(1).port, v1.address().port);
   assert.strictEqual(transport.peersBySysid.get(2).port, v2.address().port);
+  assert.strictEqual(transport.learnedPeer.port, v2.address().port);
+
+  // Confirming a sysid never observed is a no-op.
+  transport.confirmPeer(99);
+  assert.strictEqual(transport.peersBySysid.has(99), false);
 
   await transport.stop();
   await new Promise((r) => v1.close(r));
   await new Promise((r) => v2.close(r));
+});
+
+test('non-MAVLink datagrams never become peer candidates (#85)', async () => {
+  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  const addr = await new Promise((resolve) => {
+    transport.on('listening', resolve);
+    transport.start();
+  });
+  const noise = dgram.createSocket('udp4');
+  await new Promise((r) => noise.bind(0, '127.0.0.1', r));
+  const seen = new Promise((resolve) => transport.on('data', resolve));
+  noise.send(Buffer.from('definitely not mavlink'), addr.port, '127.0.0.1');
+  await seen;
+
+  assert.strictEqual(transport._candidatesBySysid.size, 0);
+  transport.confirmPeer(1);
+  assert.strictEqual(transport.learnedPeer, null);
+  assert.strictEqual(transport.peersBySysid.size, 0);
+
+  await transport.stop();
+  await new Promise((r) => noise.close(r));
 });
 
 test('validateDestination accepts good targets and rejects bad ones (#77)', () => {

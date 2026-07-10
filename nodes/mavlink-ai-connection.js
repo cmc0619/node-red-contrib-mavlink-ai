@@ -622,6 +622,16 @@ module.exports = function registerMavlinkAiConnection(RED) {
         return;
       }
 
+      // Only now is the sender trusted enough to route replies to (#85): the
+      // frame passed CRC in the splitter, its identity passed routing, and it
+      // satisfied the matched profile's signature policy. Tell a udp-peer
+      // transport to commit the observed endpoint for this sysid — malformed,
+      // route-rejected, or signature-rejected traffic never reaches here, so
+      // it can never redirect outbound packets.
+      if (node._transport && typeof node._transport.confirmPeer === 'function') {
+        node._transport.confirmPeer(header.sysid);
+      }
+
       // 4. If the matched dialect has no definition for this message id, or
       //    decoding throws, emit a structured decode error with raw metadata
       //    instead of silently passing an undecodable packet.
