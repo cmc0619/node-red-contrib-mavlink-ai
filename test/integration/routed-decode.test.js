@@ -309,3 +309,42 @@ test('a route naming an unknown profile rejects its packets and reports loudly',
   assert.strictEqual(ghostLogs.length, 1);
   assert.strictEqual(dupLogs.length, 1);
 });
+
+/**
+ * A partial deploy can fix a broken route table (add the missing profile)
+ * without recreating the connection node. The re-validation on the next
+ * flows:started must then clear the stale route-table error status, restoring
+ * the status it replaced — not leave the node looking broken forever.
+ */
+test('fixing a broken route table on redeploy clears the stale error status', async (t) => {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-profile', {
+    id: 'p_def', name: 'Def', profileType: 'gcs', dialect: 'minimal', mavlinkVersion: 'v2',
+    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c_late', name: 'Late profile', profile: 'p_def',
+    transport: 'udp-peer', routingMode: 'routed', unmatchedPolicy: 'reject',
+    routeTable: JSON.stringify([{ sysid: 1, compid: '*', profile: 'p_late' }]),
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
+  });
+  await new Promise((resolve) => conn._transport.once('listening', resolve));
+  t.after(async () => RED.close(conn));
+  assert.strictEqual(conn.statusState, 'listening');
+
+  // Deploy with the route's profile missing: loud error status.
+  RED.events.emit('flows:started');
+  assert.strictEqual(conn.statusState, 'error');
+  assert.strictEqual(conn.errors.length, 1);
+
+  // "Partial redeploy" adds the missing profile; the connection instance
+  // persists and the next flows:started re-validates cleanly.
+  RED.create('mavlink-ai-profile', {
+    id: 'p_late', name: 'Late', profileType: 'gcs', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.events.emit('flows:started');
+  // The pre-error status (listening) is restored, and no new error is logged.
+  assert.strictEqual(conn.statusState, 'listening');
+  assert.strictEqual(conn.errors.length, 1);
+});

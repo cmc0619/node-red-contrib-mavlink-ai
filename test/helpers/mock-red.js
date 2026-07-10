@@ -21,8 +21,13 @@ class MockRED {
       createNode: (node, config) => this._createNode(node, config),
       registerType: (type, ctor) => this._types.set(type, ctor),
       getNode: (id) => this._nodes.get(id) || null,
-      // Real Node-RED iterates node *definitions*; iterating the created
-      // instances gives the same id/type/name surface the nodes rely on.
+      /**
+       * Iterate all registered nodes. Real Node-RED iterates node
+       * *definitions*; iterating the created instances gives the same
+       * id/type/name surface the nodes rely on.
+       *
+       * @param {function(object): void} cb  called with each node
+       */
       eachNode: (cb) => {
         for (const n of this._nodes.values()) {
           cb(n);

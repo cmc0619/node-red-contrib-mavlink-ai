@@ -20,6 +20,13 @@
       unmatchedPolicy: { value: 'default' },
       routeTable: {
         value: '',
+        /**
+         * Structural check: empty, or a JSON array whose entries each name a
+         * profile. Reference resolution is validated by the runtime at deploy.
+         *
+         * @param {string} v  the stored route table JSON
+         * @returns {boolean}
+         */
         validate: function (v) {
           if (!v) {
             return true;
@@ -39,6 +46,14 @@
     label: function () {
       return this.name || 'MAVLink AI Connection';
     },
+    /**
+     * Build the route-table editor: an editable list of sysid/compid inputs
+     * plus a profile picker (a dropdown of profile config nodes, stored by
+     * id), and wire routed-only/single-profile-only row visibility to the
+     * routing mode.
+     *
+     * @returns {void}
+     */
     oneditprepare: function () {
       // Profile config nodes available as route targets. Routes store the
       // config-node id (canonical); the picker shows the display name.
@@ -75,6 +90,14 @@
           .append('<span style="display:inline-block;width:70px">SysID</span>')
           .append('<span style="display:inline-block;width:70px">CompID</span>')
           .append('<span>Profile</span>'),
+        /**
+         * Render one route row (sysid, compid, profile picker) into the list.
+         *
+         * @param {jQuery} container  the row container provided by editableList
+         * @param {number} index  row index
+         * @param {object} data  the route entry ({ sysid, compid, profile })
+         * @returns {void}
+         */
         addItem: function (container, index, data) {
           const row = $(container);
           row.css({ display: 'flex', 'align-items': 'center', gap: '6px' });
@@ -125,6 +148,12 @@
         })
         .trigger('change');
     },
+    /**
+     * Serialize the route list back into the routeTable JSON string. Blank
+     * sysid/compid mean wildcard; rows without a profile are dropped.
+     *
+     * @returns {void}
+     */
     oneditsave: function () {
       const routes = [];
       $('#node-config-route-list')

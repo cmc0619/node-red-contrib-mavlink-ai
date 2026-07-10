@@ -298,6 +298,11 @@ module.exports = function registerMavlinkAiConnection(RED) {
       return;
     }
 
+    const ROUTE_ERROR_DETAIL = 'Route table has unresolved profiles';
+    // The status the route-validation error replaced, so a later validation
+    // pass can restore it instead of guessing at the transport state.
+    let statusBeforeRouteError = null;
+
     /**
      * Validate that every route-table profile reference resolves to a valid
      * profile with a buildable codec, and report every problem loudly. Runs
@@ -306,6 +311,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * Packets matching a broken route are rejected per-packet regardless;
      * this just surfaces the misconfiguration at deploy time instead of
      * waiting for traffic.
+     *
+     * Re-runs on every deploy: when a partial deploy fixes the routes without
+     * recreating this connection node, a clean pass clears the stale error
+     * status (restoring whatever status the error replaced) — but only if the
+     * current status is still ours, so a transport-driven status set in the
+     * meantime is left alone.
      *
      * @returns {void}
      */
@@ -319,12 +330,19 @@ module.exports = function registerMavlinkAiConnection(RED) {
         }
       }
       if (problems.length) {
-        setStatus('error', 'Route table has unresolved profiles');
+        if (node.statusDetail !== ROUTE_ERROR_DETAIL) {
+          statusBeforeRouteError = { state: node.statusState, detail: node.statusDetail };
+        }
+        setStatus('error', ROUTE_ERROR_DETAIL);
         node.error(
           `mavlink-ai-connection '${node.name || node.id}': ROUTE_TABLE_INVALID: ` +
             `${problems.length} route(s) reference a profile that cannot be used; ` +
             `matching packets will be rejected, not decoded with the default profile. ${problems.join('; ')}`
         );
+      } else if (node.statusState === 'error' && node.statusDetail === ROUTE_ERROR_DETAIL) {
+        const previous = statusBeforeRouteError || { state: 'idle', detail: '' };
+        statusBeforeRouteError = null;
+        setStatus(previous.state, previous.detail);
       }
     }
 
