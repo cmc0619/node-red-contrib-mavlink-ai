@@ -22,6 +22,19 @@
     label: function () {
       return this.name || 'mavlink ai in';
     },
+    outputLabels: function (index) {
+      // Output layout mirrors the runtime: decoded always first, then raw
+      // (when enabled), then errors (when enabled) — optional outputs keep
+      // their relative order, so the errors port index depends on outputRaw.
+      const labels = ['decoded'];
+      if (this.outputRaw) {
+        labels.push('raw');
+      }
+      if (this.outputErrors) {
+        labels.push('errors');
+      }
+      return labels[index];
+    },
     oneditprepare: function () {
       function syncOutputs() {
         const n = 1 + ($('#node-input-outputRaw').is(':checked') ? 1 : 0) + ($('#node-input-outputErrors').is(':checked') ? 1 : 0);
@@ -29,6 +42,7 @@
       }
       $('#node-input-outputRaw').on('change', syncOutputs);
       $('#node-input-outputErrors').on('change', syncOutputs);
+      syncOutputs();
     },
     oneditsave: function () {
       const n = 1 + ($('#node-input-outputRaw').is(':checked') ? 1 : 0) + ($('#node-input-outputErrors').is(':checked') ? 1 : 0);
@@ -88,10 +102,12 @@
 <script type="text/html" data-help-name="mavlink-ai-in">
   <p>Receives decoded MAVLink messages from a shared <b>MAVLink AI Connection</b>. The connection decodes packets once and distributes them to matching subscribers.</p>
   <h3>Outputs</h3>
-  <ol class="node-ports">
-    <li>Decoded messages (<code>mavlink/&lt;NAME&gt;</code>).</li>
-    <li>Raw packet buffers (only when <b>Raw output</b> is enabled).</li>
-    <li>Connection diagnostics (only when <b>Errors output</b> is enabled): <code>mavlink/error</code> for packets the matched dialect could not decode (with raw hex), and <code>mavlink/rejected</code> for packets dropped by routing/accept filters.</li>
-  </ol>
+  <p>The node only shows the outputs you enable, in this fixed order (disabled outputs are skipped, so the port numbers shift):</p>
+  <ul>
+    <li><b>decoded</b> — always the first output. Decoded messages (<code>mavlink/&lt;NAME&gt;</code>).</li>
+    <li><b>raw</b> — present only when <b>Raw output</b> is enabled; always directly after <i>decoded</i>. Raw packet buffers.</li>
+    <li><b>errors</b> — present only when <b>Errors output</b> is enabled; always the last output (output 2 when raw is disabled, output 3 when raw is enabled). Connection diagnostics: <code>mavlink/error</code> for packets the matched dialect could not decode (with raw hex), and <code>mavlink/rejected</code> for packets dropped by routing/accept filters.</li>
+  </ul>
+  <p>So the possible layouts are: <code>decoded</code> · <code>decoded, raw</code> · <code>decoded, errors</code> · <code>decoded, raw, errors</code>. Hover a port in the editor to see its label.</p>
   <p>Use the filters to subscribe to specific messages, systems, components, or a routed profile, and rate-limit high-rate telemetry.</p>
 </script>
