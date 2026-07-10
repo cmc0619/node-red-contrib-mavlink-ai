@@ -406,13 +406,36 @@ module.exports = function registerMavlinkAiConnection(RED) {
         return Promise.reject(new MavlinkError('BAD_OUTBOUND', 'Outbound message must be an object.'));
       }
       const defaults = node.profile.getDefaults();
-      const fields = message.fields && typeof message.fields === 'object' ? message.fields : {};
-      const targetSystem = firstDefined(message.target_system, fields.target_system, defaults.defaultTargetSystem);
-      const targetComponent = firstDefined(
-        message.target_component,
-        fields.target_component,
-        defaults.defaultTargetComponent
-      );
+      const fields = message.fields && typeof message.fields === 'object' ? { ...message.fields } : {};
+      // Normalize targets once, before encoding and transport routing (#84).
+      // A message can carry target ids top-level and inside fields; the two
+      // used to be resolved independently (top-level for the udp-peer routing
+      // metadata, field-level preserved by the codec), so a conflicting pair
+      // sent the packet to one endpoint while the payload addressed another.
+      // One location wins when only one is set, defaults fill when neither is,
+      // equal values (numeric string == number) are fine, and a disagreement
+      // rejects the send instead of picking silently.
+      let targetSystem;
+      let targetComponent;
+      try {
+        targetSystem = resolveTargetId('target_system', message.target_system, fields.target_system, defaults.defaultTargetSystem);
+        targetComponent = resolveTargetId(
+          'target_component',
+          message.target_component,
+          fields.target_component,
+          defaults.defaultTargetComponent
+        );
+      } catch (err) {
+        return Promise.reject(toMavlinkError(err, 'TARGET_CONFLICT'));
+      }
+      // Stamp the resolved numeric values back into the fields so the encoded
+      // payload and the transport routing metadata below cannot diverge.
+      if (targetSystem !== undefined && fields.target_system !== undefined) {
+        fields.target_system = targetSystem;
+      }
+      if (targetComponent !== undefined && fields.target_component !== undefined) {
+        fields.target_component = targetComponent;
+      }
       // Encode with the codec of the profile referenced on the message
       // (routed / custom-dialect sends carry the builder's profile config-node
       // id), so the right dialect, source identity, version and signing are
@@ -795,6 +818,52 @@ module.exports = function registerMavlinkAiConnection(RED) {
 };
 
 // --- helpers ----------------------------------------------------------------
+
+/**
+ * Resolve one outbound target id from its two possible locations (#84):
+ * top-level `message.target_system` / `message.target_component` and the
+ * field-level copy inside `message.fields`. Numeric strings and numbers that
+ * represent the same id are equal; a real disagreement throws so the packet
+ * can never be routed to one system while addressing another. When neither
+ * location is set the profile default applies.
+ *
+ * @param {string} name  'target_system' | 'target_component' (for the error)
+ * @param {*} topLevel   message-level value
+ * @param {*} fieldLevel value inside message.fields
+ * @param {*} fallback   profile default
+ * @returns {number|undefined} the resolved numeric id
+ * @throws {MavlinkError} TARGET_CONFLICT | BAD_TARGET
+ */
+function resolveTargetId(name, topLevel, fieldLevel, fallback) {
+  /** Coerce a supplied value to a number, rejecting non-numeric input. */
+  const coerce = (value, where) => {
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      throw new MavlinkError('BAD_TARGET', `${name} (${where}) must be numeric (got ${JSON.stringify(value)}).`, {
+        field: name,
+        value
+      });
+    }
+    return n;
+  };
+  const top = coerce(topLevel, 'top-level');
+  const field = coerce(fieldLevel, 'fields');
+  if (top !== undefined && field !== undefined && top !== field) {
+    throw new MavlinkError(
+      'TARGET_CONFLICT',
+      `Conflicting ${name}: top-level ${top} != fields.${name} ${field}. Set one location, or make them agree.`,
+      { field: name, top_level: top, field_level: field }
+    );
+  }
+  const chosen = top !== undefined ? top : field;
+  if (chosen !== undefined) {
+    return chosen;
+  }
+  return coerce(fallback, 'profile default');
+}
 
 /**
  * Build a human-readable status detail describing what the transport bound to
