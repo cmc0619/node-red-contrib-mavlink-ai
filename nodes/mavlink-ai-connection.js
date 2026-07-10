@@ -133,7 +133,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
     if (!node.profile.isValid()) {
       const err = node.profile.getError();
-      fatal('DIALECT_INVALID', `Profile dialect invalid: ${err && err.message}`);
+      fatal((err && err.code) || 'PROFILE_INVALID', `Profile invalid: ${err && err.message}`);
       registerNoop(node);
       return;
     }

@@ -1,4 +1,19 @@
 <script type="text/javascript">
+  // MAVLink identity ids are uint8s on the wire (#90): accept only integers in
+  // [min, 255]. Blank is allowed (the runtime applies the documented default).
+  function mavUint8Validator(min) {
+    return function (v) {
+      if (v === undefined || v === null || v === '') {
+        return true;
+      }
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < min || n > 255) {
+        return 'must be an integer between ' + min + ' and 255';
+      }
+      return true;
+    };
+  }
+
   RED.nodes.registerType('mavlink-ai-profile', {
     category: 'config',
     defaults: {
@@ -20,10 +35,13 @@
         }
       },
       mavlinkVersion: { value: 'auto', required: true },
-      sourceSystemId: { value: 255, required: true, validate: RED.validators.number() },
-      sourceComponentId: { value: 190, required: true, validate: RED.validators.number() },
-      defaultTargetSystem: { value: 1, required: true, validate: RED.validators.number() },
-      defaultTargetComponent: { value: 1, required: true, validate: RED.validators.number() },
+      // MAVLink identity fields are wire uint8s (#90): require integers in
+      // range, not just "a number". Source sysid 0 (unknown/broadcast) is not
+      // a valid sender id, so its minimum is 1.
+      sourceSystemId: { value: 255, required: true, validate: mavUint8Validator(1) },
+      sourceComponentId: { value: 190, required: true, validate: mavUint8Validator(0) },
+      defaultTargetSystem: { value: 1, required: true, validate: mavUint8Validator(0) },
+      defaultTargetComponent: { value: 1, required: true, validate: mavUint8Validator(0) },
       preferredMissionItemType: { value: 'MISSION_ITEM_INT', required: true },
       defaultMissionType: { value: 'mission', required: true },
       heartbeatType: { value: '' },
@@ -33,7 +51,7 @@
       signOutbound: { value: false },
       verifyInbound: { value: false },
       requireSignature: { value: false },
-      signingLinkId: { value: 0, validate: RED.validators.number() }
+      signingLinkId: { value: 0, validate: mavUint8Validator(0) }
     },
     credentials: {
       signingPassphrase: { type: 'password' }
@@ -382,7 +400,7 @@
   <h3>MAVLink 2 signing</h3>
   <p>Minimal support built on the protocol library's signing primitives. A shared <b>passphrase</b> is the signing key (SHA-256 derived, the same as Mission Planner / QGroundControl); it is stored as an encrypted credential, never in exported flows.</p>
   <ul>
-    <li><b>Sign outbound</b> — append a valid signature to every encoded packet. This forces MAVLink 2 framing (signed frames are v2-only), even if the version is set to auto/v1.</li>
+    <li><b>Sign outbound</b> — append a valid signature to every encoded packet. This forces MAVLink 2 framing (signed frames are v2-only), even if the version is set to auto/v1. A <b>passphrase is required</b>: enabling this without one is invalid configuration — the profile's connections refuse to start rather than silently sending unsigned packets.</li>
     <li><b>Verify inbound</b> — check the signature on received signed packets; a bad signature is rejected (surfaced on the In node's errors output as <code>mavlink/rejected</code> with reason <code>signature-invalid</code>).</li>
     <li><b>Require signature</b> — with verify on, also reject <em>unsigned</em> inbound packets (reason <code>signature-required</code>).</li>
     <li><b>Link ID</b> — the link id (0–255) written into outbound signatures.</li>
