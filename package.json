@@ -22,7 +22,7 @@
     "node": ">=22"
   },
   "peerDependencies": {
-    "node-red": ">=4.0.0"
+    "node-red": ">=4.0.0 <6.0.0"
   },
   "dependencies": {
     "mavlink-mappings": "^1.0.21-20250824-1",
@@ -37,7 +37,8 @@
     "test": "npm run test:smoke && npm run test:unit && npm run test:integration",
     "test:smoke": "node test/smoke-load.js",
     "test:unit": "node --test test/unit/*.test.js",
-    "test:integration": "node --test test/integration/*.test.js"
+    "test:integration": "node --test test/integration/*.test.js",
+    "test:node-red": "node test/node-red-load.js"
   },
   "node-red": {
     "nodes": {

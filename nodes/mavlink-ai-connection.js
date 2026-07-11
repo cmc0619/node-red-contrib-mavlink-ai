@@ -3,6 +3,7 @@
 const { EventEmitter } = require('events');
 const { MavlinkCodec } = require('../lib/protocol/mavlink-codec');
 const { createTransport } = require('../lib/transport');
+const { validateConnectionConfig } = require('../lib/transport/transport-fields');
 const { PacketRouter } = require('../lib/routing/packet-router');
 const { SubscriptionRegistry } = require('../lib/runtime/subscription-registry');
 const { OutboundQueue } = require('../lib/runtime/outbound-queue');
@@ -145,6 +146,28 @@ module.exports = function registerMavlinkAiConnection(RED) {
       node._codecByProfile.set(node.profile.id, node._codec);
     } catch (err) {
       fatal('CODEC_INIT_FAILED', err.message);
+      registerNoop(node);
+      return;
+    }
+
+    // Reject an impossible transport/settings combination loudly at deploy
+    // (issue #103): e.g. udp-out or tcp-client with no remote endpoint, or
+    // serial with no device path. The editor validates the same rules before
+    // deploy, but a flow imported as JSON (or authored before those validators
+    // existed) can still carry a blank required field — surface it here instead
+    // of only failing later on the first send with a runtime code like
+    // UDP_NO_PEER.
+    const transportProblems = validateConnectionConfig({
+      transport: node.transportType,
+      bindAddress: config.bindAddress,
+      bindPort: config.bindPort,
+      remoteHost: node.remoteHost,
+      remotePort: config.remotePort,
+      serialPath: node.serialPath,
+      serialBaud: config.serialBaud
+    });
+    if (transportProblems.length) {
+      fatal('TRANSPORT_CONFIG_INVALID', transportProblems.map((p) => p.message).join(' '));
       registerNoop(node);
       return;
     }

@@ -44,6 +44,32 @@ npm install node-red-contrib-mavlink-ai
 `serialport` is an **optional** dependency. UDP and TCP work without it; it is
 only loaded when a serial transport is actually used.
 
+## Compatibility
+
+Supported runtime matrix:
+
+| Component | Supported |
+|-----------|-----------|
+| Node.js   | 22.x (LTS floor) and 24.x (current) |
+| Node-RED  | 4.x and 5.x |
+
+- **Node.js 22+** is the floor. The runtime uses global `fetch` (Node 18+) and
+  the optional `serialport@13` dependency requires Node 20+; 22 is chosen as the
+  active LTS. This is enforced by `engines.node` (`>=22`).
+- **Node-RED 4.x and 5.x** are supported and CI loads the nodes into a real
+  Node-RED runtime for each. This is enforced by `peerDependencies.node-red`
+  (`>=4.0.0 <6.0.0`).
+- **Node-RED 3.x and earlier are not supported.** The peer dependency excludes
+  them; while the generic Node-RED APIs the nodes use may happen to work on
+  older releases, that is unverified and intentionally not claimed.
+- **Serial support** needs the optional `serialport` dependency and Node.js 20+.
+  On an older runtime the serial transport fails with a clear
+  `SERIALPORT_UNSUPPORTED_RUNTIME` error (and `SERIALPORT_MISSING` when the
+  dependency isn't installed) rather than an opaque native binding failure.
+
+CI runs the full test suite and a Node-RED runtime load check across every
+Node.js × Node-RED combination in the table above.
+
 ## Core idea
 
 ```text
