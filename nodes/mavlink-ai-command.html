@@ -192,8 +192,11 @@
       // choices without wiping unsaved edits to other params (#97).
       let resolverControls = [];
       // Editor-only context for component-addressed params (not persisted as a
-      // command field): which component type the raw command targets.
-      let rawComponentType = 'autopilot';
+      // command field): which component type the raw command targets. Defaults
+      // to gimbal/mount — the only component-addressed command today is
+      // DO_MOUNT_CONTROL — so its mode choices resolve out of the box; the user
+      // can switch to camera/autopilot to refresh the choice list (#97).
+      let rawComponentType = 'gimbal';
 
       let savedParams = {};
       try {
@@ -572,12 +575,14 @@
             query.componentType = rawComponentType;
           }
           const rid = ++requestId;
-          const saved = $sink.val();
           $.getJSON('mavlink-ai/param-choices', query)
             .done(function (data) {
               if (rid !== requestId || !$sel.closest('body').length) {
                 return;
               }
+              // Read the sink fresh: a value the user changed while the request
+              // was in flight must win over the value captured at reload time.
+              const saved = $sink.val();
               const choices = (data && data.choices) || [];
               $sel.empty();
               $('<option></option>').val('').text('(0 / unset)').appendTo($sel);
@@ -603,6 +608,7 @@
               if (rid !== requestId) {
                 return;
               }
+              const saved = $sink.val();
               $sel.empty();
               $('<option></option>').val('').text('(unavailable — enter numeric)').appendTo($sel);
               $('<option></option>').val('__custom__').text('Custom value…').appendTo($sel);

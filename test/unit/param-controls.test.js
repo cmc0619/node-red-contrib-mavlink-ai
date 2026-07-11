@@ -103,6 +103,18 @@ test('component-mode resolver returns different choices per target component', (
   );
 });
 
+test('component-mode returns empty choices for a component with no mode enum', () => {
+  const md = buildMetadata('ardupilotmega');
+  // A plain autopilot (or any unmapped component type) has no mount/camera mode
+  // enum, so the resolver yields no choices and the editor falls back to a safe
+  // numeric input rather than mislabelling values.
+  const autopilot = resolveParamChoices('component-mode', { componentType: 'autopilot', enums: md.enums });
+  assert.strictEqual(autopilot.enum, null);
+  assert.deepStrictEqual(autopilot.choices, []);
+  const unknown = resolveParamChoices('component-mode', { componentType: 'widget', enums: md.enums });
+  assert.deepStrictEqual(unknown.choices, []);
+});
+
 test('unknown resolver falls back to an empty generic result', () => {
   const r = resolveParamChoices('nope', {});
   assert.strictEqual(r.unknownResolver, true);
