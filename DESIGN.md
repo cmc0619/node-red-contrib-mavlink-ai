@@ -1502,7 +1502,9 @@ Do not keep everything in root-level node files forever. That is how v1 becomes 
 
 ### 27.1 JSDoc and Code Documentation
 
-JSDoc is a project-wide coding requirement and should be used wherever it adds useful type, contract, lifecycle, or behavioral information. This is part of the code-quality standard and is expected for CodeRabbit review compliance.
+JSDoc is the default format for code documentation throughout the project and is part of the code-quality standard expected for CodeRabbit review compliance. As a general rule, if a comment is worth writing about a declaration or reusable behavior, write it as JSDoc (`/** ... */`), not as an ordinary block comment or a stack of `//` lines.
+
+Ordinary `//` comments are reserved for short, strictly local implementation notes inside a function, unavoidable compatibility/workaround explanations, and tooling directives such as ESLint or coverage controls. They must not be used as a substitute for JSDoc on functions, classes, methods, modules, typedefs, fields, or other declarations.
 
 At minimum, add JSDoc to:
 
