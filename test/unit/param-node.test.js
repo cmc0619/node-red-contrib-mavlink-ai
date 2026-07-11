@@ -154,13 +154,13 @@ test('param node explicit profile rides on sends and supplies target defaults', 
   assert.strictEqual(result.payload.param_value, 1100);
 });
 
-test('param node rejects an unresolvable msg profile with UNKNOWN_PROFILE', async () => {
+test('param node rejects an unresolvable msg profile with PROFILE_UNRESOLVED', async () => {
   const { conn, node } = setup({ action: 'read', paramId: 'RC1_MIN' });
   conn.resolveProfile = (ref) => ({ name: ref });
   const outputs = await run(node, { payload: { profile: 'missing' } });
   const error = outputs[0][2];
   assert.strictEqual(error.topic, 'mavlink/error');
-  assert.strictEqual(error.payload.code, 'UNKNOWN_PROFILE');
+  assert.strictEqual(error.payload.code, 'PROFILE_UNRESOLVED');
   assert.strictEqual(conn.sent.length, 0);
 });
 

@@ -121,12 +121,12 @@ test('mission node explicit profile drives defaults, lock key, and sends', async
   assert.match(conn.lockNames[0], /:p2:/);
 });
 
-test('mission node rejects an unresolvable profile with UNKNOWN_PROFILE', async () => {
+test('mission node rejects an unresolvable profile with PROFILE_UNRESOLVED', async () => {
   const { RED, conn, node } = setupWithSends({});
   const { collected } = await RED.inject(node, { payload: { action: 'clear', profile: 'missing' } });
   const err = collected[0][2];
   assert.strictEqual(err.topic, 'mavlink/error');
-  assert.strictEqual(err.payload.code, 'UNKNOWN_PROFILE');
+  assert.strictEqual(err.payload.code, 'PROFILE_UNRESOLVED');
   assert.strictEqual(conn.sent.length, 0);
 });
 

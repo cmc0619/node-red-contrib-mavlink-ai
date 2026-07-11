@@ -67,7 +67,7 @@ module.exports = function registerMavlinkAiParam(RED) {
           targetComponent: payload.target_component
         }));
       } catch (err) {
-        const e = toMavlinkError(err, 'UNKNOWN_PROFILE');
+        const e = toMavlinkError(err, 'PROFILE_UNRESOLVED');
         node.status({ fill: 'red', shape: 'ring', text: e.code });
         return finishError(node, send, done, errorPayload({
           node: 'mavlink-ai-param',

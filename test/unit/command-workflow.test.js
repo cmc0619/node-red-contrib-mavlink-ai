@@ -94,6 +94,49 @@ test('CommandSend ignores acks for other commands and other systems (#16)', asyn
   await p;
 });
 
+test('CommandSend ignores an ack addressed to another GCS on a shared link (#99)', async () => {
+  const conn = new FakeConnection();
+  // Two GCSs (source system 255 = us, 254 = the other) send the same command to
+  // the same vehicle; the vehicle's ack carries target_system/target_component
+  // naming the GCS it answers.
+  const wf = new CommandSend(opts(conn, {
+    sourceSystem: 255,
+    sourceComponent: 190,
+    timeoutMs: 1000,
+    maxRetries: 0
+  }));
+  const p = wf.run();
+  await delay(0);
+  // Right command/system/component but addressed to the other GCS: must not settle.
+  conn.deliverAck({ command: 400, result: 0, target_system: 254, target_component: 190 });
+  assert.strictEqual(wf.state, 'waiting_ack');
+  // A different target_component (another component acting as GCS) is also ignored.
+  conn.deliverAck({ command: 400, result: 0, target_system: 255, target_component: 191 });
+  assert.strictEqual(wf.state, 'waiting_ack');
+  // Addressed to our identity: settles.
+  conn.deliverAck({ command: 400, result: 0, target_system: 255, target_component: 190 });
+  const res = await p;
+  assert.strictEqual(res.payload.result, 0);
+});
+
+test('CommandSend accepts broadcast or absent ack target fields for older variants (#99)', async () => {
+  const conn = new FakeConnection();
+  const wf = new CommandSend(opts(conn, { sourceSystem: 255, sourceComponent: 190 }));
+  const p = wf.run();
+  await delay(0);
+  // Broadcast target (0) and absent target fields both remain permissive.
+  conn.deliverAck({ command: 400, result: 0, target_system: 0, target_component: 0 });
+  const res = await p;
+  assert.strictEqual(res.payload.result, 0);
+
+  const conn2 = new FakeConnection();
+  const wf2 = new CommandSend(opts(conn2, { sourceSystem: 255, sourceComponent: 190 }));
+  const p2 = wf2.run();
+  await delay(0);
+  conn2.deliverAck({ command: 400, result: 0 }); // no target fields (older MAVLink)
+  assert.strictEqual((await p2).payload.result, 0);
+});
+
 test('CommandSend retransmits with incrementing confirmation, then times out (#16)', async () => {
   const conn = new FakeConnection();
   const wf = new CommandSend(opts(conn, { timeoutMs: 15, maxRetries: 2 }));

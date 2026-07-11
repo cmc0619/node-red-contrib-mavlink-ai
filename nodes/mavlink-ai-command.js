@@ -491,6 +491,10 @@ module.exports = function registerMavlinkAiCommand(RED) {
             profile: node.profile.id,
             targetSystem,
             targetComponent,
+            // Our own identity, so an ACK addressed to another GCS sharing this
+            // link doesn't settle the workflow (#99).
+            sourceSystem: defaults.sourceSystemId,
+            sourceComponent: defaults.sourceComponentId,
             command: fields.command,
             fields,
             useInt,
