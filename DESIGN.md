@@ -744,6 +744,35 @@ mavlink-ai-command direct-sends through selected connection
 
 But direct-send should not be the only path. Building messages and sending messages are separate concerns.
 
+#### Metadata-driven raw `MAV_CMD_*` controls (issue #97)
+
+Friendly presets stay the preferred path, but raw `MAV_CMD_*` mode also renders
+the best control each parameter's metadata supports rather than a bare numeric
+input:
+
+- ordinary enum param → dropdown from the dialect enum table
+- bitmask enum param → flag checklist (the combined OR value is persisted)
+- boolean param → checkbox (identified from the MAVLink `MAV_BOOL` convention)
+- min/max/increment metadata → constrained numeric input
+- firmware/vehicle/component/dialect-specific param → profile-aware dropdown
+
+Generic constraints (`min`/`max`/`increment`) are recovered from the generated
+`.d.ts` JSDoc alongside the existing name/description/units. Enum, bitmask,
+boolean, and resolver associations — which neither the `.d.ts` nor the bundled
+XML can express — come from a small, reusable registry (`lib/command/param-metadata.js`);
+custom dialects can add hints via `registerParamControl` without a hand-written
+preset per command.
+
+Context-specific parameters defer to named resolvers (`lib/command/param-resolvers.js`):
+`profile-flight-mode` maps a mode name to the firmware/vehicle-specific wire
+value (`GUIDED` is 4 on ArduCopter, 15 on ArduPlane), and `component-mode`
+selects the right enum for the target component type (camera vs gimbal/mount).
+The editor fetches choices from `GET /mavlink-ai/param-choices` and refreshes
+them when the profile or target component changes. Every enum/profile-aware
+control keeps a **Custom value…** numeric escape hatch, preserves unknown
+imported values, and falls back to a plain numeric input when no trustworthy
+mapping exists — so existing raw-command flows stay compatible.
+
 ### 13.6 `mavlink-ai-mission`
 
 Mission protocol workflow node.
