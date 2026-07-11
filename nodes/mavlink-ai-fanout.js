@@ -159,6 +159,10 @@ module.exports = function registerMavlinkAiFanout(RED) {
               profile: node.profile.id,
               targetSystem: sysid,
               targetComponent: m.target_component,
+              // Our own identity, so an ACK addressed to another GCS sharing
+              // this link doesn't settle the workflow (#99).
+              sourceSystem: defaults.sourceSystemId,
+              sourceComponent: defaults.sourceComponentId,
               command: m.fields.command,
               fields: m.fields,
               useInt,

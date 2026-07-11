@@ -170,6 +170,12 @@ Decoded messages and outbound messages use stable shapes (see `DESIGN.md`
 Enum names such as `MAV_CMD_COMPONENT_ARM_DISARM` or `MAV_TYPE_GCS` are resolved
 to numbers automatically when building messages.
 
+64-bit integer fields (`int64_t` / `uint64_t`, e.g. `time_usec`) are decoded as
+**decimal strings** so the payload is JSON-serializable and keeps full precision
+(a `Number` would lose it above 2^53). When building an outbound message these
+fields accept a decimal string, a safe integer, or a `BigInt`. See `DESIGN.md`
+§14.1.
+
 Profile references are canonical **by config-node id**. Outbound
 `payload.profile` (set by the build/command/fan-out nodes) carries the profile
 config-node id the connection resolves a codec by; `profile_name` is the

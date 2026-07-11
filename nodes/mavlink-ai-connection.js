@@ -202,20 +202,16 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * @param {string|object} [profileRef]  message.profile (config-node id,
      *   legacy unique name, or profile object)
      * @returns {object} a valid profile config node
-     * @throws {MavlinkError} PROFILE_UNRESOLVED | PROFILE_AMBIGUOUS | UNKNOWN_PROFILE | PROFILE_INVALID
+     * @throws {MavlinkError} PROFILE_UNRESOLVED | PROFILE_AMBIGUOUS | PROFILE_INVALID
      */
     function resolveOutboundProfile(profileRef) {
       if (profileRef === undefined || profileRef === null || profileRef === '') {
         return node.profile;
       }
+      // resolveProfile() is strict: it returns a real profile config node or
+      // throws PROFILE_UNRESOLVED / PROFILE_AMBIGUOUS. The only remaining check
+      // here is whether that resolved profile's dialect actually loaded.
       const profile = node.resolveProfile(profileRef);
-      if (!profile || typeof profile.getDialect !== 'function' || typeof profile.isValid !== 'function') {
-        throw new MavlinkError(
-          'UNKNOWN_PROFILE',
-          `Outbound message names profile '${typeof profileRef === 'object' ? profileRef.name : profileRef}' but no such profile config node exists.`,
-          { profile: typeof profileRef === 'object' ? profileRef.name : profileRef }
-        );
-      }
       if (!profile.isValid()) {
         const err = profile.getError && profile.getError();
         throw new MavlinkError(

@@ -106,7 +106,7 @@ test('a bare custom basename still resolves to a bundled dialect', () => {
 test('omitted string/array/64-bit fields zero-fill like generated classes', () => {
   const bundle = loadDialect('custom', { customDialectPath: fixture('custom_hard_types.xml') });
   const decoded = roundTrip(bundle, 'HARD_TYPES', {});
-  assert.strictEqual(decoded.fields.big, 0n);
+  assert.strictEqual(decoded.fields.big, '0'); // 64-bit fields decode as decimal strings (§14.1)
   assert.strictEqual(decoded.fields.label, '');
   assert.deepStrictEqual(decoded.fields.arr, [0, 0, 0, 0]);
   assert.strictEqual(decoded.fields.small, 0);
@@ -114,22 +114,47 @@ test('omitted string/array/64-bit fields zero-fill like generated classes', () =
 
 test('a plain Number is coerced to BigInt for uint64 fields (custom and bundled)', () => {
   // Flow payloads come from JSON, which has no BigInt; a Number must not throw.
+  // The decoded value comes back as the JSON-safe decimal string (§14.1).
   const custom = loadDialect('custom', { customDialectPath: fixture('custom_hard_types.xml') });
   const c = roundTrip(custom, 'HARD_TYPES', { big: 12345, label: 'hi', arr: [1, 2], small: 9 });
-  assert.strictEqual(c.fields.big, 12345n);
+  assert.strictEqual(c.fields.big, '12345');
   assert.deepStrictEqual(c.fields.arr, [1, 2, 0, 0]); // short array pads
 
   const bundled = loadDialect('common');
   const b = roundTrip(bundled, 'SYSTEM_TIME', { time_unix_usec: 777, time_boot_ms: 1 });
-  assert.strictEqual(b.fields.time_unix_usec, 777n);
+  assert.strictEqual(b.fields.time_unix_usec, '777');
 });
 
 test('a numeric string for a uint64 field converts losslessly (no Number round-trip)', () => {
   // uint64 max is not representable as a JS Number: a lossy Number() conversion
-  // would round it up to 2^64 and crash serialization out of range.
+  // would round it up to 2^64 and crash serialization out of range. It survives
+  // the full round-trip and decodes back to the same decimal string (§14.1).
   const bundle = loadDialect('custom', { customDialectPath: fixture('custom_hard_types.xml') });
   const decoded = roundTrip(bundle, 'HARD_TYPES', { big: '18446744073709551615' });
-  assert.strictEqual(decoded.fields.big, 18446744073709551615n);
+  assert.strictEqual(decoded.fields.big, '18446744073709551615');
+});
+
+test('decoded 64-bit fields are JSON-safe decimal strings at min/max range (#92)', () => {
+  const bundle = loadDialect('custom', { customDialectPath: fixture('custom_hard_types.xml') });
+
+  // Unsigned 64-bit: 0 and uint64 max (2^64 - 1).
+  const uMax = roundTrip(bundle, 'HARD_TYPES', { big: '18446744073709551615', sbig: 0 });
+  assert.strictEqual(uMax.fields.big, '18446744073709551615');
+  assert.strictEqual(typeof uMax.fields.big, 'string');
+
+  // Signed 64-bit: int64 min (-2^63) and max (2^63 - 1) both preserved exactly.
+  const sMin = roundTrip(bundle, 'HARD_TYPES', { big: 0, sbig: '-9223372036854775808' });
+  assert.strictEqual(sMin.fields.sbig, '-9223372036854775808');
+  const sMax = roundTrip(bundle, 'HARD_TYPES', { big: 0, sbig: '9223372036854775807' });
+  assert.strictEqual(sMax.fields.sbig, '9223372036854775807');
+
+  // The whole decoded payload must survive JSON.stringify without throwing, and
+  // the 64-bit fields must round-trip through JSON unchanged.
+  let json;
+  assert.doesNotThrow(() => {
+    json = JSON.stringify(uMax);
+  });
+  assert.strictEqual(JSON.parse(json).fields.big, '18446744073709551615');
 });
 
 test('messages in a second <messages> section are not dropped', () => {

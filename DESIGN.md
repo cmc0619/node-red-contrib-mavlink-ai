@@ -836,6 +836,17 @@ The module needs stable message contracts. Do not let every node invent its own 
 }
 ```
 
+**64-bit integer fields.** MAVLink `int64_t` / `uint64_t` fields (e.g.
+`time_usec`) carry more range than a JavaScript `Number` can hold without loss
+and decode natively as `BigInt`, which is not JSON-serializable. In the public
+decoded payload they are represented as **decimal strings** — e.g.
+`time_usec: "1782849600000123"`. This preserves the full signed/unsigned 64-bit
+range, lets the payload pass through `JSON.stringify()` (MQTT, HTTP, file,
+database, Debug JSON views, context persistence) unchanged, and feeds back
+losslessly into an outbound message: the builder accepts decimal strings, safe
+integers, or `BigInt` for these fields. 64-bit values are never routed through
+`Number`, where precision above 2^53 would be silently lost.
+
 ### 14.2 Outbound MAVLink Message
 
 ```js

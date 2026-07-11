@@ -14,6 +14,7 @@
     <message id="9600" name="HARD_TYPES">
       <description>64-bit, string, and array fields.</description>
       <field type="uint64_t" name="big">A 64-bit value.</field>
+      <field type="int64_t" name="sbig">A signed 64-bit value.</field>
       <field type="char[10]" name="label">A string.</field>
       <field type="uint16_t[4]" name="arr">An array.</field>
       <field type="uint8_t" name="small">A small value.</field>
