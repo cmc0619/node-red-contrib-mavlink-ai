@@ -234,6 +234,27 @@
       $('#node-config-input-signOutbound').on('change', toggleSigningRows);
       $('#node-config-input-verifyInbound').on('change', toggleSigningRows);
       toggleSigningRows();
+
+      // Suggested Source CompID per profile role (issue #106). A companion
+      // computer normally identifies as MAV_COMP_ID_ONBOARD_COMPUTER (191);
+      // every other role keeps 190. When the user switches roles we only
+      // migrate the CompID if it is blank or still equals the previous role's
+      // suggested value — an explicitly customized CompID is never rewritten.
+      const GENERIC_SOURCE_COMPID = 190;
+      const SOURCE_COMPID_BY_PROFILE = { 'companion-computer': 191 };
+      function suggestedCompid(type) {
+        return SOURCE_COMPID_BY_PROFILE[type] || GENERIC_SOURCE_COMPID;
+      }
+      const $profileType = $('#node-config-input-profileType');
+      const $compid = $('#node-config-input-sourceComponentId');
+      let prevProfileType = $profileType.val();
+      $profileType.on('change', function () {
+        const cur = String($compid.val()).trim();
+        if (cur === '' || Number(cur) === suggestedCompid(prevProfileType)) {
+          $compid.val(suggestedCompid($profileType.val()));
+        }
+        prevProfileType = $profileType.val();
+      });
     },
     oneditsave: function () {
       // Re-derive the persisted dialect at save time so it is always correct
@@ -259,6 +280,7 @@
     <select id="node-config-input-profileType">
       <option value="gcs">GCS</option>
       <option value="generic">Generic</option>
+      <option value="companion-computer">Companion Computer / Onboard Controller</option>
       <option value="copter">Copter</option>
       <option value="plane">Plane</option>
       <option value="rover">Rover</option>
@@ -392,6 +414,15 @@
 
 <script type="text/html" data-help-name="mavlink-ai-profile">
   <p>Shared MAVLink vehicle/protocol profile. This owns dialect, MAVLink identity defaults, and vehicle-type defaults. It does not own a transport.</p>
+  <h3>Profile role</h3>
+  <p>The profile role sets this node's own MAVLink identity (its default heartbeat <code>MAV_TYPE</code>). This is independent of the target flight controller's vehicle type, firmware, and dialect — the same profile works with any of them.</p>
+  <ul>
+    <li><b>GCS</b> — ground control station (<code>MAV_TYPE_GCS</code>).</li>
+    <li><b>Companion Computer / Onboard Controller</b> — an onboard companion (e.g. a Raspberry Pi) riding on the vehicle. Its default heartbeat type is <code>MAV_TYPE_ONBOARD_CONTROLLER</code> and its suggested <b>Source CompID</b> is <code>191</code> (<code>MAV_COMP_ID_ONBOARD_COMPUTER</code>). A companion normally uses the <b>same Source SysID as its vehicle</b> (commonly <code>1</code>) while keeping its own distinct CompID, so it appears as a component of that vehicle rather than a separate system. Use it with copters, planes, rovers, boats, or subs on ArduPilot, PX4, or a custom stack — it does not imply a target vehicle type. The suggested CompID is only pre-filled when the field is blank; an explicitly set CompID is never overwritten.</li>
+    <li><b>Copter / Plane / Rover / Boat / Sub / Antenna Tracker</b> — the node identifies as that vehicle type.</li>
+    <li><b>Generic</b> — <code>MAV_TYPE_GENERIC</code> with no role-specific defaults.</li>
+  </ul>
+  <p>The <b>Target SysID/CompID</b> (commonly <code>1</code>/<code>1</code> for the autopilot) are the vehicle you send to, and stay independent of the role above.</p>
   <h3>Dialect source</h3>
   <ul>
     <li><b>Bundled</b> — pick from the dialects the loader can serve (discovered dynamically, not hard-coded).</li>

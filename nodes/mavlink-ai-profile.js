@@ -15,16 +15,30 @@ const { registerEditorApi } = require('../lib/editor-api');
  * sockets, timers, or peer state — that is the connection's job.
  */
 
-// Map profile vehicle type to a sensible default heartbeat MAV_TYPE.
+// Map profile role/vehicle type to a sensible default heartbeat MAV_TYPE.
+// A profile's local MAVLink identity is independent of the target flight
+// controller's vehicle type: 'companion-computer' identifies this component
+// as an onboard controller (issue #106) regardless of the vehicle it talks to.
 const HEARTBEAT_TYPE_BY_PROFILE = {
   gcs: 'MAV_TYPE_GCS',
   generic: 'MAV_TYPE_GENERIC',
+  'companion-computer': 'MAV_TYPE_ONBOARD_CONTROLLER',
   copter: 'MAV_TYPE_QUADROTOR',
   plane: 'MAV_TYPE_FIXED_WING',
   rover: 'MAV_TYPE_GROUND_ROVER',
   boat: 'MAV_TYPE_SURFACE_BOAT',
   sub: 'MAV_TYPE_SUBMARINE',
   'antenna-tracker': 'MAV_TYPE_ANTENNA_TRACKER'
+};
+
+// Suggested default source component id per profile role, applied only when the
+// user leaves Source CompID blank (issue #106). A companion computer normally
+// announces itself as MAV_COMP_ID_ONBOARD_COMPUTER (191); every other role
+// keeps the historical default of 190. An explicitly configured value is never
+// rewritten — identityUint8 only consults this fallback for a blank field.
+const DEFAULT_SOURCE_COMPONENT_ID = 190;
+const SOURCE_COMPONENT_ID_BY_PROFILE = {
+  'companion-computer': 191 // MAV_COMP_ID_ONBOARD_COMPUTER
 };
 
 module.exports = function registerMavlinkAiProfile(RED) {
@@ -73,7 +87,11 @@ module.exports = function registerMavlinkAiProfile(RED) {
     }
     // Source sysid 0 means "unknown/broadcast" and is not a valid sender id.
     node.sourceSystemId = identityUint8(config.sourceSystemId, 'Source system ID', 255, 1);
-    node.sourceComponentId = identityUint8(config.sourceComponentId, 'Source component ID', 190, 0);
+    // The blank-field default follows the profile role (companion computer → 191),
+    // but only when nothing is configured; an explicit value passes through as-is.
+    const defaultSourceComponentId =
+      SOURCE_COMPONENT_ID_BY_PROFILE[node.profileType] || DEFAULT_SOURCE_COMPONENT_ID;
+    node.sourceComponentId = identityUint8(config.sourceComponentId, 'Source component ID', defaultSourceComponentId, 0);
     node.defaultTargetSystem = identityUint8(config.defaultTargetSystem, 'Default target system', 1, 0);
     node.defaultTargetComponent = identityUint8(config.defaultTargetComponent, 'Default target component', 1, 0);
     node.preferredMissionItemType = config.preferredMissionItemType || 'MISSION_ITEM_INT';

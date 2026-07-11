@@ -218,7 +218,7 @@ Suggested fields:
 
 ```text
 Name
-Profile type: generic | gcs | copter | plane | rover | boat | sub | antenna-tracker
+Profile type: generic | gcs | companion-computer | copter | plane | rover | boat | sub | antenna-tracker
 Dialect: ardupilotmega | common | minimal | custom
 Custom dialect path
 MAVLink version: auto | v1 | v2
@@ -289,6 +289,18 @@ Plane Profile
 ```
 
 The dialect defines the message dictionary. The profile defines how this Node-RED runtime should behave when dealing with a specific MAVLink system or role.
+
+A profile's role is its own MAVLink identity, not the target's vehicle type. A `companion-computer` profile (a Raspberry Pi or other onboard controller) announces itself as `MAV_TYPE_ONBOARD_CONTROLLER` with `MAV_AUTOPILOT_INVALID`, and suggests source component id `191` (`MAV_COMP_ID_ONBOARD_COMPUTER`) while leaving the source system id user-configurable — an onboard companion normally shares its vehicle's system id but keeps its own component id. This role is independent of firmware, dialect, and the target vehicle type, so the same preset works with copters, planes, rovers, boats, and subs on ArduPilot, PX4, or a custom stack.
+
+```text
+Companion Computer Profile
+- profile type: companion-computer
+- heartbeat type: MAV_TYPE_ONBOARD_CONTROLLER
+- heartbeat autopilot: MAV_AUTOPILOT_INVALID
+- source component id: 191 (MAV_COMP_ID_ONBOARD_COMPUTER), user-overridable
+- source system id: vehicle SysID (commonly 1), user-configurable
+- default target system/component: vehicle autopilot (commonly 1 / 1)
+```
 
 ## 8. Connection Config Node
 
