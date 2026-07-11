@@ -55,6 +55,36 @@ test('blank identity values take the documented defaults (#90)', () => {
   assert.strictEqual(profile.defaultTargetComponent, 1);
 });
 
+test('companion-computer defaults Source CompID to 191 when blank (#106)', () => {
+  const profile = makeProfile({ profileType: 'companion-computer' });
+  assert.strictEqual(profile.isValid(), true);
+  // 191 = MAV_COMP_ID_ONBOARD_COMPUTER.
+  assert.strictEqual(profile.sourceComponentId, 191);
+  // The source SysID stays at the shared default (a companion normally uses the
+  // vehicle's SysID, which the user configures — the role doesn't force it).
+  assert.strictEqual(profile.sourceSystemId, 255);
+});
+
+test('an explicit Source CompID is not rewritten for companion-computer (#106)', () => {
+  const profile = makeProfile({ profileType: 'companion-computer', sourceComponentId: 42 });
+  assert.strictEqual(profile.isValid(), true);
+  assert.strictEqual(profile.sourceComponentId, 42);
+});
+
+test('non-companion profiles keep the historical Source CompID default of 190 (#106)', () => {
+  for (const profileType of ['gcs', 'generic', 'copter', 'plane']) {
+    const profile = makeProfile({ profileType });
+    assert.strictEqual(profile.sourceComponentId, 190, `${profileType} should default CompID to 190`);
+  }
+});
+
+test('companion-computer target defaults stay independent of the role (#106)', () => {
+  const profile = makeProfile({ profileType: 'companion-computer' });
+  // Target defaults are the vehicle/autopilot, not the companion's own identity.
+  assert.strictEqual(profile.defaultTargetSystem, 1);
+  assert.strictEqual(profile.defaultTargetComponent, 1);
+});
+
 test('out-of-range and non-integer identity values invalidate the profile (#90)', () => {
   const bad = [
     { sourceSystemId: 0 }, // 0 = unknown/broadcast, not a valid sender id
