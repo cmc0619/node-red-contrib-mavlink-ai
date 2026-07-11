@@ -1500,6 +1500,37 @@ examples/
 
 Do not keep everything in root-level node files forever. That is how v1 becomes soup.
 
+### 27.1 JSDoc and Code Documentation
+
+JSDoc is a project-wide coding requirement and should be used wherever it adds useful type, contract, lifecycle, or behavioral information. This is part of the code-quality standard and is expected for CodeRabbit review compliance.
+
+At minimum, add JSDoc to:
+
+```text
+- Exported functions, classes, constructors, methods, constants, and modules.
+- Public and cross-module internal APIs, including the connection and profile APIs.
+- Node-RED registration functions and non-obvious event handlers/callbacks.
+- Functions with parameters, return values, thrown errors, callbacks, Promises, or important side effects.
+- Complex internal helpers, state-machine transitions, transport/protocol boundaries, and lifecycle cleanup.
+- Reused object shapes via @typedef, especially normalized messages, profiles, routes, subscriptions, status/error envelopes, and workflow state.
+```
+
+Use the applicable tags rather than prose alone:
+
+```text
+@param
+@returns / @return
+@throws
+@typedef
+@property
+@callback
+@template
+@async
+@deprecated
+```
+
+Documentation must describe the contract and the reason for surprising behavior, not merely restate the code. Keep JSDoc synchronized with implementation changes. Do not add empty boilerplate to trivial private one-liners solely to increase comment count; useful coverage and correctness matter more than decorative comments.
+
 ## 28. Testing Plan
 
 Unit tests:
