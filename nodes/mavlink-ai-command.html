@@ -183,9 +183,17 @@
       const $params = $('#mav-cmd-params');
       const $preset = $('#mav-preset-params');
       const $cmdDesc = $('#mav-cmd-desc');
-      let commands = {}; // MAV_CMD_NAME -> { description, params:[{index,name,description,units}] }
+      let commands = {}; // MAV_CMD_NAME -> { description, params:[{index,name,description,units,enum,bitmask,boolean,control,resolver,profileAware,componentAware,min,max,increment}] }
       let mavCmdByName = {}; // MAV_CMD_NAME -> { value, description } (enum table)
+      let enumsByName = {}; // ENUM_PREFIX -> [{ name, value, description }] (dialect enum tables, #97)
       let messageList = []; // [{name, id}] for the message pickers
+      // Reload closures for the profile/component-aware controls currently
+      // rendered, so a profile or target-component change refreshes their
+      // choices without wiping unsaved edits to other params (#97).
+      let resolverControls = [];
+      // Editor-only context for component-addressed params (not persisted as a
+      // command field): which component type the raw command targets.
+      let rawComponentType = 'autopilot';
 
       let savedParams = {};
       try {
@@ -341,20 +349,290 @@
         });
       }
 
-      // ---- raw MAV_CMD param rows (#45) -----------------------------------
+      // ---- raw MAV_CMD param rows (#45, metadata-driven controls #97) ------
 
-      function paramRow(key, labelText, tipText) {
-        const $row = $('<div class="form-row" style="margin-bottom:4px;"></div>');
-        $('<label></label>').css({ width: '140px' }).text(labelText).attr('title', tipText || '').appendTo($row);
-        $('<input type="number" step="any">')
-          .attr('id', 'mav-cmd-' + key)
+      // Strip an enum's screaming-snake prefix for a compact option label
+      // (SPEED_TYPE_AIRSPEED -> AIRSPEED); keep the full name if it doesn't fit.
+      function enumShort(name, prefix) {
+        return prefix && name.indexOf(prefix + '_') === 0 ? name.slice(prefix.length + 1) : name;
+      }
+
+      function paramLabelText(p) {
+        return p.name + (p.units ? ' (' + p.units + ')' : '');
+      }
+
+      function paramTipText(p) {
+        const parts = ['param' + p.index];
+        if (p.units) {
+          parts.push('Units: ' + p.units);
+        }
+        if (p.description) {
+          parts.push(p.description);
+        }
+        return parts.join(' | ');
+      }
+
+      // Small coloured badge showing whether a control's choices are generic
+      // MAVLink metadata or firmware/profile/component-specific (#97 UX).
+      function scopeBadge(text, generic) {
+        return $('<span></span>')
+          .text(text)
+          .css({
+            'margin-left': '6px',
+            'font-size': '11px',
+            padding: '0 5px',
+            'border-radius': '3px',
+            'vertical-align': 'middle',
+            color: generic ? '#555' : '#8a4b00',
+            background: generic ? '#eee' : '#ffe6b3'
+          });
+      }
+
+      // Every param control writes its numeric wire value into a hidden input
+      // carrying data-param=paramN, so _collectParams stays uniform regardless
+      // of which control rendered and unknown imported values survive (#97).
+      function makeSink(key, saved) {
+        return $('<input type="hidden">')
           .attr('data-param', key)
-          .attr('placeholder', 'float')
+          .val(saved !== undefined && saved !== null ? String(saved) : '');
+      }
+
+      function startRow(p) {
+        const $row = $('<div class="form-row" style="margin-bottom:4px;"></div>');
+        $('<label></label>').css({ width: '140px' }).text(paramLabelText(p)).attr('title', paramTipText(p)).appendTo($row);
+        return $row;
+      }
+
+      // Plain / constrained numeric input (min/max/increment when supplied).
+      function numericControl(p, $row, $sink) {
+        const $num = $('<input type="number" step="any">')
           .css({ width: '55%' })
-          .val(savedParams[key] !== undefined ? savedParams[key] : '')
-          .appendTo($row);
-        if (tipText) {
-          tipsBox(tipText).appendTo($row);
+          .attr('placeholder', 'float')
+          .val($sink.val());
+        if (p.min !== undefined && p.min !== null) {
+          $num.attr('min', p.min);
+        }
+        if (p.max !== undefined && p.max !== null) {
+          $num.attr('max', p.max);
+        }
+        if (p.increment !== undefined && p.increment !== null) {
+          $num.attr('step', p.increment);
+        }
+        $num.on('input change', function () {
+          $sink.val($num.val());
+        });
+        $num.appendTo($row);
+      }
+
+      // Boolean -> checkbox (wire value 0/1).
+      function booleanControl(p, $row, $sink) {
+        const on = Number($sink.val()) === 1;
+        const $cb = $('<input type="checkbox">').css({ width: 'auto', 'vertical-align': 'middle' }).prop('checked', on);
+        $cb.on('change', function () {
+          $sink.val($cb.is(':checked') ? '1' : '0');
+        });
+        $cb.appendTo($row);
+        scopeBadge('MAVLink', true).appendTo($row);
+      }
+
+      // Ordinary enum -> dropdown, with an explicit "Custom value…" numeric
+      // escape hatch. Persists the numeric wire value; shows the readable name.
+      function enumControl(p, $row, $sink) {
+        const members = enumsByName[p.enum] || [];
+        const $sel = $('<select></select>').css({ width: '55%' });
+        const $custom = $('<input type="number" step="any">')
+          .css({ width: '55%', 'margin-top': '3px', display: 'none' })
+          .attr('placeholder', 'custom numeric value');
+        $('<option></option>').val('').text('(0 / unset)').appendTo($sel);
+        members.forEach(function (m) {
+          $('<option></option>').val(String(m.value)).text(enumShort(m.name, p.enum) + ' (' + m.value + ')').appendTo($sel);
+        });
+        $('<option></option>').val('__custom__').text('Custom value…').appendTo($sel);
+        function sync() {
+          if ($sel.val() === '__custom__') {
+            $custom.show();
+            $sink.val($custom.val());
+          } else {
+            $custom.hide();
+            $sink.val($sel.val());
+          }
+        }
+        $sel.on('change', sync);
+        $custom.on('input change', function () {
+          $sink.val($custom.val());
+        });
+        // Preselect: match a known enum value, else fall back to Custom with the
+        // stored number preserved (unknown/new values are never discarded).
+        const saved = $sink.val();
+        if (saved !== '' && !members.some(function (m) { return String(m.value) === saved; })) {
+          $sel.val('__custom__');
+          $custom.val(saved).show();
+        } else {
+          $sel.val(saved);
+        }
+        $sel.appendTo($row);
+        scopeBadge('MAVLink ' + p.enum, true).appendTo($row);
+        $custom.appendTo($row);
+      }
+
+      // Bitmask enum -> a checklist of single-bit flags plus an "other bits"
+      // numeric for values the flag list can't express; the combined OR is the
+      // persisted wire value (#97).
+      function bitmaskControl(p, $row, $sink) {
+        const members = (enumsByName[p.bitmask] || []).filter(function (m) {
+          return m.value > 0 && (m.value & (m.value - 1)) === 0; // single-bit flags only
+        });
+        const knownBits = members.reduce(function (acc, m) { return acc | m.value; }, 0);
+        const saved = Number($sink.val()) || 0;
+        const $box = $('<div style="width:55%; display:inline-block; vertical-align:top;"></div>');
+        const $checks = [];
+        function recompute() {
+          let value = 0;
+          $checks.forEach(function (c) {
+            if (c.$el.is(':checked')) {
+              value |= c.bit;
+            }
+          });
+          const extra = parseInt($other.val(), 10);
+          if (Number.isFinite(extra)) {
+            value |= extra;
+          }
+          $sink.val(value ? String(value >>> 0) : '');
+        }
+        members.forEach(function (m) {
+          const $line = $('<div style="margin:1px 0;"></div>');
+          const $cb = $('<input type="checkbox">')
+            .css({ width: 'auto', 'vertical-align': 'middle', 'margin-right': '4px' })
+            .prop('checked', (saved & m.value) !== 0);
+          $cb.on('change', recompute);
+          $checks.push({ $el: $cb, bit: m.value });
+          $cb.appendTo($line);
+          $('<span></span>').text(enumShort(m.name, p.bitmask) + ' (' + m.value + ')').appendTo($line);
+          $line.appendTo($box);
+        });
+        const $otherLine = $('<div style="margin-top:2px;"></div>');
+        $('<span style="color:#888; margin-right:4px;">Other bits:</span>').appendTo($otherLine);
+        const $other = $('<input type="number" step="1" min="0">')
+          .css({ width: '40%' })
+          .attr('placeholder', '0')
+          .val(saved & ~knownBits ? String(saved & ~knownBits) : '');
+        $other.on('input change', recompute);
+        $other.appendTo($otherLine);
+        $otherLine.appendTo($box);
+        $box.appendTo($row);
+        scopeBadge('MAVLink ' + p.bitmask, true).appendTo($row);
+      }
+
+      // Profile/target-context-aware dropdown (#97): populated asynchronously
+      // from /mavlink-ai/param-choices for the current profile/component, with a
+      // "Custom value…" numeric fallback for unsupported/new firmware values.
+      function resolverControl(p, $row, $sink) {
+        const $sel = $('<select></select>').css({ width: '55%' });
+        const $custom = $('<input type="number" step="any">')
+          .css({ width: '55%', 'margin-top': '3px', display: 'none' })
+          .attr('placeholder', 'custom numeric value');
+        const $badge = scopeBadge('resolving…', false);
+        $sel.append($('<option></option>').val('').text('Loading…'));
+        $sel.appendTo($row);
+        $badge.appendTo($row);
+        $custom.appendTo($row);
+
+        function applyCustom(val) {
+          $sel.val('__custom__');
+          $custom.val(val).show();
+          $sink.val(val);
+        }
+        function sync() {
+          if ($sel.val() === '__custom__') {
+            $custom.show();
+            $sink.val($custom.val());
+          } else {
+            $custom.hide();
+            $sink.val($sel.val());
+          }
+        }
+        $sel.on('change', sync);
+        $custom.on('input change', function () {
+          $sink.val($custom.val());
+        });
+
+        let requestId = 0;
+        function reload() {
+          const prof = RED.nodes.node($('#node-input-profile').val());
+          const query = {
+            resolver: p.resolver,
+            firmware: (prof && prof.firmware) || 'generic',
+            vehicleType: (prof && prof.profileType) || '',
+            dialect: currentDialect().dialect
+          };
+          if (currentDialect().customDialectPath) {
+            query.customDialectPath = currentDialect().customDialectPath;
+          }
+          if (p.componentAware) {
+            query.componentType = rawComponentType;
+          }
+          const rid = ++requestId;
+          const saved = $sink.val();
+          $.getJSON('mavlink-ai/param-choices', query)
+            .done(function (data) {
+              if (rid !== requestId || !$sel.closest('body').length) {
+                return;
+              }
+              const choices = (data && data.choices) || [];
+              $sel.empty();
+              $('<option></option>').val('').text('(0 / unset)').appendTo($sel);
+              choices.forEach(function (c) {
+                $('<option></option>').val(String(c.value)).text(c.name + ' (' + c.value + ')').appendTo($sel);
+              });
+              $('<option></option>').val('__custom__').text('Custom value…').appendTo($sel);
+              if (!choices.length) {
+                // No trustworthy mapping for this context: numeric entry only.
+                $badge.replaceWith(scopeBadge('numeric (no mapping)', false));
+              } else {
+                $badge.text(data.generic ? 'MAVLink' : (data.scope === 'component' ? 'component-specific' : 'firmware-specific'));
+                $badge.css({ color: data.generic ? '#555' : '#8a4b00', background: data.generic ? '#eee' : '#ffe6b3' });
+              }
+              if (saved !== '' && !choices.some(function (c) { return String(c.value) === saved; })) {
+                applyCustom(saved);
+              } else {
+                $sel.val(saved);
+                sync();
+              }
+            })
+            .fail(function () {
+              if (rid !== requestId) {
+                return;
+              }
+              $sel.empty();
+              $('<option></option>').val('').text('(unavailable — enter numeric)').appendTo($sel);
+              $('<option></option>').val('__custom__').text('Custom value…').appendTo($sel);
+              if (saved !== '') {
+                applyCustom(saved);
+              }
+            });
+        }
+        reload();
+        resolverControls.push({ reload: reload, componentAware: !!p.componentAware });
+      }
+
+      function renderParamField(p) {
+        const key = 'param' + p.index;
+        const $row = startRow(p);
+        const $sink = makeSink(key, savedParams[key]);
+        $sink.appendTo($row);
+        if (p.bitmask && (enumsByName[p.bitmask] || []).length) {
+          bitmaskControl(p, $row, $sink);
+        } else if (p.resolver) {
+          resolverControl(p, $row, $sink);
+        } else if (p.enum && (enumsByName[p.enum] || []).length) {
+          enumControl(p, $row, $sink);
+        } else if (p.boolean) {
+          booleanControl(p, $row, $sink);
+        } else {
+          numericControl(p, $row, $sink);
+        }
+        if (p.description) {
+          tipsBox(paramTipText(p)).appendTo($row);
         }
         return $row;
       }
@@ -373,8 +651,35 @@
         }
       }
 
+      // A target-component selector, shown only when a rendered param is
+      // component-addressed; changing it refreshes those controls' choices.
+      function renderComponentContext(params) {
+        if (!params.some(function (p) { return p.componentAware; })) {
+          return;
+        }
+        const $row = $('<div class="form-row" style="margin-bottom:4px;"></div>');
+        $('<label></label>').css({ width: '140px' }).text('Target component').appendTo($row);
+        const $sel = $('<select></select>').css({ width: '55%' });
+        [['autopilot', 'Autopilot'], ['camera', 'Camera'], ['gimbal', 'Gimbal / Mount']].forEach(function (o) {
+          $('<option></option>').val(o[0]).text(o[1]).appendTo($sel);
+        });
+        $sel.val(rawComponentType);
+        $sel.on('change', function () {
+          rawComponentType = $sel.val();
+          resolverControls.forEach(function (c) {
+            if (c.componentAware) {
+              c.reload();
+            }
+          });
+        });
+        $sel.appendTo($row);
+        tipsBox('Editor context only — which component this raw command targets. Set msg.payload.target_component at runtime.').appendTo($row);
+        $row.appendTo($params);
+      }
+
       function renderParams() {
         $params.empty();
+        resolverControls = [];
         const selected = $command.val();
         renderCommandDescription(selected);
         renderPresetForm(selected);
@@ -384,16 +689,9 @@
         const def = commands[selected];
         if (def && def.params && def.params.length) {
           $('<div style="color:#888;margin:4px 0;">Parameters (leave blank for 0):</div>').appendTo($params);
+          renderComponentContext(def.params);
           def.params.forEach(function (p) {
-            const label = p.name + (p.units ? ' (' + p.units + ')' : '');
-            const tipParts = ['param' + p.index];
-            if (p.units) {
-              tipParts.push('Units: ' + p.units);
-            }
-            if (p.description) {
-              tipParts.push(p.description);
-            }
-            paramRow('param' + p.index, label, tipParts.join(' | ')).appendTo($params);
+            renderParamField(p).appendTo($params);
           });
         } else {
           // Only fall back to raw param1..7 when the dialect metadata genuinely
@@ -406,7 +704,7 @@
             .text(reason + ' — using raw param1–7 (leave blank for 0):')
             .appendTo($params);
           for (let i = 1; i <= 7; i += 1) {
-            paramRow('param' + i, 'param' + i, '').appendTo($params);
+            renderParamField({ index: i, name: 'param' + i }).appendTo($params);
           }
         }
       }
@@ -454,6 +752,7 @@
               return; // a newer request superseded this response
             }
             commands = (data && data.commands) || {};
+            enumsByName = (data && data.enums) || {};
             messageList = [];
             const messages = (data && data.messages) || {};
             Object.keys(messages).sort().forEach(function (name) {
@@ -466,6 +765,7 @@
               return;
             }
             commands = {};
+            enumsByName = {};
             messageList = [];
             buildOptions([]); // presets only if metadata unavailable
           });
@@ -579,7 +879,7 @@
 <script type="text/html" data-help-name="mavlink-ai-command">
   <p>Builds a MAVLink <code>COMMAND_LONG</code> (or <code>COMMAND_INT</code>) as a normalized outbound message for a downstream <b>MAVLink AI Out</b> node — or, with <b>Await ack</b> enabled, sends it on the selected connection and runs the full command protocol: retransmit on timeout (incrementing <code>confirmation</code> for <code>COMMAND_LONG</code>; <code>COMMAND_INT</code> has no confirmation field and is resent unchanged), then output the <code>COMMAND_ACK</code> result (<code>command/ack</code> with <code>result</code>/<code>result_name</code>, or a <code>mavlink/error</code> on rejection/timeout). <code>MAV_RESULT_IN_PROGRESS</code> keeps the wait alive and shows progress on the status badge. Failures are delivered once, as a <code>mavlink/error</code> message on the output — they do not also trigger <b>Catch</b> nodes.</p>
   <p><b>Presets</b> are grouped by workflow: <i>Basic Flight</i> (arm, disarm, set mode, takeoff, land, RTL), <i>Guided / Autonomy</i> (go to/reposition, change speed, condition yaw, spin/rotate), <i>Mission</i> (start, pause, resume — pause/resume use <code>MAV_CMD_DO_PAUSE_CONTINUE</code> and need firmware support; the ACK tells you), <i>Camera</i> (take photo, start/stop video — cameras are often separate components, so set <code>msg.payload.target_component</code> when needed), and <i>Telemetry / System</i>. Each preset shows friendly fields (mode dropdown, altitude, rate Hz, ...); <code>msg.payload</code> values override the static editor values at runtime. Presets keep their safety-critical params fixed (e.g. arm/disarm <code>param1</code>, mission pause/resume <code>param1</code>), and <i>Reboot Autopilot</i> refuses to build unless confirmed (editor checkbox or <code>msg.payload.confirm = true</code>).</p>
-  <p><b>Advanced / Raw MAV_CMD</b> is the escape hatch, not a normal preset: pick any command from the dialect enum, see its MAVLink description and per-parameter help (param index, units, description — where a parameter expects an enum, the description names it), and fill <code>param1</code>–<code>param7</code> directly.</p>
+  <p><b>Advanced / Raw MAV_CMD</b> is the escape hatch, not a normal preset: pick any command from the dialect enum and see its MAVLink description and per-parameter help. Each parameter now renders the best control its metadata supports instead of a bare number: an <b>enum dropdown</b> for enum-backed params, a <b>flag checklist</b> for bitmask params (the combined value is persisted), a <b>checkbox</b> for boolean params, a <b>constrained numeric</b> input when min/max/increment metadata is present, and a <b>profile-aware dropdown</b> for context-specific values (e.g. <code>DO_SET_MODE</code> custom mode, resolved from the profile firmware + vehicle type — <code>GUIDED</code> is 4 on ArduCopter but 15 on ArduPlane). A badge marks whether a choice list is generic MAVLink metadata or firmware/profile/component-specific. Every dropdown keeps a <b>Custom value…</b> option for raw numeric entry (new/unsupported firmware values), unknown values already stored in a flow are preserved, and a param with no reliable metadata stays a plain numeric input. Changing the profile — or, for component-addressed commands, the target component — refreshes the available choices.</p>
   <p><b>Set mode by name</b>: the editor offers a mode dropdown resolved from the profile's firmware and vehicle type (ArduPilot copter/plane/rover/boat/sub/antenna-tracker or PX4), or pass <code>msg.payload.mode</code> (e.g. <code>"GUIDED"</code>, <code>"POSITION"</code>) at runtime. Raw numeric <code>custom_mode</code> values are firmware/vehicle-specific (GUIDED is 4 on ArduCopter but 15 on ArduPlane); numeric <code>custom_mode</code>/<code>base_mode</code> keep working as before. Stunts like flips are <i>modes</i>, not commands, on ArduCopter (FLIP mode via set mode) — there is no generic cross-firmware flip command.</p>
   <p><b>COMMAND_INT</b>: choose "Send as COMMAND_INT" (or set <code>msg.payload.command_int</code>) for commands that require it (DO_SET_ROI_LOCATION, DO_REPOSITION, …). The <i>Go To / Reposition</i> preset uses COMMAND_INT automatically. Give <code>lat</code>/<code>lon</code> in float degrees (converted to degE7 automatically) or raw <code>x</code>/<code>y</code>, plus <code>z</code>/<code>alt</code> and an optional <code>frame</code> (default <code>MAV_FRAME_GLOBAL</code>). Coordinates are <b>required</b> for <i>Go To</i> — omitting them is an error, never a silent reposition to 0,0. The message presets (<i>Request Message</i>, <i>Set/Stop Message Interval</i>) likewise require a message id. Raw <code>MAV_CMD_*</code> mode stays permissive.</p>
 </script>

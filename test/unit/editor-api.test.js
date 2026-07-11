@@ -108,6 +108,50 @@ test('modes endpoint serves firmware/vehicle-aware flight-mode names (#49)', asy
   assert.deepStrictEqual(generic.body.modes, []);
 });
 
+test('param-choices endpoint resolves Copter vs Plane modes (GUIDED 4 vs 15) (#97)', async () => {
+  const copter = await invoke(routes['/mavlink-ai/param-choices'], {
+    resolver: 'profile-flight-mode',
+    firmware: 'ardupilot',
+    vehicleType: 'copter'
+  });
+  assert.strictEqual(copter.body.ok, true);
+  assert.strictEqual(copter.body.scope, 'profile');
+  assert.strictEqual(copter.body.generic, false);
+  assert.strictEqual(copter.body.choices.find((c) => c.name === 'GUIDED').value, 4);
+  const plane = await invoke(routes['/mavlink-ai/param-choices'], {
+    resolver: 'profile-flight-mode',
+    firmware: 'ardupilot',
+    vehicleType: 'plane'
+  });
+  assert.strictEqual(plane.body.choices.find((c) => c.name === 'GUIDED').value, 15);
+});
+
+test('param-choices endpoint resolves component-specific choices from the dialect (#97)', async () => {
+  const camera = await invoke(routes['/mavlink-ai/param-choices'], {
+    resolver: 'component-mode',
+    componentType: 'camera',
+    dialect: 'ardupilotmega'
+  });
+  assert.strictEqual(camera.body.ok, true);
+  assert.strictEqual(camera.body.enum, 'CAMERA_MODE');
+  assert.ok(camera.body.choices.length > 0);
+  const gimbal = await invoke(routes['/mavlink-ai/param-choices'], {
+    resolver: 'component-mode',
+    componentType: 'gimbal',
+    dialect: 'ardupilotmega'
+  });
+  assert.strictEqual(gimbal.body.enum, 'MAV_MOUNT_MODE');
+});
+
+test('metadata endpoint forwards control metadata on raw command params (#97)', async () => {
+  const { body } = await invoke(routes['/mavlink-ai/metadata'], { dialect: 'ardupilotmega' });
+  const setMode = body.commands.MAV_CMD_DO_SET_MODE.params;
+  assert.strictEqual(setMode.find((p) => p.index === 1).bitmask, 'MAV_MODE_FLAG');
+  assert.strictEqual(setMode.find((p) => p.index === 2).resolver, 'profile-flight-mode');
+  const speedType = body.commands.MAV_CMD_DO_CHANGE_SPEED.params.find((p) => p.index === 1);
+  assert.strictEqual(speedType.enum, 'SPEED_TYPE');
+});
+
 test('registerEditorApi registers routes per RED instance, not once per process (#35)', () => {
   function makeRed() {
     const captured = {};
