@@ -248,6 +248,18 @@
       const $profileType = $('#node-config-input-profileType');
       const $compid = $('#node-config-input-sourceComponentId');
       let prevProfileType = $profileType.val();
+      // Apply the suggestion once on open too: an existing companion-computer
+      // profile (e.g. imported, or created from a template) would otherwise show
+      // the static 190 default from the defaults block, and saving without
+      // touching the field would persist 190 as an explicit value — bypassing
+      // the role's 191 default. A customized CompID (anything but blank/190) is
+      // left as-is.
+      (function suggestOnOpen() {
+        const cur = String($compid.val()).trim();
+        if (cur === '' || Number(cur) === GENERIC_SOURCE_COMPID) {
+          $compid.val(suggestedCompid(prevProfileType));
+        }
+      })();
       $profileType.on('change', function () {
         const cur = String($compid.val()).trim();
         if (cur === '' || Number(cur) === suggestedCompid(prevProfileType)) {
