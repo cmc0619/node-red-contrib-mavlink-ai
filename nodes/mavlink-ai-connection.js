@@ -157,13 +157,16 @@ module.exports = function registerMavlinkAiConnection(RED) {
     // existed) can still carry a blank required field — surface it here instead
     // of only failing later on the first send with a runtime code like
     // UDP_NO_PEER.
+    // Validate against the raw config values (not the `node.*` copies): numeric
+    // fields like bindPort have a default applied on `node.*` that would mask a
+    // user-cleared blank, so a required-but-blank field must be seen pre-default.
     const transportProblems = validateConnectionConfig({
       transport: node.transportType,
       bindAddress: config.bindAddress,
       bindPort: config.bindPort,
-      remoteHost: node.remoteHost,
+      remoteHost: config.remoteHost,
       remotePort: config.remotePort,
-      serialPath: node.serialPath,
+      serialPath: config.serialPath,
       serialBaud: config.serialBaud
     });
     if (transportProblems.length) {

@@ -30,6 +30,13 @@ const buildNode = require('../nodes/mavlink-ai-build.js');
 
 helper.init(nodeRedPath);
 
+/**
+ * Load the profile + build nodes into a real Node-RED runtime and assert they
+ * register and expose their runtime API. Always tears the runtime down, and
+ * never lets a cleanup failure mask the real test outcome.
+ *
+ * @returns {Promise<void>}
+ */
 async function main() {
   // eslint-disable-next-line import/no-dynamic-require, global-require
   const nodeRedVersion = require('node-red/package.json').version;
@@ -52,10 +59,28 @@ async function main() {
 
     console.log(`OK: nodes registered and instantiated under Node-RED ${nodeRedVersion}.`);
   } finally {
-    await helper.unload();
-    await new Promise((resolve) => helper.stopServer(resolve));
+    // Run both cleanup steps independently so an unload failure can't skip the
+    // server shutdown or replace the real test outcome with a cleanup error.
+    try {
+      await helper.unload();
+    } catch (e) {
+      console.error('unload error:', e);
+    }
+    try {
+      await new Promise((resolve) => helper.stopServer(resolve));
+    } catch (e) {
+      console.error('stopServer error:', e);
+    }
   }
 }
+
+// Fail fast if any Node-RED lifecycle callback never fires, so a hung helper
+// surfaces a clear error instead of stalling CI until the runner kills the job.
+const timeout = setTimeout(() => {
+  console.error('TIMEOUT: Node-RED load check did not complete within 60s.');
+  process.exit(1);
+}, 60000);
+timeout.unref();
 
 main().then(
   () => process.exit(0),

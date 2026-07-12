@@ -56,9 +56,10 @@ Supported runtime matrix:
 - **Node.js 22+** is the floor. The runtime uses global `fetch` (Node 18+) and
   the optional `serialport@13` dependency requires Node 20+; 22 is chosen as the
   active LTS. This is enforced by `engines.node` (`>=22`).
-- **Node-RED 4.x and 5.x** are supported and CI loads the nodes into a real
-  Node-RED runtime for each. This is enforced by `peerDependencies.node-red`
-  (`>=4.0.0 <6.0.0`).
+- **Node-RED 4.x and 5.x** are the tested and supported majors, and CI loads
+  the nodes into a real Node-RED runtime for each. `peerDependencies.node-red`
+  is `>=4.0.0` (no upper bound) so a newer Node-RED can still install it; the
+  guaranteed-tested majors are the ones in the table.
 - **Node-RED 3.x and earlier are not supported.** The peer dependency excludes
   them; while the generic Node-RED APIs the nodes use may happen to work on
   older releases, that is unverified and intentionally not claimed.
