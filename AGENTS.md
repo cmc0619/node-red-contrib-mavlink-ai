@@ -14,6 +14,10 @@ Follow `DESIGN.md` first. Do not recreate the old coupled architecture.
 6. Do not bury mission workflow state inside the transport layer.
 7. Do not add migration logic from older modules unless explicitly requested.
 8. Keep node type names under the `mavlink-ai-*` prefix.
+9. Use JSDoc (`/** ... */`) in lieu of any other type of comment. Do not use `//`
+   line comments or plain `/* ... */` block comments for commentary; the only
+   non-JSDoc comments allowed are bare tooling directives (e.g.
+   `// eslint-disable-next-line`, coverage pragmas, shebangs). See DESIGN.md §27.1.
 
 ## Architecture
 
