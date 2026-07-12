@@ -1,53 +1,51 @@
 # Examples
 
-Import these flows from Node-RED using **Menu → Import → Examples → node-red-contrib-mavlink-ai**.
-
-The examples are grouped by purpose so the import menu stays useful as the package grows.
+Import these flows from Node-RED using **Menu → Import → Examples → node-red-contrib-mavlink-ai**. The folders below are deliberate: they keep the import menu organized while retaining the original `01` through `20` filenames.
 
 ## 01 Getting started
 
-- `receive-heartbeat.json` — Decode HEARTBEAT from UDP.
-- `build-and-send-heartbeat.json` — Build and send a GCS heartbeat.
-- `request-autopilot-version.json` — Request and receive AUTOPILOT_VERSION.
+- `01-udp-heartbeat-listener.json` — Decode HEARTBEAT from a UDP connection.
+- `03-build-and-send-heartbeat.json` — Build and send a GCS heartbeat.
+- `05-request-autopilot-version.json` — Request and receive AUTOPILOT_VERSION.
+- `07-filter-global-position-int.json` — Filter and rate-limit position telemetry.
+- `08-raw-packet-debug.json` — Inspect decoded and raw packet output.
+- `09-serial-connection.json` — Receive MAVLink over serial.
 
-## 02 Telemetry and diagnostics
+## 02 Vehicle control
 
-- `filter-global-position-int.json` — Filter and rate-limit position telemetry.
-- `raw-packet-debug.json` — Inspect decoded and raw packet output.
-- `telemetry-stream-interval.json` — Start and stop an ATTITUDE stream.
-- `px4-sitl-telemetry.json` — Broad PX4/ArduPilot SITL telemetry and error inspection.
+- `04-arm-disarm-command.json` — Arm and disarm commands.
+- `11-telemetry-stream-interval.json` — Start and stop an ATTITUDE stream.
+- `12-onboard-companion-debug-storyboard.json` — Preview companion-computer routines in Debug.
+- `14-command-beginner-demo-sequence.json` — Debug-only arm/takeoff/spin/photo/land sequence.
 
-## 03 Vehicle control
+## 03 Parameters
 
-- `arm-disarm.json` — Arm and disarm commands.
-- `beginner-demo-sequence.json` — Debug-only arm/takeoff/spin/photo/land sequence.
-- `onboard-companion-debug-storyboard.json` — Companion-computer command and attitude previews.
+- `10-param-read-write.json` — Read, set, and list parameters.
 
-## 04 Parameters and missions
+## 04 Missions
 
-- `parameter-read-write.json` — Read, set, and list parameters.
-- `download-mission.json` — Download a mission with progress and errors.
+- `06-download-mission.json` — Download a mission with progress and errors.
 
 ## 05 Routing and swarm
 
-- `routed-multi-vehicle.json` — Route one UDP port by sysid to multiple profiles.
-- `swarm-registry-fanout-dry-run.json` — Discover vehicles and preview fan-out commands.
+- `02-udp-routed-multi-vehicle.json` — Route one UDP port by sysid to multiple profiles.
+- `13-swarm-registry-fanout-dry-run.json` — Discover vehicles and preview fan-out commands.
 
 ## 06 Payloads and peripherals
 
-- `servo-relay.json` — Servo and relay commands.
-- `camera-trigger.json` — Photo and video commands.
-- `gimbal-roi.json` — Gimbal and ROI commands.
-- `log-request.json` — Build a log-list request.
+- `15-command-servo-relay.json` — Set a servo output or relay.
+- `16-command-camera-trigger.json` — Trigger camera photo and video commands.
+- `17-command-gimbal-roi.json` — Control gimbal pitch/yaw and regions of interest.
+- `18-command-log-request.json` — Request the onboard log list.
 
-## 07 Connections
+## 07 Safety-critical
 
-- `serial-connection.json` — Receive MAVLink over serial.
+- `19-command-calibration-warning-gated.json` — Bench-only calibration with a confirmation gate.
+- `20-command-parachute-warning-gated.json` — Parachute commands with an explicit release gate.
 
-## 08 Safety-critical
+## 08 SITL
 
-- `calibration-warning-gated.json` — Bench-only calibration with a confirmation gate.
-- `parachute-warning-gated.json` — Parachute commands with an explicit release gate.
+- `px4-sitl-telemetry.json` — Broad PX4 or ArduPilot SITL telemetry and error inspection.
 
 All UDP examples assume a MAVLink source such as SITL, a vehicle, or `mavlink-router` sending to UDP port `14550`.
 

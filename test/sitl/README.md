@@ -14,7 +14,7 @@ Equivalent command:
 docker run --rm -it -p 14550:14550/udp px4io/px4-sitl:latest
 ```
 
-The example Node-RED flow in `test/node-red/protocol-tests.json` listens as a UDP peer on `0.0.0.0:14550` and learns the simulator endpoint from incoming traffic.
+Import `examples/08-sitl/px4-sitl-telemetry.json` into Node-RED. It listens as a UDP peer on `0.0.0.0:14550` and learns the simulator endpoint from incoming traffic.
 
 ## ArduPilot
 

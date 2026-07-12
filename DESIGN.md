@@ -1499,15 +1499,28 @@ test/
   flows/
 
 examples/
-  01-udp-heartbeat-listener.json
-  02-udp-routed-multi-vehicle.json
-  03-build-and-send-heartbeat.json
-  04-arm-disarm-command.json
-  05-request-autopilot-version.json
-  06-download-mission.json
-  07-filter-global-position-int.json
-  08-raw-packet-debug.json
-  09-serial-connection.json
+  01-getting-started/
+    01-udp-heartbeat-listener.json
+    03-build-and-send-heartbeat.json
+    ...
+  02-vehicle-control/
+    04-arm-disarm-command.json
+    ...
+  03-parameters/
+    10-param-read-write.json
+  04-missions/
+    06-download-mission.json
+  05-routing/
+    02-udp-routed-multi-vehicle.json
+    ...
+  06-payloads-and-peripherals/
+    15-command-servo-relay.json
+    ...
+  07-safety-critical/
+    19-command-calibration-warning-gated.json
+    20-command-parachute-warning-gated.json
+  08-sitl/
+    px4-sitl-telemetry.json
 ```
 
 Do not keep everything in root-level node files forever. That is how v1 becomes soup.
