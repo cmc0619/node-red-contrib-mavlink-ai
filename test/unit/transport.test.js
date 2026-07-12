@@ -78,6 +78,21 @@ test('serial start without a path errors clearly (does not need serialport)', as
   assert.strictEqual(err.code, 'SERIAL_NO_PATH');
 });
 
+test('serial fails clearly on an unsupported Node.js runtime (#102)', () => {
+  const { loadSerialPort } = require('../../lib/transport/serial-transport');
+  const original = Object.getOwnPropertyDescriptor(process, 'version');
+  Object.defineProperty(process, 'version', { value: 'v18.19.0', configurable: true });
+  try {
+    assert.throws(() => loadSerialPort(), (err) => {
+      assert.strictEqual(err.code, 'SERIALPORT_UNSUPPORTED_RUNTIME');
+      assert.match(err.message, /Serial transport requires Node\.js 20/);
+      return true;
+    });
+  } finally {
+    Object.defineProperty(process, 'version', original);
+  }
+});
+
 test('sniffSysid reads the source sysid from v1/v2 frames (#21)', () => {
   const { sniffSysid } = require('../../lib/transport/udp-transport');
   // v2: magic 0xFD, sysid at offset 5.

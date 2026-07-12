@@ -18,13 +18,16 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        # Test the supported floor plus current/latest.
-        node-version: [22.x, 24.x]
-    name: test (node ${{ matrix.node-version }})
+        # The supported compatibility matrix (README "Compatibility"): Node 22+
+        # (LTS floor plus current) against the supported Node-RED majors. Every
+        # claimed Node.js/Node-RED combination is exercised here.
+        node-version: ['22.x', '24.x']
+        node-red-version: ['4', '5']
+    name: test (node ${{ matrix.node-version }}, node-red ${{ matrix.node-red-version }})
     steps:
       - uses: actions/checkout@v7
         with:
@@ -38,3 +41,11 @@ jobs:
       # so the suite must pass without it. This run also proves that contract.
       - run: npm ci --omit=optional
       - run: npm test
+      # Prove the package registers and instantiates in a real Node-RED runtime
+      # at the matrix Node-RED version (issue #102). Installed unsaved so the
+      # lockfile stays lean and each matrix cell pins its own Node-RED major.
+      - name: Load nodes under Node-RED ${{ matrix.node-red-version }}
+        run: |
+          npm install --no-save --omit=optional \
+            "node-red@${{ matrix.node-red-version }}" node-red-node-test-helper
+          npm run test:node-red

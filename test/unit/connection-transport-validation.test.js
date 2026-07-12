@@ -1,0 +1,80 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert');
+
+const { MockRED } = require('../helpers/mock-red');
+
+/**
+ * Runtime transport-config validation (issue #103). The editor validates
+ * required endpoint/path settings before deploy, but a flow imported as JSON
+ * (or authored before those validators existed) can still carry a blank
+ * required field. The connection node must reject that combination loudly at
+ * deploy — with a clear TRANSPORT_CONFIG_INVALID error and a safe no-op runtime
+ * API — instead of silently starting and only failing later on the first send.
+ */
+
+function withProfile() {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-profile', {
+    id: 'p_default',
+    name: 'Default',
+    dialect: 'common',
+    mavlinkVersion: 'v2'
+  });
+  return RED;
+}
+
+function connect(RED, config) {
+  return RED.create(
+    'mavlink-ai-connection',
+    Object.assign({ id: 'c1', name: 'Conn', profile: 'p_default', reconnect: false, heartbeat: false }, config)
+  );
+}
+
+test('udp-out with no remote host is rejected at deploy', () => {
+  const RED = withProfile();
+  const conn = connect(RED, { transport: 'udp-out', remoteHost: '', remotePort: 14550 });
+  assert.strictEqual(conn.statusState, 'error');
+  const logged = conn.errors.map(String).join('\n');
+  assert.match(logged, /TRANSPORT_CONFIG_INVALID/);
+  assert.match(logged, /remote host/i);
+  // The runtime API degrades to safe no-ops; no transport was started.
+  assert.strictEqual(conn._transport, null);
+});
+
+test('a rejected connection sends reject rather than throwing', async () => {
+  const RED = withProfile();
+  const conn = connect(RED, { transport: 'udp-out', remoteHost: '' });
+  await assert.rejects(() => conn.send({ name: 'HEARTBEAT', fields: {} }), /not initialised/);
+});
+
+test('serial with no device path is rejected at deploy', () => {
+  const RED = withProfile();
+  const conn = connect(RED, { transport: 'serial', serialPath: '' });
+  assert.strictEqual(conn.statusState, 'error');
+  assert.match(conn.errors.map(String).join('\n'), /TRANSPORT_CONFIG_INVALID.*serial path/is);
+});
+
+test('tcp-client with no remote host is rejected at deploy', () => {
+  const RED = withProfile();
+  const conn = connect(RED, { transport: 'tcp-client', remoteHost: '', remotePort: 5760 });
+  assert.strictEqual(conn.statusState, 'error');
+  assert.match(conn.errors.map(String).join('\n'), /TRANSPORT_CONFIG_INVALID/);
+});
+
+test('udp-peer with a blank remote is accepted (learn-first)', async (t) => {
+  const RED = withProfile();
+  const conn = connect(RED, { transport: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0, remoteHost: '' });
+  t.after(() => RED.close(conn));
+  assert.notStrictEqual(conn.statusState, 'error', `status: ${conn.statusState} ${conn.statusDetail}`);
+  assert.ok(conn._transport, 'transport started');
+});
+
+test('udp-out with a remote endpoint is accepted', async (t) => {
+  const RED = withProfile();
+  const conn = connect(RED, { transport: 'udp-out', remoteHost: '127.0.0.1', remotePort: 14550 });
+  t.after(() => RED.close(conn));
+  assert.notStrictEqual(conn.statusState, 'error', `status: ${conn.statusState} ${conn.statusDetail}`);
+  assert.ok(conn._transport, 'transport started');
+});

@@ -1514,9 +1514,11 @@ Do not keep everything in root-level node files forever. That is how v1 becomes 
 
 ### 27.1 JSDoc and Code Documentation
 
-JSDoc is the default format for code documentation throughout the project and is part of the code-quality standard expected for CodeRabbit review compliance. As a general rule, if a comment is worth writing about a declaration or reusable behavior, write it as JSDoc (`/** ... */`), not as an ordinary block comment or a stack of `//` lines.
+JSDoc is the project's comment format, used in lieu of any other type of comment. It is part of the code-quality standard expected for CodeRabbit review compliance. Every comment that explains code — whether it documents a declaration or a strictly local implementation detail inside a function body — is written as a JSDoc block (`/** ... */`). Ordinary `//` line comments and plain `/* ... */` block comments are not used for commentary.
 
-Ordinary `//` comments are reserved for short, strictly local implementation notes inside a function, unavoidable compatibility/workaround explanations, and tooling directives such as ESLint or coverage controls. They must not be used as a substitute for JSDoc on functions, classes, methods, modules, typedefs, fields, or other declarations.
+The only non-JSDoc comments permitted are machine-read directives that tooling requires in a specific syntax and that carry no prose explanation of their own — for example `// eslint-disable-next-line ...`, `/* istanbul ignore next */` / coverage pragmas, and a `#!` shebang. If such a directive needs justification, put the justification in a JSDoc block; keep the directive line itself to the bare pragma.
+
+Prefer to capture rationale in the enclosing declaration's JSDoc. When a note is genuinely local to a spot inside a function body, still write it as a `/** ... */` block immediately above the statement it explains, not as a `//` line. Documentation must never be written as `//` on a function, class, method, module, typedef, field, or other declaration.
 
 At minimum, add JSDoc to:
 

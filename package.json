@@ -37,7 +37,8 @@
     "test": "npm run test:smoke && npm run test:unit && npm run test:integration",
     "test:smoke": "node test/smoke-load.js",
     "test:unit": "node --test test/unit/*.test.js",
-    "test:integration": "node --test test/integration/*.test.js"
+    "test:integration": "node --test test/integration/*.test.js",
+    "test:node-red": "node test/node-red-load.js"
   },
   "node-red": {
     "nodes": {

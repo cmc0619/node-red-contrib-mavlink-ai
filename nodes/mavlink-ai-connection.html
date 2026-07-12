@@ -1,180 +1,301 @@
 <script type="text/javascript">
-  RED.nodes.registerType('mavlink-ai-connection', {
-    category: 'config',
-    defaults: {
-      name: { value: '' },
-      profile: { value: '', type: 'mavlink-ai-profile', required: true },
-      transport: { value: 'udp-peer', required: true },
-      routingMode: { value: 'single-profile', required: true },
-      bindAddress: { value: '0.0.0.0' },
-      bindPort: { value: 14550, validate: RED.validators.number() },
-      remoteHost: { value: '' },
-      remotePort: { value: 14550, validate: RED.validators.number() },
-      serialPath: { value: '' },
-      serialBaud: { value: 57600, validate: RED.validators.number() },
-      reconnect: { value: true },
-      heartbeat: { value: false },
-      heartbeatIntervalMs: { value: 1000, validate: RED.validators.number() },
-      acceptedSysids: { value: '' },
-      acceptedCompids: { value: '' },
-      unmatchedPolicy: { value: 'default' },
-      routeTable: {
-        value: '',
-        /**
-         * Structural check: empty, or a JSON array whose entries each name a
-         * profile. Reference resolution is validated by the runtime at deploy.
-         *
-         * @param {string} v  the stored route table JSON
-         * @returns {boolean}
-         */
-        validate: function (v) {
-          if (!v) {
-            return true;
-          }
-          try {
-            const arr = JSON.parse(v);
-            return Array.isArray(arr) && arr.every(function (r) {
-              return r && typeof r === 'object' && r.profile;
-            });
-          } catch (e) {
-            return false;
-          }
-        }
-      },
-      outboundQueue: { value: true }
-    },
-    label: function () {
-      return this.name || 'MAVLink AI Connection';
-    },
+  (function () {
+    // Transport field spec, mirrored from lib/transport/transport-fields.js so
+    // the editor shows only the settings a transport uses and validates its
+    // required values before deploy (issue #103). Keep the two in sync.
+    var TRANSPORT_VISIBLE = {
+      'udp-peer': ['bindAddress', 'bindPort', 'remoteHost', 'remotePort'],
+      'udp-in': ['bindAddress', 'bindPort'],
+      'udp-out': ['remoteHost', 'remotePort'],
+      serial: ['serialPath', 'serialBaud', 'reconnect'],
+      'tcp-client': ['remoteHost', 'remotePort', 'reconnect'],
+      'tcp-server': ['bindAddress', 'bindPort']
+    };
+    var TRANSPORT_REQUIRED = {
+      'udp-peer': ['bindPort'],
+      'udp-in': ['bindPort'],
+      'udp-out': ['remoteHost', 'remotePort'],
+      serial: ['serialPath', 'serialBaud'],
+      'tcp-client': ['remoteHost', 'remotePort'],
+      'tcp-server': ['bindPort']
+    };
+    var TRANSPORT_FIELD_KEYS = ['bindAddress', 'bindPort', 'remoteHost', 'remotePort', 'serialPath', 'serialBaud', 'reconnect'];
+
     /**
-     * Build the route-table editor: an editable list of sysid/compid inputs
-     * plus a profile picker (a dropdown of profile config nodes, stored by
-     * id), and wire routed-only/single-profile-only row visibility to the
-     * routing mode.
+     * Current transport being edited. Reads the live select first (it may have
+     * changed since the node was saved), falling back to the node's stored value
+     * when the form isn't rendered yet (validation can run before oneditprepare).
      *
-     * @returns {void}
+     * @param {object} node  the node config being validated
+     * @returns {string}
      */
-    oneditprepare: function () {
-      // Profile config nodes available as route targets. Routes store the
-      // config-node id (canonical); the picker shows the display name.
-      const profiles = [];
-      RED.nodes.eachConfig(function (n) {
-        if (n.type === 'mavlink-ai-profile') {
-          profiles.push({ id: n.id, name: n.name || n.id });
+    function currentTransport(node) {
+      var el = document.getElementById('node-config-input-transport');
+      if (el && el.value) {
+        return el.value;
+      }
+      return (node && node.transport) || 'udp-peer';
+    }
+
+    /**
+     * True if `field` is required for the transport currently selected.
+     *
+     * @param {object} node
+     * @param {string} field
+     * @returns {boolean}
+     */
+    function isRequired(node, field) {
+      var list = TRANSPORT_REQUIRED[currentTransport(node)] || [];
+      return list.indexOf(field) !== -1;
+    }
+
+    /**
+     * True when a form value counts as blank (unset or whitespace-only).
+     *
+     * @param {*} v
+     * @returns {boolean}
+     */
+    function isBlank(v) {
+      return v === undefined || v === null || String(v).trim() === '';
+    }
+
+    /**
+     * Validator for a text field that is required only for some transports. A
+     * required-but-blank value fails; anything else (including blank when the
+     * field is irrelevant to the current transport) passes.
+     *
+     * @param {string} field
+     * @returns {function(*): boolean}
+     */
+    function requiredTextValidator(field) {
+      return function (v) {
+        if (isRequired(this, field) && isBlank(v)) {
+          return false;
         }
         return true;
-      });
+      };
+    }
 
-      let routes = [];
-      try {
-        const raw = this.routeTable;
-        if (Array.isArray(raw)) {
-          routes = raw;
-        } else if (typeof raw === 'string' && raw.trim()) {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) {
-            routes = parsed;
-          }
-        }
-      } catch (e) {
-        // Malformed legacy JSON: start empty; the old value is preserved until
-        // the user saves, and the validator flags it.
-      }
-
-      $('#node-config-route-list').editableList({
-        addButton: 'add route',
-        removable: true,
-        sortable: true,
-        height: 160,
-        header: $('<div>').css({ 'padding-left': '32px', color: 'var(--red-ui-secondary-text-color, #888)' })
-          .append('<span style="display:inline-block;width:70px">SysID</span>')
-          .append('<span style="display:inline-block;width:70px">CompID</span>')
-          .append('<span>Profile</span>'),
-        /**
-         * Render one route row (sysid, compid, profile picker) into the list.
-         *
-         * @param {jQuery} container  the row container provided by editableList
-         * @param {number} index  row index
-         * @param {object} data  the route entry ({ sysid, compid, profile })
-         * @returns {void}
-         */
-        addItem: function (container, index, data) {
-          const row = $(container);
-          row.css({ display: 'flex', 'align-items': 'center', gap: '6px' });
-          const sysid = $('<input/>', { type: 'text', class: 'route-sysid', placeholder: '*' })
-            .css({ width: '64px', 'flex-shrink': 0 })
-            .appendTo(row);
-          const compid = $('<input/>', { type: 'text', class: 'route-compid', placeholder: '*' })
-            .css({ width: '64px', 'flex-shrink': 0 })
-            .appendTo(row);
-          const select = $('<select/>', { class: 'route-profile' }).css({ flex: 1, width: 'auto' }).appendTo(row);
-          profiles.forEach(function (p) {
-            $('<option/>').val(p.id).text(p.name).appendTo(select);
-          });
-
-          let ref = data && data.profile;
-          if (ref && !profiles.some(function (p) { return p.id === ref; })) {
-            // Legacy name reference: migrate to the config-node id when the
-            // name is unambiguous; otherwise keep it visible and flagged.
-            const byName = profiles.filter(function (p) { return p.name === ref; });
-            if (byName.length === 1) {
-              ref = byName[0].id;
-            } else {
-              $('<option/>').val(ref).text(ref + ' (unknown profile)').appendTo(select);
-            }
-          }
-          if (ref) {
-            select.val(ref);
-          }
-          if (data && data.sysid !== undefined && data.sysid !== '*') {
-            sysid.val(data.sysid);
-          }
-          if (data && data.compid !== undefined && data.compid !== '*') {
-            compid.val(data.compid);
-          }
-        }
-      });
-      const list = $('#node-config-route-list');
-      routes.forEach(function (r) {
-        list.editableList('addItem', r || {});
-      });
-
-      // Routed-only vs single-profile-only rows.
-      $('#node-config-input-routingMode')
-        .on('change', function () {
-          const routed = $(this).val() === 'routed';
-          $('.routed-only').toggle(routed);
-          $('.single-profile-only').toggle(!routed);
-        })
-        .trigger('change');
-    },
     /**
-     * Serialize the route list back into the routeTable JSON string. Blank
-     * sysid/compid mean wildcard; rows without a profile are dropped.
+     * Validator for a numeric field that is required only for some transports.
+     * Required + blank fails; a present value must be numeric; blank is fine
+     * when the field is optional for the current transport.
+     *
+     * @param {string} field
+     * @returns {function(*): boolean}
+     */
+    function requiredNumberValidator(field) {
+      var num = RED.validators.number();
+      return function (v) {
+        if (isBlank(v)) {
+          return !isRequired(this, field);
+        }
+        return num.call(this, v);
+      };
+    }
+
+    /**
+     * Show only the settings the selected transport uses, toggle the per-field
+     * required markers, and swap the explanatory hint. Hidden inputs keep their
+     * stored values, so switching transports never drops a compatible saved
+     * value (issue #103 migration requirement).
      *
      * @returns {void}
      */
-    oneditsave: function () {
-      const routes = [];
-      $('#node-config-route-list')
-        .editableList('items')
-        .each(function () {
-          const row = $(this);
-          const sysid = (row.find('.route-sysid').val() || '').trim();
-          const compid = (row.find('.route-compid').val() || '').trim();
-          const profile = row.find('.route-profile').val();
-          if (!profile) {
-            return;
-          }
-          routes.push({
-            sysid: sysid === '' ? '*' : sysid,
-            compid: compid === '' ? '*' : compid,
-            profile: profile
-          });
-        });
-      $('#node-config-input-routeTable').val(routes.length ? JSON.stringify(routes) : '');
+    function updateTransportFields() {
+      var t = $('#node-config-input-transport').val();
+      var visible = TRANSPORT_VISIBLE[t] || [];
+      var required = TRANSPORT_REQUIRED[t] || [];
+      TRANSPORT_FIELD_KEYS.forEach(function (f) {
+        $('#row-' + f).toggle(visible.indexOf(f) !== -1);
+        $('#req-' + f).toggle(required.indexOf(f) !== -1);
+      });
+      $('.transport-hint').hide();
+      $('#transport-hint-' + t).show();
     }
-  });
+
+    RED.nodes.registerType('mavlink-ai-connection', {
+      category: 'config',
+      defaults: {
+        name: { value: '' },
+        profile: { value: '', type: 'mavlink-ai-profile', required: true },
+        transport: { value: 'udp-peer', required: true },
+        routingMode: { value: 'single-profile', required: true },
+        bindAddress: { value: '0.0.0.0' },
+        bindPort: { value: 14550, validate: requiredNumberValidator('bindPort') },
+        remoteHost: { value: '', validate: requiredTextValidator('remoteHost') },
+        remotePort: { value: 14550, validate: requiredNumberValidator('remotePort') },
+        serialPath: { value: '', validate: requiredTextValidator('serialPath') },
+        serialBaud: { value: 57600, validate: requiredNumberValidator('serialBaud') },
+        reconnect: { value: true },
+        heartbeat: { value: false },
+        heartbeatIntervalMs: { value: 1000, validate: RED.validators.number() },
+        acceptedSysids: { value: '' },
+        acceptedCompids: { value: '' },
+        unmatchedPolicy: { value: 'default' },
+        routeTable: {
+          value: '',
+          /**
+           * Structural check: empty, or a JSON array whose entries each name a
+           * profile. Reference resolution is validated by the runtime at deploy.
+           *
+           * @param {string} v  the stored route table JSON
+           * @returns {boolean}
+           */
+          validate: function (v) {
+            if (!v) {
+              return true;
+            }
+            try {
+              const arr = JSON.parse(v);
+              return Array.isArray(arr) && arr.every(function (r) {
+                return r && typeof r === 'object' && r.profile;
+              });
+            } catch (e) {
+              return false;
+            }
+          }
+        },
+        outboundQueue: { value: true }
+      },
+      label: function () {
+        return this.name || 'MAVLink AI Connection';
+      },
+      /**
+       * Build the route-table editor: an editable list of sysid/compid inputs
+       * plus a profile picker (a dropdown of profile config nodes, stored by
+       * id), and wire routed-only/single-profile-only row visibility to the
+       * routing mode.
+       *
+       * @returns {void}
+       */
+      oneditprepare: function () {
+        // Profile config nodes available as route targets. Routes store the
+        // config-node id (canonical); the picker shows the display name.
+        const profiles = [];
+        RED.nodes.eachConfig(function (n) {
+          if (n.type === 'mavlink-ai-profile') {
+            profiles.push({ id: n.id, name: n.name || n.id });
+          }
+          return true;
+        });
+
+        let routes = [];
+        try {
+          const raw = this.routeTable;
+          if (Array.isArray(raw)) {
+            routes = raw;
+          } else if (typeof raw === 'string' && raw.trim()) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              routes = parsed;
+            }
+          }
+        } catch (e) {
+          // Malformed legacy JSON: start empty; the old value is preserved until
+          // the user saves, and the validator flags it.
+        }
+
+        $('#node-config-route-list').editableList({
+          addButton: 'add route',
+          removable: true,
+          sortable: true,
+          height: 160,
+          header: $('<div>').css({ 'padding-left': '32px', color: 'var(--red-ui-secondary-text-color, #888)' })
+            .append('<span style="display:inline-block;width:70px">SysID</span>')
+            .append('<span style="display:inline-block;width:70px">CompID</span>')
+            .append('<span>Profile</span>'),
+          /**
+           * Render one route row (sysid, compid, profile picker) into the list.
+           *
+           * @param {jQuery} container  the row container provided by editableList
+           * @param {number} index  row index
+           * @param {object} data  the route entry ({ sysid, compid, profile })
+           * @returns {void}
+           */
+          addItem: function (container, index, data) {
+            const row = $(container);
+            row.css({ display: 'flex', 'align-items': 'center', gap: '6px' });
+            const sysid = $('<input/>', { type: 'text', class: 'route-sysid', placeholder: '*' })
+              .css({ width: '64px', 'flex-shrink': 0 })
+              .appendTo(row);
+            const compid = $('<input/>', { type: 'text', class: 'route-compid', placeholder: '*' })
+              .css({ width: '64px', 'flex-shrink': 0 })
+              .appendTo(row);
+            const select = $('<select/>', { class: 'route-profile' }).css({ flex: 1, width: 'auto' }).appendTo(row);
+            profiles.forEach(function (p) {
+              $('<option/>').val(p.id).text(p.name).appendTo(select);
+            });
+
+            let ref = data && data.profile;
+            if (ref && !profiles.some(function (p) { return p.id === ref; })) {
+              // Legacy name reference: migrate to the config-node id when the
+              // name is unambiguous; otherwise keep it visible and flagged.
+              const byName = profiles.filter(function (p) { return p.name === ref; });
+              if (byName.length === 1) {
+                ref = byName[0].id;
+              } else {
+                $('<option/>').val(ref).text(ref + ' (unknown profile)').appendTo(select);
+              }
+            }
+            if (ref) {
+              select.val(ref);
+            }
+            if (data && data.sysid !== undefined && data.sysid !== '*') {
+              sysid.val(data.sysid);
+            }
+            if (data && data.compid !== undefined && data.compid !== '*') {
+              compid.val(data.compid);
+            }
+          }
+        });
+        const list = $('#node-config-route-list');
+        routes.forEach(function (r) {
+          list.editableList('addItem', r || {});
+        });
+
+        // Routed-only vs single-profile-only rows.
+        $('#node-config-input-routingMode')
+          .on('change', function () {
+            const routed = $(this).val() === 'routed';
+            $('.routed-only').toggle(routed);
+            $('.single-profile-only').toggle(!routed);
+          })
+          .trigger('change');
+
+        // Transport-aware fields: show only the settings the selected transport
+        // uses and refresh required markers whenever the transport changes.
+        $('#node-config-input-transport').on('change', updateTransportFields);
+        updateTransportFields();
+      },
+      /**
+       * Serialize the route list back into the routeTable JSON string. Blank
+       * sysid/compid mean wildcard; rows without a profile are dropped.
+       *
+       * @returns {void}
+       */
+      oneditsave: function () {
+        const routes = [];
+        $('#node-config-route-list')
+          .editableList('items')
+          .each(function () {
+            const row = $(this);
+            const sysid = (row.find('.route-sysid').val() || '').trim();
+            const compid = (row.find('.route-compid').val() || '').trim();
+            const profile = row.find('.route-profile').val();
+            if (!profile) {
+              return;
+            }
+            routes.push({
+              sysid: sysid === '' ? '*' : sysid,
+              compid: compid === '' ? '*' : compid,
+              profile: profile
+            });
+          });
+        $('#node-config-input-routeTable').val(routes.length ? JSON.stringify(routes) : '');
+      }
+    });
+  })();
 </script>
 
 <script type="text/html" data-template-name="mavlink-ai-connection">
@@ -197,6 +318,31 @@
       <option value="tcp-server">TCP Server</option>
     </select>
   </div>
+  <div class="form-tips transport-hint" id="transport-hint-udp-peer" style="margin-bottom: 8px; display: none;">
+    <b>UDP Peer</b> listens on the bind address/port and sends back to peers it
+    learns from inbound traffic. Set a <b>Remote Host/Port</b> to always send to
+    a fixed endpoint, or leave them blank to learn the peer from the first packet
+    received.
+  </div>
+  <div class="form-tips transport-hint" id="transport-hint-udp-in" style="margin-bottom: 8px; display: none;">
+    <b>UDP In</b> is <b>receive-only</b>: it listens on the bind address/port and
+    cannot send. Sending nodes (out/command/heartbeat) will report an error on
+    this connection.
+  </div>
+  <div class="form-tips transport-hint" id="transport-hint-udp-out" style="margin-bottom: 8px; display: none;">
+    <b>UDP Out</b> is send-only to the configured remote host/port.
+  </div>
+  <div class="form-tips transport-hint" id="transport-hint-serial" style="margin-bottom: 8px; display: none;">
+    <b>Serial</b> connects to a local device path. Serial support requires the
+    optional <code>serialport</code> dependency.
+  </div>
+  <div class="form-tips transport-hint" id="transport-hint-tcp-client" style="margin-bottom: 8px; display: none;">
+    <b>TCP Client</b> connects out to the remote host/port.
+  </div>
+  <div class="form-tips transport-hint" id="transport-hint-tcp-server" style="margin-bottom: 8px; display: none;">
+    <b>TCP Server</b> listens on the bind address/port and fans out to connected
+    clients.
+  </div>
   <div class="form-row">
     <label for="node-config-input-routingMode">Routing</label>
     <select id="node-config-input-routingMode">
@@ -204,31 +350,31 @@
       <option value="routed">Routed by sysid/compid</option>
     </select>
   </div>
-  <div class="form-row">
+  <div class="form-row" id="row-bindAddress">
     <label for="node-config-input-bindAddress">Bind Addr</label>
     <input type="text" id="node-config-input-bindAddress">
   </div>
-  <div class="form-row">
-    <label for="node-config-input-bindPort">Bind Port</label>
+  <div class="form-row" id="row-bindPort">
+    <label for="node-config-input-bindPort">Bind Port<span class="req-marker" id="req-bindPort" style="color: var(--red-ui-text-color-error, #c0392b);"> *</span></label>
     <input type="number" id="node-config-input-bindPort">
   </div>
-  <div class="form-row">
-    <label for="node-config-input-remoteHost">Remote Host</label>
+  <div class="form-row" id="row-remoteHost">
+    <label for="node-config-input-remoteHost">Remote Host<span class="req-marker" id="req-remoteHost" style="color: var(--red-ui-text-color-error, #c0392b);"> *</span></label>
     <input type="text" id="node-config-input-remoteHost">
   </div>
-  <div class="form-row">
-    <label for="node-config-input-remotePort">Remote Port</label>
+  <div class="form-row" id="row-remotePort">
+    <label for="node-config-input-remotePort">Remote Port<span class="req-marker" id="req-remotePort" style="color: var(--red-ui-text-color-error, #c0392b);"> *</span></label>
     <input type="number" id="node-config-input-remotePort">
   </div>
-  <div class="form-row">
-    <label for="node-config-input-serialPath">Serial Path</label>
+  <div class="form-row" id="row-serialPath">
+    <label for="node-config-input-serialPath">Serial Path<span class="req-marker" id="req-serialPath" style="color: var(--red-ui-text-color-error, #c0392b);"> *</span></label>
     <input type="text" id="node-config-input-serialPath" placeholder="/dev/ttyACM0">
   </div>
-  <div class="form-row">
-    <label for="node-config-input-serialBaud">Baud</label>
+  <div class="form-row" id="row-serialBaud">
+    <label for="node-config-input-serialBaud">Baud<span class="req-marker" id="req-serialBaud" style="color: var(--red-ui-text-color-error, #c0392b);"> *</span></label>
     <input type="number" id="node-config-input-serialBaud">
   </div>
-  <div class="form-row">
+  <div class="form-row" id="row-reconnect">
     <label for="node-config-input-reconnect">Reconnect</label>
     <input type="checkbox" id="node-config-input-reconnect" style="display: inline-block; width: auto; vertical-align: top;">
   </div>
@@ -270,7 +416,9 @@
 
 <script type="text/html" data-help-name="mavlink-ai-connection">
   <p>Shared MAVLink transport/session config. This owns UDP, TCP, or serial connection runtime and references a MAVLink AI Profile.</p>
-  <p><b>udp-peer</b> tracks a reply endpoint per source sysid, so with multiple vehicles on one port an outbound message addressed to a specific <code>target_system</code> goes to that vehicle's endpoint. Broadcast/untargeted sends go to the most recent sender; a manual remote host/port overrides both.</p>
+  <p>The editor shows only the settings the selected transport uses, and required endpoint/path values are validated before deploy so an unusable connection (for example <code>udp-out</code> or <code>tcp-client</code> with no remote, or <code>serial</code> with no device path) can't be saved blank.</p>
+  <p><b>udp-peer</b> tracks a reply endpoint per source sysid, so with multiple vehicles on one port an outbound message addressed to a specific <code>target_system</code> goes to that vehicle's endpoint. Broadcast/untargeted sends go to the most recent sender; a manual remote host/port overrides both. Leaving the remote blank uses the learn-first workflow (reply to peers as they are heard).</p>
+  <p><b>udp-in</b> is receive-only: it listens but cannot send, so sending nodes and the heartbeat report an error on this connection.</p>
   <p>When the profile version is <b>auto</b>, outbound framing follows the peer: packets are MAVLink v2 until inbound traffic shows a v1 peer, then v1 (messages with ids above 255 always stay v2 — v1 framing cannot carry them).</p>
   <p><b>Heartbeat</b> emits a periodic HEARTBEAT so peers see this node as present. <b>HB ms</b> is the interval in milliseconds; HEARTBEAT is a low-rate presence message, so the minimum is <b>1000 ms</b> (the default). Lower values are clamped to 1000 ms and a warning is logged.</p>
   <p><b>Routes</b> (routed mode) map a packet's sysid/compid to the profile that decodes it. Each route references a profile config node by id (the picker handles this); leaving SysID/CompID blank means <code>*</code> (any). A route whose profile no longer exists rejects its packets and raises an error — it never silently falls back to the default profile. Flows edited as JSON may reference a profile by name only if exactly one profile has that name.</p>
