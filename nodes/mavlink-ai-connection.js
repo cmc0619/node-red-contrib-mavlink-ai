@@ -441,8 +441,92 @@ module.exports = function registerMavlinkAiConnection(RED) {
       }
     }
 
+    /**
+     * Rebuild every profile-dependent piece of runtime state around a freshly
+     * resolved default profile, WITHOUT restarting the transport/session.
+     *
+     * Node-RED recreates an edited profile config node but leaves an unchanged
+     * connection node running, so after a profile edit (e.g. its dialect) the
+     * connection is still holding the *previous* profile object, the codec built
+     * from its dialect, the per-profile codec cache, the router's default
+     * profile, and a decoder whose splitter CRC table came from the old dialect.
+     * That stale state is why an already-running connection kept decoding with
+     * the pre-edit dialect (message 441 rejected as 'common') until Node-RED was
+     * restarted. Swapping all of it here applies the edit on the next deploy.
+     *
+     * @param {object} newProfile  the freshly resolved, valid default profile
+     * @returns {void}
+     * @throws {MavlinkError} CODEC_INIT_FAILED  the new dialect can't build a codec
+     */
+    function rebuildProfileState(newProfile) {
+      // Build the new default codec first: if the edited dialect can't produce
+      // one, throw before mutating any live state so the connection keeps
+      // running with the profile it already had rather than ending up
+      // half-swapped between two dialects.
+      const codec = new MavlinkCodec(
+        Object.assign({ bundle: newProfile.getDialect() }, newProfile.getProtocolOptions())
+      );
+      node.profile = newProfile;
+      node._codec = codec;
+      // Drop every cached profile-dependent artifact so it is rebuilt against
+      // the new dialect: the per-profile codec cache (re-seed the default), the
+      // memoized legacy name -> profile lookups, and — via _resetDecoder — the
+      // packet decoder, whose merged CRC table must now cover the new dialect's
+      // message ids. The decoder is recreated lazily on the next packet.
+      node._codecByProfile.clear();
+      node._codecByProfile.set(newProfile.id, codec);
+      profileByName.clear();
+      node._router.defaultProfile = newProfile;
+      if (typeof node._resetDecoder === 'function') {
+        node._resetDecoder();
+      }
+      // Route/decode problems were logged once per identity against the old
+      // dialect; let them re-log against the new one if they persist.
+      loggedRouteProblems.clear();
+    }
+
+    /**
+     * Re-resolve the connection's configured default profile and, when Node-RED
+     * hands back a *different* profile object than the one this connection is
+     * holding (the signature of a profile edited and redeployed under the same
+     * id while this connection node was left running), rebuild all
+     * profile-dependent state around it. A profile that is now missing or
+     * invalid is left for {@link validateRouteProfiles} / normal reporting; we
+     * keep the last known-good profile rather than tearing decode down entirely.
+     *
+     * @returns {void}
+     */
+    function refreshProfileIfChanged() {
+      const resolved = RED.nodes.getNode(config.profile);
+      if (!resolved || resolved === node.profile || typeof resolved.getDialect !== 'function') {
+        return;
+      }
+      if (!resolved.isValid || !resolved.isValid()) {
+        const err = resolved.getError && resolved.getError();
+        node.error(
+          `mavlink-ai-connection '${node.name || node.id}': edited profile ` +
+            `'${resolved.name || resolved.id}' is invalid; keeping the previous profile.` +
+            (err ? ` ${err.message}` : '')
+        );
+        return;
+      }
+      try {
+        rebuildProfileState(resolved);
+      } catch (err) {
+        node.error(
+          `mavlink-ai-connection '${node.name || node.id}': failed to apply edited profile ` +
+            `'${resolved.name || resolved.id}': ${toMavlinkError(err, 'CODEC_INIT_FAILED').message}`
+        );
+      }
+    }
+
     if (RED.events && typeof RED.events.on === 'function') {
-      const onFlowsStarted = () => validateRouteProfiles();
+      // A deploy that edits only the profile leaves this connection node in
+      // place, so pick up the new profile before validating routes.
+      const onFlowsStarted = () => {
+        refreshProfileIfChanged();
+        validateRouteProfiles();
+      };
       RED.events.on('flows:started', onFlowsStarted);
       node.on('close', () => RED.events.removeListener('flows:started', onFlowsStarted));
     }
@@ -861,6 +945,21 @@ module.exports = function registerMavlinkAiConnection(RED) {
       }
 
       let decoderFatalReported = false;
+
+      // Let a profile edit (applied on flows:started) drop the decoder that was
+      // built from the *old* dialect and clear the fatal latch, so the next
+      // inbound datagram rebuilds it lazily from the new default codec with a
+      // merged CRC table covering the new dialect. The transport/session — the
+      // bound UDP socket, learned peers, reconnect state — is left untouched.
+      node._resetDecoder = () => {
+        if (node._decoder) {
+          node._decoder.destroy();
+          node._decoder = null;
+        }
+        decoderFatal = null;
+        decoderFatalReported = false;
+      };
+
       node._transport.on('data', (buffer) => {
         if (decoderFatal) {
           return; // fatal config error already surfaced; don't re-log per datagram
