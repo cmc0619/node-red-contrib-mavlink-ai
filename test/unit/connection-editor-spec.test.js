@@ -28,8 +28,7 @@ const HTML = fs.readFileSync(path.join(__dirname, '..', '..', 'nodes', 'mavlink-
 function extractObjectLiteral(name) {
   const match = new RegExp(`${name}\\s*=\\s*(\\{[\\s\\S]*?\\})\\s*;`).exec(HTML);
   assert.ok(match, `expected the editor to define ${name}`);
-  // eslint-disable-next-line no-eval
-  return eval(`(${match[1]})`);
+  return new Function(`return (${match[1]})`)();
 }
 
 /**
