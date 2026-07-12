@@ -97,3 +97,83 @@ test('editing a profile dialect updates a running connection on redeploy (messag
   assert.strictEqual(message.payload.id, GNSS_INTEGRITY_MSGID);
   assert.strictEqual(message.payload.profile, 'Vehicle');
 });
+
+test('an edited profile that is now invalid is rejected; the connection keeps the previous profile', async (t) => {
+  const RED = new MockRED().loadNodes();
+
+  RED.create('mavlink-ai-profile', {
+    id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'common', mavlinkVersion: 'v2',
+    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c1', name: 'UDP', profile: 'p1',
+    transport: 'udp-peer', routingMode: 'single-profile',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
+  });
+  t.after(() => RED.close(conn));
+
+  const goodProfile = conn.profile;
+  const codec = conn._codec;
+  const transport = conn._transport;
+
+  // Redeploy the profile under the same id with an unloadable dialect. The
+  // recreated config node is invalid, so the connection must keep its previous
+  // known-good profile rather than tearing decode down to a broken dialect.
+  RED.create('mavlink-ai-profile', {
+    id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'nonexistent-dialect', mavlinkVersion: 'v2',
+    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  assert.strictEqual(RED.nodes.getNode('p1').isValid(), false);
+  RED.events.emit('flows:started');
+
+  // Previous profile, codec, and transport are all retained; the invalid edit
+  // is logged loudly instead of applied.
+  assert.strictEqual(conn.profile, goodProfile);
+  assert.strictEqual(conn.profile.dialect, 'common');
+  assert.strictEqual(conn._codec, codec, 'codec was not rebuilt');
+  assert.strictEqual(conn._transport, transport, 'transport was not restarted');
+  const logged = conn.errors.map(String).join('\n');
+  assert.match(logged, /edited profile/);
+  assert.match(logged, /invalid; keeping the previous profile/);
+
+  // Decode still works with the old dialect: message 441 is unknown to common,
+  // so it still produces the same structured decode error as before the edit.
+  const errPromise = nextEvent(conn.emitter, 'decodeError');
+  conn._transport.emit('data', gnssIntegrityFrame());
+  const decodeError = await errPromise;
+  assert.strictEqual(decodeError.payload.context.dialect, 'common');
+});
+
+test('rebuilding the profile preserves the codec learned per-peer wire version (#69)', async (t) => {
+  const RED = new MockRED().loadNodes();
+
+  RED.create('mavlink-ai-profile', {
+    id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'common', mavlinkVersion: 'auto',
+    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c1', name: 'UDP', profile: 'p1',
+    transport: 'udp-peer', routingMode: 'single-profile',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
+  });
+  t.after(() => RED.close(conn));
+
+  // The connection has learned that sysid 7 speaks MAVLink v1 (0xFE magic), so
+  // an `auto` codec frames sends to it as v1.
+  const oldCodec = conn._codec;
+  oldCodec.noteInboundMagic(0xfe, 7);
+  assert.strictEqual(oldCodec.effectiveVersion(7), 'v1');
+
+  // Edit the profile (still `auto`) and redeploy without a transport restart.
+  RED.create('mavlink-ai-profile', {
+    id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'development', mavlinkVersion: 'auto',
+    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.events.emit('flows:started');
+
+  // The codec was rebuilt for the new dialect, but the learned per-peer version
+  // carries over so an immediate send to the v1-only peer is still framed v1 —
+  // not reset to v2 until another inbound frame arrives.
+  assert.notStrictEqual(conn._codec, oldCodec, 'codec was rebuilt');
+  assert.strictEqual(conn._codec.effectiveVersion(7), 'v1');
+});

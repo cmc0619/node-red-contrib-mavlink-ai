@@ -466,6 +466,14 @@ module.exports = function registerMavlinkAiConnection(RED) {
       const codec = new MavlinkCodec(
         Object.assign({ bundle: newProfile.getDialect() }, newProfile.getProtocolOptions())
       );
+      // The transport/session and its learned peers stay up across this rebuild,
+      // so carry over the per-peer wire versions the old codec detected (#69):
+      // otherwise an `auto` profile would frame the next send to an already-known
+      // v1-only vehicle as v2 (which it ignores) until another inbound frame
+      // re-teaches the version.
+      if (node._codec) {
+        codec.adoptDetectedVersions(node._codec);
+      }
       node.profile = newProfile;
       node._codec = codec;
       // Drop every cached profile-dependent artifact so it is rebuilt against
