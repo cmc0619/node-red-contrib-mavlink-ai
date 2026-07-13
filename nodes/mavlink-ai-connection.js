@@ -1314,6 +1314,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
           .stop()
           .then(() => done())
           .catch(() => done());
+      } else if (node._deactivating) {
+        // A prior deactivate() already nulled _transport but its stop() may
+        // still be closing the socket. Await it so Node-RED does not signal
+        // this node closed — and let a replacement bind the same port — while
+        // the old handle is still open (the EADDRINUSE this change prevents).
+        node._deactivating.then(() => done(), () => done());
       } else {
         done();
       }
