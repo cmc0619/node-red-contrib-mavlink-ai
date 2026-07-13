@@ -81,9 +81,39 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node._codec = null;
     node._router = null;
     node._queue = null;
-    // Per-profile codec cache so routed connections decode each packet with the
-    // matched profile's dialect (DESIGN.md / RELEASE_SCOPE §4), not the default.
+    /**
+     * Whether this connection is live. A connection whose required default
+     * profile is missing/invalid fails closed (#116): it is marked inactive,
+     * its transport is released, and new sends reject until a valid default
+     * profile is restored on a later deploy.
+     */
+    node._active = false;
+    /** The structured error describing why the connection is inactive, if it is. */
+    node._inactiveError = null;
+    /**
+     * Set by {@link reactivate}: a promise that settles once a restored default
+     * profile's transport restart has been attempted. Null until a reactivation.
+     *
+     * @type {?Promise<void>}
+     */
+    node._activating = null;
+    /**
+     * Per-profile codec cache so routed connections decode each packet with the
+     * matched profile's dialect (DESIGN.md / RELEASE_SCOPE §4), not the default.
+     * Keyed by profile config-node id, but each entry retains the *profile
+     * object* it was built from ({ profile, codec }). Node-RED recreates an
+     * edited profile as a new object under the same id, so a cache keyed by id
+     * alone would keep handing back the codec for the old dialect (#117); the
+     * entry is only reused when its profile object is still the resolved one.
+     */
     node._codecByProfile = new Map();
+    /**
+     * The set of profile *objects* whose dialects currently feed the decoder's
+     * merged CRC table (default + resolved routes). When this set changes across
+     * a deploy — a routed profile edited, added, or removed — the decoder must
+     * be reset so its splitter CRC table is rebuilt (#117).
+     */
+    node._activeProfiles = new Set();
 
     // --- status helpers ------------------------------------------------------
     /**
@@ -143,7 +173,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       node._codec = new MavlinkCodec(
         Object.assign({ bundle: node.profile.getDialect() }, node.profile.getProtocolOptions())
       );
-      node._codecByProfile.set(node.profile.id, node._codec);
+      node._codecByProfile.set(node.profile.id, { profile: node.profile, codec: node._codec });
     } catch (err) {
       fatal('CODEC_INIT_FAILED', err.message);
       registerNoop(node);
@@ -190,8 +220,19 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (!profile || profile === node.profile) {
         return node._codec;
       }
+      /**
+       * Reuse the cached codec only when it was built from *this same* profile
+       * object. If Node-RED recreated the profile under the same id (an edit) or
+       * a different profile now owns the id, the identity check misses and a
+       * fresh codec is built for the new dialect instead of decoding/encoding
+       * with the stale one (#117).
+       */
       if (profile.id && node._codecByProfile.has(profile.id)) {
-        return node._codecByProfile.get(profile.id);
+        const entry = node._codecByProfile.get(profile.id);
+        if (entry.profile === profile) {
+          return entry.codec;
+        }
+        node._codecByProfile.delete(profile.id);
       }
       if (typeof profile.getDialect !== 'function' || !profile.isValid || !profile.isValid()) {
         const detail = profile.getError && profile.getError() ? `: ${profile.getError().message}` : '';
@@ -212,7 +253,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
         );
       }
       if (profile.id) {
-        node._codecByProfile.set(profile.id, codec);
+        node._codecByProfile.set(profile.id, { profile, codec });
       }
       return codec;
     }
@@ -250,9 +291,18 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     // --- routing -------------------------------------------------------------
-    // Memoized legacy name -> profile node resolutions (a name lookup scans all
-    // config nodes; packets arrive at wire rate). Successful lookups only —
-    // a profile deployed later must still become resolvable.
+    /**
+     * Memoized legacy name -> profile config-node *id* resolutions (a name
+     * lookup scans all config nodes; packets arrive at wire rate). The cache
+     * stores the resolved id, never the profile object: every use re-resolves
+     * the id through RED.nodes.getNode() and re-checks the name, so a profile
+     * that was deleted, renamed, disabled, or recreated stops resolving to its
+     * stale object immediately (#118). Successful lookups only — a profile
+     * deployed later must still become resolvable — and the whole cache is
+     * cleared on every flows:started so a name that became ambiguous (a second
+     * profile now shares it) is re-scanned rather than served from a stale
+     * unique result.
+     */
     const profileByName = new Map();
 
     /**
@@ -288,10 +338,21 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (byId && typeof byId.getDialect === 'function') {
         return byId;
       }
-      // Legacy name reference (flows authored before route entries carried
-      // config-node ids). Resolve only an unambiguous name.
+      /**
+       * Legacy name reference (flows authored before route entries carried
+       * config-node ids). Resolve only an unambiguous name.
+       *
+       * A cached id is only trusted after re-resolving it and confirming the
+       * currently registered node still carries this name — a deleted or
+       * renamed profile must not keep resolving to its old object (#118). A
+       * stale entry is dropped so the scan below runs fresh.
+       */
       if (profileByName.has(ref)) {
-        return profileByName.get(ref);
+        const cached = RED.nodes.getNode(profileByName.get(ref));
+        if (cached && typeof cached.getDialect === 'function' && cached.name === ref) {
+          return cached;
+        }
+        profileByName.delete(ref);
       }
       const matchIds = [];
       if (typeof RED.nodes.eachNode === 'function') {
@@ -311,7 +372,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       }
       const byName = matchIds.length === 1 ? RED.nodes.getNode(matchIds[0]) : null;
       if (byName && typeof byName.getDialect === 'function') {
-        profileByName.set(ref, byName);
+        profileByName.set(ref, byName.id);
         return byName;
       }
       throw new MavlinkError(
@@ -482,7 +543,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       // packet decoder, whose merged CRC table must now cover the new dialect's
       // message ids. The decoder is recreated lazily on the next packet.
       node._codecByProfile.clear();
-      node._codecByProfile.set(newProfile.id, codec);
+      node._codecByProfile.set(newProfile.id, { profile: newProfile, codec });
       profileByName.clear();
       node._router.defaultProfile = newProfile;
       if (typeof node._resetDecoder === 'function') {
@@ -494,45 +555,276 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
-     * Re-resolve the connection's configured default profile and, when Node-RED
-     * hands back a *different* profile object than the one this connection is
-     * holding (the signature of a profile edited and redeployed under the same
-     * id while this connection node was left running), rebuild all
-     * profile-dependent state around it. A profile that is now missing or
-     * invalid is left for {@link validateRouteProfiles} / normal reporting; we
-     * keep the last known-good profile rather than tearing decode down entirely.
+     * The set of profile *objects* whose dialects currently feed the decoder's
+     * merged CRC table: the default profile plus every route-table profile that
+     * resolves right now. The router already dedupes and swallows unresolved
+     * route references, so this is exactly the effective dialect set.
+     *
+     * @returns {Set<object>}
+     */
+    function computeActiveProfiles() {
+      const set = new Set();
+      for (const p of node._router.profiles()) {
+        if (p) {
+          set.add(p);
+        }
+      }
+      return set;
+    }
+
+    /**
+     * Two profile-object sets are equal iff they contain the same object
+     * identities. A routed profile edited under the same id resolves to a *new*
+     * object, so identity comparison detects the edit that an id comparison
+     * would miss.
+     *
+     * @param {Set<object>} a
+     * @param {Set<object>} b
+     * @returns {boolean}
+     */
+    function sameProfileSet(a, b) {
+      if (a.size !== b.size) {
+        return false;
+      }
+      for (const p of a) {
+        if (!b.has(p)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    /**
+     * Tear the connection down to a fail-closed, inactive state (#116). Used
+     * when the required default profile has been deleted or become invalid: the
+     * connection must stop decoding and commanding vehicles, and release its
+     * transport (UDP/TCP/serial) immediately rather than leaving a socket bound
+     * after the configuration that justified it was removed.
+     *
+     * Subscriptions are intentionally retained so a later deploy that restores a
+     * valid profile can {@link reactivate} and resume delivering to the same
+     * subscribers; everything profile-dependent (codecs, decoder, name cache,
+     * mission locks) is dropped.
+     *
+     * @param {string} code     structured error code (NO_PROFILE | PROFILE_INVALID | ...)
+     * @param {string} message  human-readable cause
+     * @returns {Promise<void>} resolves once the transport has fully stopped and
+     *   its port/handle is released
+     */
+    function deactivate(code, message) {
+      /** Record/refresh the reason but only tear down once. */
+      const alreadyInactive = !node._active;
+      node._active = false;
+      node._inactiveError = new MavlinkError(code, message);
+      if (alreadyInactive) {
+        return node._deactivating || Promise.resolve();
+      }
+      stopHeartbeat();
+      /** Reject queued outbound work; new sends reject via the _active guard. */
+      if (node._queue) {
+        node._queue.clear();
+      }
+      /**
+       * Drop every profile-dependent artifact so nothing keeps decoding or
+       * commanding with the removed profile.
+       */
+      node._codecByProfile.clear();
+      node._activeProfiles = new Set();
+      profileByName.clear();
+      loggedRouteProblems.clear();
+      node.locks.clear();
+      if (node._decoder) {
+        node._decoder.destroy();
+        node._decoder = null;
+      }
+      node.statusState = 'error';
+      node.statusDetail = message;
+      node.emitter.emit('status', node.getStatus());
+      node.error(`mavlink-ai-connection '${node.name || node.id}': ${code}: ${message}`);
+      /**
+       * Release the bound transport so its port/handle is freed immediately —
+       * a deleted profile must not leave the socket bound (EADDRINUSE) until
+       * Node-RED restarts.
+       */
+      const transport = node._transport;
+      node._transport = null;
+      node._deactivating = transport ? Promise.resolve(transport.stop()).catch(() => {}) : Promise.resolve();
+      return node._deactivating;
+    }
+
+    /**
+     * Bring a previously {@link deactivate}d connection back up around a freshly
+     * resolved, valid default profile (#116). Rebuilds the codec/router state and
+     * restarts the transport on the same config so a profile that was deleted and
+     * then re-created on a later deploy resumes without recreating this config
+     * node. Waits for any in-flight teardown to finish first so the port is free
+     * before it is rebound.
+     *
+     * @param {object} profile  the restored, valid default profile config node
+     * @returns {void}
+     */
+    function reactivate(profile) {
+      let codec;
+      try {
+        codec = new MavlinkCodec(
+          Object.assign({ bundle: profile.getDialect() }, profile.getProtocolOptions())
+        );
+      } catch (err) {
+        /** The restored profile still cannot build a codec: stay inactive. */
+        node._inactiveError = toMavlinkError(err, 'CODEC_INIT_FAILED');
+        node.error(
+          `mavlink-ai-connection '${node.name || node.id}': cannot reactivate with profile ` +
+            `'${profile.name || profile.id}': ${node._inactiveError.message}`
+        );
+        return;
+      }
+      node.profile = profile;
+      node._codec = codec;
+      node._codecByProfile.clear();
+      node._codecByProfile.set(profile.id, { profile, codec });
+      node._router.defaultProfile = profile;
+      profileByName.clear();
+      loggedRouteProblems.clear();
+      node._inactiveError = null;
+      node._active = true;
+      node._activeProfiles = computeActiveProfiles();
+      /** Restart the transport once, if it is not already up. */
+      const startNow = () => {
+        if (node._active && !node._transport) {
+          startTransport();
+        }
+      };
+      /**
+       * A promise that settles once the transport restart has been attempted,
+       * after any in-flight teardown resolves so the port is free before it is
+       * rebound. Exposed so callers/tests can await reactivation deterministically
+       * instead of guessing at event-loop timing.
+       *
+       * @type {Promise<void>}
+       */
+      node._activating = Promise.resolve(node._deactivating).then(startNow, startNow);
+    }
+
+    /**
+     * Reconcile the connection's required default profile on every deploy (#116).
+     *
+     * - Missing or invalid  -> fail closed: {@link deactivate}.
+     * - Restored after a prior deactivation -> {@link reactivate}.
+     * - Edited under the same id (a different object) while still running ->
+     *   {@link rebuildProfileState} hot-reload, no transport restart.
      *
      * @returns {void}
      */
-    function refreshProfileIfChanged() {
+    function reconcileDefaultProfile() {
       const resolved = RED.nodes.getNode(config.profile);
-      if (!resolved || resolved === node.profile || typeof resolved.getDialect !== 'function') {
+      const isProfileNode = resolved && typeof resolved.getDialect === 'function';
+      const valid = isProfileNode && resolved.isValid && resolved.isValid();
+      if (!valid) {
+        const code = !isProfileNode ? 'NO_PROFILE' : 'PROFILE_INVALID';
+        const err = isProfileNode && resolved.getError && resolved.getError();
+        const message =
+          code === 'NO_PROFILE'
+            ? 'Required default profile has been deleted; connection deactivated and transport released.'
+            : `Required default profile '${resolved.name || resolved.id}' is invalid; ` +
+              `connection deactivated and transport released.${err ? ` ${err.message}` : ''}`;
+        deactivate(code, message);
         return;
       }
-      if (!resolved.isValid || !resolved.isValid()) {
-        const err = resolved.getError && resolved.getError();
-        node.error(
-          `mavlink-ai-connection '${node.name || node.id}': edited profile ` +
-            `'${resolved.name || resolved.id}' is invalid; keeping the previous profile.` +
-            (err ? ` ${err.message}` : '')
-        );
+      if (!node._active) {
+        /** A valid default profile is back after a prior deactivation. */
+        reactivate(resolved);
         return;
       }
-      try {
-        rebuildProfileState(resolved);
-      } catch (err) {
-        node.error(
-          `mavlink-ai-connection '${node.name || node.id}': failed to apply edited profile ` +
-            `'${resolved.name || resolved.id}': ${toMavlinkError(err, 'CODEC_INIT_FAILED').message}`
-        );
+      if (resolved !== node.profile) {
+        /** A valid edited profile under the same id: hot-reload in place. */
+        try {
+          rebuildProfileState(resolved);
+        } catch (err) {
+          const e = toMavlinkError(err, 'CODEC_INIT_FAILED');
+          deactivate(
+            e.code || 'CODEC_INIT_FAILED',
+            `Failed to apply edited default profile '${resolved.name || resolved.id}': ${e.message}`
+          );
+        }
       }
     }
 
+    /**
+     * Reconcile the routed (non-default) profile set on every deploy (#117).
+     *
+     * Route-table profiles are embedded inside serialized JSON, so Node-RED
+     * cannot see them as config-node dependencies and never restarts this
+     * connection when one changes. Here we evict any cached codec whose profile
+     * object is no longer the resolved one for its id (edited/recreated) or that
+     * no default/route references anymore (deleted), and reset the decoder when
+     * the effective dialect/CRC set changed so its merged splitter table is
+     * rebuilt. The transport stays up: a broken *routed* profile rejects only
+     * its own packets (via validateRouteProfiles / per-packet routing), it does
+     * not fail the whole connection.
+     *
+     * @returns {void}
+     */
+    function reconcileRoutedProfiles() {
+      const active = computeActiveProfiles();
+      const activeById = new Map();
+      for (const p of active) {
+        if (p && p.id) {
+          activeById.set(p.id, p);
+        }
+      }
+      /**
+       * Evict stale (object changed) or unreferenced (deleted) codec entries so
+       * a deleted profile's codec cannot remain cached and usable.
+       */
+      for (const [id, entry] of node._codecByProfile) {
+        const current = activeById.get(id);
+        if (!current || current !== entry.profile) {
+          node._codecByProfile.delete(id);
+        }
+      }
+      /**
+       * Reset the decoder whenever the merged dialect set changed, so the next
+       * packet rebuilds the splitter CRC table from the current profiles.
+       */
+      if (!sameProfileSet(active, node._activeProfiles)) {
+        node._activeProfiles = active;
+        if (typeof node._resetDecoder === 'function') {
+          node._resetDecoder();
+        }
+        loggedRouteProblems.clear();
+      }
+    }
+
+    /**
+     * Seed the active-profile set from whatever resolves at construction; the
+     * first flows:started reconcile fills in any route profiles that registered
+     * after this connection during the same deploy.
+     */
+    node._activeProfiles = computeActiveProfiles();
+
     if (RED.events && typeof RED.events.on === 'function') {
-      // A deploy that edits only the profile leaves this connection node in
-      // place, so pick up the new profile before validating routes.
+      /**
+       * Every deploy leaves this connection node in place unless its own config
+       * changed, so reconcile all profile dependencies here — Node-RED cannot
+       * see the profile edits/deletions that matter (default edits, and route
+       * profiles embedded in serialized JSON) as dependencies of this node.
+       *
+       * @returns {void}
+       */
       const onFlowsStarted = () => {
-        refreshProfileIfChanged();
+        /**
+         * Re-scan legacy name lookups so a deleted/renamed/now-ambiguous name
+         * never resolves to a stale object (#118).
+         */
+        profileByName.clear();
+        /** Fail closed / reactivate / hot-reload the required default profile (#116). */
+        reconcileDefaultProfile();
+        if (!node._active) {
+          /** Deactivated: nothing further to validate or decode. */
+          return;
+        }
+        /** Evict stale routed codecs and reset the decoder on dialect changes (#117). */
+        reconcileRoutedProfiles();
         validateRouteProfiles();
       };
       RED.events.on('flows:started', onFlowsStarted);
@@ -589,7 +881,24 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * @param {object} [options]  { priority }
      * @returns {Promise<void>}
      */
+    /**
+     * The rejection for a send attempted while the connection is failed-closed
+     * (#116). Carries the deactivation reason (NO_PROFILE / PROFILE_INVALID) so
+     * callers see a clear structured error instead of a generic transport miss.
+     *
+     * @returns {MavlinkError}
+     */
+    function inactiveRejection() {
+      const e = node._inactiveError;
+      return e
+        ? new MavlinkError(e.code, e.message, e.context)
+        : new MavlinkError('CONNECTION_INACTIVE', `Connection '${node.name || node.id}' is inactive.`);
+    }
+
     node.send = (message, options = {}) => {
+      if (!node._active) {
+        return Promise.reject(inactiveRejection());
+      }
       if (!message || typeof message !== 'object') {
         return Promise.reject(new MavlinkError('BAD_OUTBOUND', 'Outbound message must be an object.'));
       }
@@ -661,6 +970,9 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * @returns {Promise<void>}
      */
     node.sendRaw = (buffer, options = {}) => {
+      if (!node._active) {
+        return Promise.reject(inactiveRejection());
+      }
       if (!Buffer.isBuffer(buffer)) {
         return Promise.reject(new MavlinkError('BAD_RAW', 'Raw payload must be a Buffer.'));
       }
@@ -1013,6 +1325,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
       }
     }
 
+    /**
+     * Construction succeeded: the connection is live. Set this before starting
+     * the transport so the 'listening'/'connected' handlers that fire the first
+     * heartbeat see an active connection (#116).
+     */
+    node._active = true;
     startTransport();
 
     // --- lifecycle (DESIGN.md §19) ------------------------------------------
@@ -1038,6 +1356,14 @@ module.exports = function registerMavlinkAiConnection(RED) {
           .stop()
           .then(() => done())
           .catch(() => done());
+      } else if (node._deactivating) {
+        /**
+         * A prior deactivate() already nulled _transport but its stop() may
+         * still be closing the socket. Await it so Node-RED does not signal
+         * this node closed — and let a replacement bind the same port — while
+         * the old handle is still open (the EADDRINUSE this change prevents).
+         */
+        node._deactivating.then(() => done(), () => done());
       } else {
         done();
       }
