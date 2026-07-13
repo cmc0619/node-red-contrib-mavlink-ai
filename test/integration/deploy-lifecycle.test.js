@@ -149,7 +149,7 @@ function decodeUntil(node, port, frameFn, subscribe, event, timeoutMs = 5000) {
   });
 }
 
-// Point the helper at the real Node-RED runtime before any hook runs.
+/** Point the helper at the real Node-RED runtime before any hook runs. */
 helper.init(require.resolve('node-red'));
 
 describe('Node-RED deploy lifecycle (#119)', () => {
@@ -165,8 +165,10 @@ describe('Node-RED deploy lifecycle (#119)', () => {
     assert.ok(c1 && c1._active, 'connection is active');
     await assertBound(port);
 
-    // Remove the connection node via a real deploy; its close handler must stop
-    // the transport and free the port before the deploy completes.
+    /**
+     * Remove the connection node via a real deploy; its close handler must stop
+     * the transport and free the port before the deploy completes.
+     */
     await helper.setFlows([profileConfig('p1', 'Vehicle', 'common')], 'nodes');
     await waitBindable(port);
   });
@@ -177,7 +179,7 @@ describe('Node-RED deploy lifecycle (#119)', () => {
     await helper.load([connectionNode, profileNode], flow);
     const c1 = helper.getNode('c1');
 
-    // On `common`, message 441 cannot be decoded -> structured decode error.
+    /** On `common`, message 441 cannot be decoded -> structured decode error. */
     const decodeError = await decodeUntil(
       c1,
       port,
@@ -187,8 +189,10 @@ describe('Node-RED deploy lifecycle (#119)', () => {
     );
     assert.strictEqual(decodeError.payload.context.dialect, 'common');
 
-    // Edit the profile's dialect to `development` and redeploy (modified nodes).
-    // The connection binds the same UDP port and now speaks the new dialect.
+    /**
+     * Edit the profile's dialect to `development` and redeploy (modified nodes).
+     * The connection binds the same UDP port and now speaks the new dialect.
+     */
     await helper.setFlows(
       [profileConfig('p1', 'Vehicle', 'development'), connectionConfig('c1', 'p1', port)],
       'nodes'
@@ -197,7 +201,7 @@ describe('Node-RED deploy lifecycle (#119)', () => {
     assert.strictEqual(c1b.profile.dialect, 'development');
     await assertBound(port);
 
-    // Message 441 now decodes as GNSS_INTEGRITY via the new dialect.
+    /** Message 441 now decodes as GNSS_INTEGRITY via the new dialect. */
     const message = await decodeUntil(
       c1b,
       port,
@@ -214,15 +218,17 @@ describe('Node-RED deploy lifecycle (#119)', () => {
     await helper.load([connectionNode, profileNode], flow);
     await assertBound(port);
 
-    // Delete the profile. The connection must not keep decoding/commanding with a
-    // missing required profile, and its UDP port must be released (#116).
+    /**
+     * Delete the profile. The connection must not keep decoding/commanding with a
+     * missing required profile, and its UDP port must be released (#116).
+     */
     await helper.setFlows([connectionConfig('c1', 'p1', port)], 'nodes');
     const c1 = helper.getNode('c1');
     assert.ok(c1, 'connection node still present');
     assert.strictEqual(c1._active, false, 'connection is not active without its profile');
     await waitBindable(port);
 
-    // A send now rejects with a clear structured fail-closed error.
+    /** A send now rejects with a clear structured fail-closed error. */
     await assert.rejects(
       c1.send({ name: 'HEARTBEAT', fields: {} }),
       (err) => err.code === 'NO_PROFILE' || err.code === 'CONNECTION_INVALID'
@@ -235,12 +241,12 @@ describe('Node-RED deploy lifecycle (#119)', () => {
     await helper.load([connectionNode, profileNode], profileFlow);
 
     for (let i = 0; i < 4; i += 1) {
-      // Add the connection on the fixed port.
+      /** Add the connection on the fixed port. */
       await helper.setFlows([...profileFlow, connectionConfig('c1', 'p1', port)], 'nodes');
       const c1 = helper.getNode('c1');
       assert.ok(c1 && c1._active, `iteration ${i}: connection active`);
       await assertBound(port);
-      // Remove it again; the port must be free before the next iteration binds.
+      /** Remove it again; the port must be free before the next iteration binds. */
       await helper.setFlows(profileFlow, 'nodes');
       await waitBindable(port);
     }
@@ -261,7 +267,7 @@ describe('Node-RED deploy lifecycle (#119)', () => {
     await helper.load([connectionNode, profileNode], flow);
     const c1 = helper.getNode('c1');
 
-    // sysid 1 -> 'pa' (ardupilotmega): ATTITUDE decodes.
+    /** sysid 1 -> 'pa' (ardupilotmega): ATTITUDE decodes. */
     const decoded = await decodeUntil(
       c1,
       port,
@@ -271,9 +277,11 @@ describe('Node-RED deploy lifecycle (#119)', () => {
     );
     assert.strictEqual(decoded.payload.profile, 'A');
 
-    // Edit routed profile 'pa' to minimal (a 'nodes' deploy: the connection's own
-    // config is unchanged, so Node-RED leaves it running — only the reconcile can
-    // apply the change). ATTITUDE then fails to decode against minimal.
+    /**
+     * Edit routed profile 'pa' to minimal (a 'nodes' deploy: the connection's own
+     * config is unchanged, so Node-RED leaves it running — only the reconcile can
+     * apply the change). ATTITUDE then fails to decode against minimal.
+     */
     await helper.setFlows(
       [
         profileConfig('p_def', 'Def', 'minimal'),
@@ -298,7 +306,8 @@ describe('Node-RED deploy lifecycle (#119)', () => {
 
   it('stops resolving a renamed legacy name-referenced routed profile (#118)', async () => {
     const port = await freeUdpPort();
-    const routes = [{ sysid: 1, compid: '*', profile: 'Ardu' }]; // referenced by NAME
+    /** The route references the profile by NAME (legacy form), not by id. */
+    const routes = [{ sysid: 1, compid: '*', profile: 'Ardu' }];
     const flow = [
       profileConfig('p_def', 'Def', 'minimal'),
       profileConfig('pa', 'Ardu', 'ardupilotmega'),
@@ -308,8 +317,10 @@ describe('Node-RED deploy lifecycle (#119)', () => {
     const c1 = helper.getNode('c1');
     assert.strictEqual(c1.resolveProfile('Ardu'), helper.getNode('pa'));
 
-    // Rename the profile (same id, new name) via a 'nodes' deploy. The connection
-    // survives; the old name must stop resolving and the new name must resolve.
+    /**
+     * Rename the profile (same id, new name) via a 'nodes' deploy. The connection
+     * survives; the old name must stop resolving and the new name must resolve.
+     */
     await helper.setFlows(
       [
         profileConfig('p_def', 'Def', 'minimal'),
@@ -325,9 +336,12 @@ describe('Node-RED deploy lifecycle (#119)', () => {
   });
 
   it('cancels a reconnecting transport timer when the connection is removed (#119)', async () => {
-    // A tcp-client to a closed port enters reconnect backoff; removing the node
-    // must cancel the reconnect timer via the async close path.
-    const deadPort = await freeUdpPort(); // nothing is listening on TCP there
+    /**
+     * A tcp-client to a closed port enters reconnect backoff; removing the node
+     * must cancel the reconnect timer via the async close path. Nothing is
+     * listening on TCP at `deadPort`.
+     */
+    const deadPort = await freeUdpPort();
     const flow = [
       profileConfig('p1', 'Vehicle', 'common'),
       {
@@ -348,7 +362,7 @@ describe('Node-RED deploy lifecycle (#119)', () => {
     const transport = c1._transport;
     assert.ok(transport, 'transport created');
 
-    // Wait until it is actively in reconnect backoff (a timer is pending).
+    /** Wait until it is actively in reconnect backoff (a timer is pending). */
     await new Promise((resolve, reject) => {
       const deadline = Date.now() + 4000;
       const check = () => {
@@ -363,7 +377,7 @@ describe('Node-RED deploy lifecycle (#119)', () => {
       check();
     });
 
-    // Remove the connection; the close path must clear the reconnect timer.
+    /** Remove the connection; the close path must clear the reconnect timer. */
     await helper.setFlows([profileConfig('p1', 'Vehicle', 'common')], 'nodes');
     assert.strictEqual(transport._reconnectTimer, null, 'reconnect timer cancelled on close');
     assert.strictEqual(transport._closing, true, 'transport marked closing');

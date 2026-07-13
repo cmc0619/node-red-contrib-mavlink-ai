@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { MockRED } = require('../helpers/mock-red');
+const { nextEvent } = require('../helpers/next-event');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
 
@@ -21,38 +22,24 @@ const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
  * profile-dependent state on flows:started.
  */
 
-// A GNSS_INTEGRITY (message id 441) frame from sysid 1. The message exists only
-// in the development dialect, so `common` cannot decode it but `development` can.
 const GNSS_INTEGRITY_MSGID = 441;
+
+/**
+ * A GNSS_INTEGRITY (message id 441) frame from sysid 1. The message exists only
+ * in the development dialect, so `common` cannot decode it but `development` can.
+ *
+ * @returns {Buffer} the encoded frame
+ */
 function gnssIntegrityFrame() {
   const dev = loadDialect('development');
   const codec = new MavlinkCodec({ bundle: dev, version: 'v2', sysid: 1, compid: 1 });
   return codec.encode('GNSS_INTEGRITY', {});
 }
 
-/**
- * Resolve on the first matching event, or reject after a timeout. Feeding one
- * datagram directly at the transport is enough — the splitter buffers it and
- * the parser emits on a later tick, so we wait rather than assert synchronously.
- */
-function nextEvent(emitter, event, timeoutMs = 2000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      emitter.removeListener(event, onEvent);
-      reject(new Error(`timeout waiting for '${event}'`));
-    }, timeoutMs);
-    function onEvent(payload) {
-      clearTimeout(timer);
-      resolve(payload);
-    }
-    emitter.once(event, onEvent);
-  });
-}
-
 test('editing a profile dialect updates a running connection on redeploy (message 441)', async (t) => {
   const RED = new MockRED().loadNodes();
 
-  // Start on `common`.
+  /** Start on `common`. */
   RED.create('mavlink-ai-profile', {
     id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'common', mavlinkVersion: 'v2',
     sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
@@ -66,8 +53,10 @@ test('editing a profile dialect updates a running connection on redeploy (messag
 
   const frame = gnssIntegrityFrame();
 
-  // 1. With the common profile, message 441 cannot be decoded: expect a
-  //    structured decode error naming the common dialect.
+  /**
+   * With the common profile, message 441 cannot be decoded: expect a structured
+   * decode error naming the common dialect.
+   */
   const errPromise = nextEvent(conn.emitter, 'decodeError');
   conn._transport.emit('data', frame);
   const decodeError = await errPromise;
@@ -75,21 +64,25 @@ test('editing a profile dialect updates a running connection on redeploy (messag
   assert.strictEqual(decodeError.payload.context.msgid, GNSS_INTEGRITY_MSGID);
   assert.strictEqual(decodeError.payload.context.dialect, 'common');
 
-  // 2. Change the profile's dialect to `development` and redeploy. Node-RED
-  //    recreates the profile config node under the same id; the connection node
-  //    is left running (its own config is unchanged).
+  /**
+   * Change the profile's dialect to `development` and redeploy. Node-RED
+   * recreates the profile config node under the same id; the connection node is
+   * left running (its own config is unchanged).
+   */
   RED.create('mavlink-ai-profile', {
     id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'development', mavlinkVersion: 'v2',
     sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.events.emit('flows:started');
 
-  // The connection must now hold the new profile without a transport restart.
+  /** The connection must now hold the new profile without a transport restart. */
   assert.strictEqual(conn.profile.dialect, 'development');
   assert.strictEqual(conn.profile, RED.nodes.getNode('p1'));
 
-  // 3. The same message 441 now decodes as GNSS_INTEGRITY via the development
-  //    dialect — no Node-RED restart required.
+  /**
+   * The same message 441 now decodes as GNSS_INTEGRITY via the development
+   * dialect — no Node-RED restart required.
+   */
   const msgPromise = nextEvent(conn.emitter, 'message');
   conn._transport.emit('data', gnssIntegrityFrame());
   const message = await msgPromise;
@@ -114,9 +107,11 @@ test('an edited default profile that is now invalid fails the connection closed 
 
   const transport = conn._transport;
 
-  // Redeploy the profile under the same id with an unloadable dialect. A
-  // required default profile that becomes invalid must NOT keep running on the
-  // stale dialect (#116): the connection fails closed and releases the socket.
+  /**
+   * Redeploy the profile under the same id with an unloadable dialect. A required
+   * default profile that becomes invalid must NOT keep running on the stale
+   * dialect (#116): the connection fails closed and releases the socket.
+   */
   RED.create('mavlink-ai-profile', {
     id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'nonexistent-dialect', mavlinkVersion: 'v2',
     sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
@@ -125,8 +120,10 @@ test('an edited default profile that is now invalid fails the connection closed 
   RED.events.emit('flows:started');
   await conn._deactivating;
 
-  // The connection is inactive, the decoder is gone, and the transport has been
-  // stopped and released.
+  /**
+   * The connection is inactive, the decoder is gone, and the transport has been
+   * stopped and released.
+   */
   assert.strictEqual(conn._active, false);
   assert.strictEqual(conn._transport, null, 'transport was released');
   assert.strictEqual(conn._decoder, null, 'decoder was destroyed');
@@ -136,7 +133,7 @@ test('an edited default profile that is now invalid fails the connection closed 
   assert.match(logged, /PROFILE_INVALID/);
   assert.match(logged, /deactivated and transport released/);
 
-  // New sends reject with the structured deactivation error, not a generic miss.
+  /** New sends reject with the structured deactivation error, not a generic miss. */
   await assert.rejects(
     conn.send({ name: 'HEARTBEAT', fields: {} }),
     (err) => err.code === 'PROFILE_INVALID'
@@ -159,9 +156,11 @@ test('deleting the default profile deactivates the connection and releases the t
 
   const transport = conn._transport;
 
-  // Delete the profile config node (Node-RED removes it from the registry) and
-  // redeploy. The connection node itself is unchanged, so it is left running —
-  // it must notice the missing required profile and fail closed (#116).
+  /**
+   * Delete the profile config node (Node-RED removes it from the registry) and
+   * redeploy. The connection node itself is unchanged, so it is left running — it
+   * must notice the missing required profile and fail closed (#116).
+   */
   RED.remove('p1');
   assert.strictEqual(RED.nodes.getNode('p1'), null);
   RED.events.emit('flows:started');
@@ -193,29 +192,33 @@ test('restoring a valid default profile reactivates a deactivated connection (#1
   });
   t.after(() => RED.close(conn));
 
-  // Delete the profile -> deactivate.
+  /** Delete the profile -> deactivate. */
   RED.remove('p1');
   RED.events.emit('flows:started');
   await conn._deactivating;
   assert.strictEqual(conn._active, false);
 
-  // Re-create the profile under the same id on a later deploy -> reactivate.
+  /** Re-create the profile under the same id on a later deploy -> reactivate. */
   RED.create('mavlink-ai-profile', {
     id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'development', mavlinkVersion: 'v2',
     sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.events.emit('flows:started');
-  // Reactivation restarts the transport after any pending teardown resolves.
-  await conn._deactivating;
-  await new Promise((resolve) => setImmediate(resolve));
+  /**
+   * Reactivation restarts the transport after any pending teardown resolves;
+   * await the connection's own activation signal rather than guessing at ticks.
+   */
+  await conn._activating;
 
   assert.strictEqual(conn._active, true);
   assert.strictEqual(conn.profile, RED.nodes.getNode('p1'));
   assert.strictEqual(conn.profile.dialect, 'development');
   assert.ok(conn._transport, 'transport was restarted');
 
-  // The reactivated connection decodes with the restored dialect: message 441
-  // is defined only by `development`, so it now decodes instead of erroring.
+  /**
+   * The reactivated connection decodes with the restored dialect: message 441 is
+   * defined only by `development`, so it now decodes instead of erroring.
+   */
   const msgPromise = nextEvent(conn.emitter, 'message');
   conn._transport.emit('data', gnssIntegrityFrame());
   const message = await msgPromise;
@@ -236,22 +239,26 @@ test('rebuilding the profile preserves the codec learned per-peer wire version (
   });
   t.after(() => RED.close(conn));
 
-  // The connection has learned that sysid 7 speaks MAVLink v1 (0xFE magic), so
-  // an `auto` codec frames sends to it as v1.
+  /**
+   * The connection has learned that sysid 7 speaks MAVLink v1 (0xFE magic), so an
+   * `auto` codec frames sends to it as v1.
+   */
   const oldCodec = conn._codec;
   oldCodec.noteInboundMagic(0xfe, 7);
   assert.strictEqual(oldCodec.effectiveVersion(7), 'v1');
 
-  // Edit the profile (still `auto`) and redeploy without a transport restart.
+  /** Edit the profile (still `auto`) and redeploy without a transport restart. */
   RED.create('mavlink-ai-profile', {
     id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'development', mavlinkVersion: 'auto',
     sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.events.emit('flows:started');
 
-  // The codec was rebuilt for the new dialect, but the learned per-peer version
-  // carries over so an immediate send to the v1-only peer is still framed v1 —
-  // not reset to v2 until another inbound frame arrives.
+  /**
+   * The codec was rebuilt for the new dialect, but the learned per-peer version
+   * carries over so an immediate send to the v1-only peer is still framed v1 —
+   * not reset to v2 until another inbound frame arrives.
+   */
   assert.notStrictEqual(conn._codec, oldCodec, 'codec was rebuilt');
   assert.strictEqual(conn._codec.effectiveVersion(7), 'v1');
 });
