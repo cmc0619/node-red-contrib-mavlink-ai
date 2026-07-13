@@ -181,6 +181,13 @@ Two layers, on purpose:
 
 Importable flows live in [`examples/`](examples/).
 
+The examples also include a dependency-free, read-only vehicle status web page,
+an advisory safety monitor, a local display geofence, mission upload/clear,
+a gated parameter browser, and JSONL telemetry record/replay. After importing
+the status flow, open `/mavlink-ai/status` on the Node-RED host. These examples
+compose the normalized v2 message contracts; they do not recreate the earlier
+package's hidden message bus or require the legacy `node-red-dashboard` palette.
+
 ## Message contracts
 
 Decoded messages and outbound messages use stable shapes (see `DESIGN.md`

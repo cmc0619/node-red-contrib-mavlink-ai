@@ -238,6 +238,21 @@ These are practical release/readiness items, not architecture gaps.
 - [ ] screenshots (#13)
 - [ ] npm publish readiness pass (#14)
 
+## Phase 16: Legacy example ideas, adapted to v2
+
+- [x] Dependency-free, profile-aware vehicle status web dashboard.
+- [x] Advisory safety monitor with heartbeat, battery, GPS, and altitude policy examples.
+- [x] Mission upload/download/clear example, including acknowledged clear.
+- [x] Gated parameter browser using the stateful `mavlink-ai-param` workflow.
+- [x] JSONL telemetry recorder and timing-preserving offline replay.
+- [x] Synthetic status-dashboard replay fixture (not a replacement for issue #12 recorded protocol fixtures).
+- [x] Local geofence visualization/alert data without pretending to configure the autopilot fence.
+- [x] Importability, wire-reference, Function-node syntax, asset, and fixture tests for examples.
+
+These are v2 compositions over profiles, connections, normalized messages, and
+workflow nodes. They intentionally do not restore the old internal message bus,
+couple a UI to the transport layer, or add an automatic safety-control path.
+
 ## Development rule
 
 Built in this order:
