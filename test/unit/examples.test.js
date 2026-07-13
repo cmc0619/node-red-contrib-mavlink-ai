@@ -73,3 +73,17 @@ test('web assets and telemetry replay fixture are packaged and valid', () => {
     assert.ok(record.payload.profile_id);
   }
 });
+
+test('web example flows load packaged assets from the Node-RED Docker user directory', () => {
+  const expectedPaths = new Map([
+    ['03-parameters/24-parameter-browser-web.json', '/data/node_modules/node-red-contrib-mavlink-ai/examples/assets/parameter-browser.html'],
+    ['09-observability/21-vehicle-status-web-dashboard.json', '/data/node_modules/node-red-contrib-mavlink-ai/examples/assets/vehicle-status-dashboard.html']
+  ]);
+
+  for (const [file, expectedPath] of expectedPaths) {
+    const flow = JSON.parse(fs.readFileSync(path.join(EXAMPLES, file), 'utf8'));
+    const assetNode = flow.find((node) => node.type === 'function' && node.func?.includes('msg.filename'));
+    assert.ok(assetNode, `${file} must include an asset-path Function node`);
+    assert.match(assetNode.func, new RegExp(`msg\\.filename = ['\"]${expectedPath.replaceAll('/', '\\/')}['\"]`));
+  }
+});
