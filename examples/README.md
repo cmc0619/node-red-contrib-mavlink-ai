@@ -21,10 +21,12 @@ Import these flows from Node-RED using **Menu → Import → Examples → node-r
 ## 03 Parameters
 
 - `10-param-read-write.json` — Read, set, and list parameters.
+- `24-parameter-browser-web.json` — Dependency-free parameter browser with gated writes at `/mavlink-ai/parameters`.
 
 ## 04 Missions
 
 - `06-download-mission.json` — Download a mission with progress and errors.
+- `23-upload-clear-mission.json` — Upload, verify, and clear a mission, including acknowledged clear.
 
 ## 05 Routing and swarm
 
@@ -46,6 +48,19 @@ Import these flows from Node-RED using **Menu → Import → Examples → node-r
 ## 08 SITL
 
 - `px4-sitl-telemetry.json` — Broad PX4 or ArduPilot SITL telemetry and error inspection.
+
+## 09 Observability and operator tools
+
+- `21-vehicle-status-web-dashboard.json` — Read-only, profile-aware vehicle status page at `/mavlink-ai/status`; no dashboard palette required.
+- `22-safety-monitor.json` — Advisory heartbeat, battery, GPS, and altitude state transitions; it never sends commands.
+- `25-record-and-replay-telemetry.json` — JSONL recorder and timing-preserving replay with a bundled synthetic fixture.
+- `26-geofence-monitor.json` — Local distance/altitude display fence; monitoring only, not autopilot enforcement.
+
+The web examples serve assets from `node_modules/node-red-contrib-mavlink-ai/examples/assets/`, assuming the normal Node-RED palette installation layout. If the repository is linked or installed elsewhere, edit the asset path function in the imported flow.
+
+Protect all Node-RED HTTP nodes with `httpNodeAuth` before exposing them beyond a trusted development network. The status dashboard is read-only. The parameter page can change vehicle configuration and therefore requires the literal confirmation `SET`, but that confirmation is not a substitute for authentication.
+
+The synthetic replay fixture is `examples/fixtures/vehicle-status-demo.jsonl`. It is useful for UI development; it does not replace the recorded protocol fixtures still tracked in the roadmap.
 
 All UDP examples assume a MAVLink source such as SITL, a vehicle, or `mavlink-router` sending to UDP port `14550`.
 
