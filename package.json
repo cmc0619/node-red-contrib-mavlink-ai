@@ -54,5 +54,9 @@
       "mavlink-ai-swarm": "nodes/mavlink-ai-swarm.js",
       "mavlink-ai-fanout": "nodes/mavlink-ai-fanout.js"
     }
+  },
+  "devDependencies": {
+    "node-red": "^5.0.1",
+    "node-red-node-test-helper": "^0.3.6"
   }
 }

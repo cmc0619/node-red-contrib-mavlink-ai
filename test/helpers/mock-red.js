@@ -93,6 +93,18 @@ class MockRED {
     this._nodes.set(node.id, node);
   }
 
+  /**
+   * Remove a node from the registry, standing in for a config node deleted on
+   * a Node-RED redeploy. After this, `getNode(id)` returns null and name scans
+   * no longer see it.
+   *
+   * @param {string} id  the node id to remove
+   * @returns {boolean} whether a node was removed
+   */
+  remove(id) {
+    return this._nodes.delete(id);
+  }
+
   /** Instantiate a node of `type` with `config` (config.id is required). */
   create(type, config) {
     const Ctor = this._types.get(type);
