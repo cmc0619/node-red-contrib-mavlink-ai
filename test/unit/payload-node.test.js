@@ -97,7 +97,8 @@ test('gimbal_manager_aim builds a GIMBAL_MANAGER_SET_PITCHYAW message in radians
   assert.ok(Math.abs(aim.fields.yaw - Math.PI / 4) < 1e-9);
   assert.strictEqual(aim.fields.flags, 16);
   assert.strictEqual(aim.fields.gimbal_device_id, 0);
-  assert.strictEqual(aim.fields.pitch_rate, 0);
+  assert.ok(Number.isNaN(aim.fields.pitch_rate), 'unused rate is NaN (ignore), not 0');
+  assert.ok(Number.isNaN(aim.fields.yaw_rate), 'unused rate is NaN (ignore), not 0');
   assert.strictEqual(aim.fields.target_system, 1);
 });
 

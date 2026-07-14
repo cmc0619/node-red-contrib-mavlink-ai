@@ -227,7 +227,7 @@
     <li><b>Set Mode (image / video / survey)</b> — <code>SET_CAMERA_MODE</code>.</li>
     <li><b>Trigger by Distance</b> — <code>DO_SET_CAM_TRIGG_DIST</code>: shoot every N metres of travel (the backbone of fixed-wing mapping). <code>0</code> disables it; <b>Trigger now</b> also fires one frame immediately.</li>
     <li><b>Aim — mount control (legacy)</b> — <code>DO_MOUNT_CONTROL</code> in degrees, under MAVLink targeting. Widely supported.</li>
-    <li><b>Aim — gimbal manager</b> — <code>GIMBAL_MANAGER_SET_PITCHYAW</code>, the modern gimbal-manager protocol. This is a <b>message</b>, not a command; pitch/yaw are entered in degrees and sent in radians (rates held at 0 for a static aim). <b>Gimbal ID</b> <code>0</code> targets all gimbals; <b>Yaw lock</b> makes yaw earth-frame instead of following the vehicle.</li>
+    <li><b>Aim — gimbal manager</b> — <code>GIMBAL_MANAGER_SET_PITCHYAW</code>, the modern gimbal-manager protocol. This is a <b>message</b>, not a command; pitch/yaw are entered in degrees and sent in radians (the angular rates are sent as NaN — the message's "ignore" sentinel — so a static aim isn't misread as "move at 0 rad/s"). <b>Gimbal ID</b> <code>0</code> targets all gimbals; <b>Yaw lock</b> makes yaw earth-frame instead of following the vehicle.</li>
     <li><b>Set Servo (PWM)</b> — <code>DO_SET_SERVO</code> (instance + PWM µs, typically 1000–2000).</li>
     <li><b>Set Relay (on / off)</b> — <code>DO_SET_RELAY</code>.</li>
     <li><b>Grab / Release</b> — <code>DO_GRIPPER</code>.</li>
