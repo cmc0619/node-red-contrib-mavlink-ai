@@ -101,14 +101,12 @@
     <input type="number" id="node-input-spacingMs" min="0" placeholder="0 = no pacing">
   </div>
   <div class="form-row">
-    <label for="node-input-dryRun">Dry-run</label>
-    <input type="checkbox" id="node-input-dryRun" style="display: inline-block; width: auto; vertical-align: top;">
-    <span style="color:#888;">output the built messages instead of sending/queueing them</span>
+    <label for="node-input-dryRun" title="Output the built messages instead of sending/queueing them">Dry-run</label>
+    <input type="checkbox" id="node-input-dryRun" title="Output the built messages instead of sending/queueing them" style="display: inline-block; width: auto; vertical-align: top;">
   </div>
   <div class="form-row">
-    <label for="node-input-awaitAck">Await acks</label>
-    <input type="checkbox" id="node-input-awaitAck" style="width:auto; vertical-align:middle;">
-    <span style="color:#888;">send via the connection and aggregate per-vehicle COMMAND_ACKs</span>
+    <label for="node-input-awaitAck" title="Send via the connection and aggregate per-vehicle COMMAND_ACKs">Await acks</label>
+    <input type="checkbox" id="node-input-awaitAck" title="Send via the connection and aggregate per-vehicle COMMAND_ACKs" style="width:auto; vertical-align:middle;">
   </div>
   <div class="form-row mav-fanout-ack">
     <label for="node-input-connection">Connection</label>
@@ -123,9 +121,8 @@
     <input type="number" id="node-input-maxRetries">
   </div>
   <div class="form-row mav-fanout-ack">
-    <label for="node-input-stopOnError">Stop on error</label>
-    <input type="checkbox" id="node-input-stopOnError" style="display: inline-block; width: auto; vertical-align: top;">
-    <span style="color:#888;">abort remaining vehicles after the first failure</span>
+    <label for="node-input-stopOnError" title="Abort remaining vehicles after the first failure">Stop on error</label>
+    <input type="checkbox" id="node-input-stopOnError" title="Abort remaining vehicles after the first failure" style="display: inline-block; width: auto; vertical-align: top;">
   </div>
 </script>
 
