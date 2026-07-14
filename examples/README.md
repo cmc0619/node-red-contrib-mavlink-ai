@@ -17,6 +17,7 @@ Import these flows from Node-RED using **Menu → Import → Examples → node-r
 - `11-telemetry-stream-interval.json` — Start and stop an ATTITUDE stream.
 - `12-onboard-companion-debug-storyboard.json` — Preview companion-computer routines in Debug.
 - `14-command-beginner-demo-sequence.json` — Debug-only arm/takeoff/spin/photo/land sequence.
+- `27-offboard-guided-move-sequence.json` — Set GUIDED, then stream position/velocity setpoints with the move node.
 
 ## 03 Parameters
 
@@ -39,6 +40,8 @@ Import these flows from Node-RED using **Menu → Import → Examples → node-r
 - `16-command-camera-trigger.json` — Trigger camera photo and video commands.
 - `17-command-gimbal-roi.json` — Control gimbal pitch/yaw and regions of interest.
 - `18-command-log-request.json` — Request the onboard log list.
+- `28-sub-lights-and-gripper.json` — ArduSub payload: light servo levels and manipulator gripper via the payload node.
+- `29-plane-survey-gimbal-photo.json` — Fixed-wing survey: aim the gimbal down and trigger the camera via the payload node.
 
 ## 07 Safety-critical
 

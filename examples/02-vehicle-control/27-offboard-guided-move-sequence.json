@@ -1,0 +1,243 @@
+[
+  {
+    "id": "flow27",
+    "type": "tab",
+    "label": "MAVLink AI - 27 Offboard Move Sequence",
+    "disabled": false,
+    "info": "Guided/offboard control: switch the vehicle into a setpoint-accepting mode, then send position/velocity setpoints with the mavlink-ai-move node.\n\nSteps: 1) Set GUIDED, 2) go up 5 m and 10 m North (a discrete GUIDED position target — ArduPilot flies there and holds), 3) stream forward at 2 m/s in body frame (inject 3 repeats every 0.5 s — velocity setpoints must be refreshed or the vehicle stops on failsafe), 4) stop by commanding zero velocity (disable inject 3 first). Altitude/climb are entered up-positive; the move node maps them to NED's negative z/vz for you.\n\nStreaming & modes: this flow targets ArduPilot GUIDED. PX4 OFFBOARD additionally requires setpoints to already be streaming *before* the mode switch, and continuous streaming in general is best driven by a repeating inject/timer (inject 3 shows this) — built-in rate streaming is tracked in roadmap #128.\n\nSending: debug-wired only. To fly, replace the Debug node with a mavlink-ai-out node that has a connection. The move nodes can alternatively send directly if you set their Connection; the command node sends directly only with Await ack enabled, so the out-node path is simplest and consistent."
+  },
+  {
+    "id": "ai_profile_copter",
+    "type": "mavlink-ai-profile",
+    "name": "AI Profile - Copter",
+    "profileType": "copter",
+    "firmware": "ardupilot",
+    "dialect": "ardupilotmega",
+    "customDialectPath": "",
+    "mavlinkVersion": "auto",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
+    "defaultTargetSystem": 1,
+    "defaultTargetComponent": 1,
+    "preferredMissionItemType": "MISSION_ITEM_INT",
+    "defaultMissionType": "mission",
+    "heartbeatType": "",
+    "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
+    "debugProtocol": false
+  },
+  {
+    "id": "n27_note",
+    "type": "comment",
+    "z": "flow27",
+    "name": "Switch to GUIDED, then stream setpoints",
+    "info": "",
+    "x": 250,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "n27_i1",
+    "type": "inject",
+    "z": "flow27",
+    "name": "1 · Set GUIDED",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 170,
+    "y": 100,
+    "wires": [
+      [
+        "n27_mode"
+      ]
+    ]
+  },
+  {
+    "id": "n27_mode",
+    "type": "mavlink-ai-command",
+    "z": "flow27",
+    "name": "Set Mode: GUIDED",
+    "profile": "ai_profile_copter",
+    "connection": "",
+    "command": "set_mode",
+    "sendAs": "long",
+    "awaitAck": false,
+    "timeoutMs": 3000,
+    "maxRetries": 3,
+    "fields": "",
+    "presetFields": "{\"mode\":\"GUIDED\"}",
+    "x": 460,
+    "y": 100,
+    "wires": [
+      [
+        "n27_dbg"
+      ]
+    ]
+  },
+  {
+    "id": "n27_i2",
+    "type": "inject",
+    "z": "flow27",
+    "name": "2 · Up 5 m, North 10 m",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 190,
+    "y": 160,
+    "wires": [
+      [
+        "n27_pos"
+      ]
+    ]
+  },
+  {
+    "id": "n27_pos",
+    "type": "mavlink-ai-move",
+    "z": "flow27",
+    "name": "Position: N10 Alt5",
+    "profile": "ai_profile_copter",
+    "connection": "",
+    "coordinate": "local",
+    "preset": "position",
+    "frame": "MAV_FRAME_LOCAL_NED",
+    "typeMask": "",
+    "north": "10",
+    "east": "0",
+    "altitude": "5",
+    "lat": "",
+    "lon": "",
+    "velNorth": "",
+    "velEast": "",
+    "climb": "",
+    "yaw": "",
+    "yawRate": "",
+    "x": 470,
+    "y": 160,
+    "wires": [
+      [
+        "n27_dbg"
+      ]
+    ]
+  },
+  {
+    "id": "n27_i3",
+    "type": "inject",
+    "z": "flow27",
+    "name": "3 · Stream forward 2 m/s (0.5s)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "0.5",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 230,
+    "y": 220,
+    "wires": [
+      [
+        "n27_vel"
+      ]
+    ]
+  },
+  {
+    "id": "n27_vel",
+    "type": "mavlink-ai-move",
+    "z": "flow27",
+    "name": "Velocity: forward 2 m/s",
+    "profile": "ai_profile_copter",
+    "connection": "",
+    "coordinate": "local",
+    "preset": "velocity",
+    "frame": "MAV_FRAME_BODY_OFFSET_NED",
+    "typeMask": "",
+    "north": "",
+    "east": "",
+    "altitude": "",
+    "lat": "",
+    "lon": "",
+    "velNorth": "2",
+    "velEast": "0",
+    "climb": "0",
+    "yaw": "",
+    "yawRate": "",
+    "x": 480,
+    "y": 220,
+    "wires": [
+      [
+        "n27_dbg"
+      ]
+    ]
+  },
+  {
+    "id": "n27_i4",
+    "type": "inject",
+    "z": "flow27",
+    "name": "4 · Stop (hold)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 170,
+    "y": 280,
+    "wires": [
+      [
+        "n27_stop"
+      ]
+    ]
+  },
+  {
+    "id": "n27_stop",
+    "type": "mavlink-ai-move",
+    "z": "flow27",
+    "name": "Velocity: zero (hold)",
+    "profile": "ai_profile_copter",
+    "connection": "",
+    "coordinate": "local",
+    "preset": "velocity",
+    "frame": "MAV_FRAME_BODY_OFFSET_NED",
+    "typeMask": "",
+    "north": "",
+    "east": "",
+    "altitude": "",
+    "lat": "",
+    "lon": "",
+    "velNorth": "0",
+    "velEast": "0",
+    "climb": "0",
+    "yaw": "",
+    "yawRate": "",
+    "x": 470,
+    "y": 280,
+    "wires": [
+      [
+        "n27_dbg"
+      ]
+    ]
+  },
+  {
+    "id": "n27_dbg",
+    "type": "debug",
+    "z": "flow27",
+    "name": "Would send",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 720,
+    "y": 190,
+    "wires": []
+  }
+]
