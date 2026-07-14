@@ -439,8 +439,10 @@ module.exports = function registerMavlinkAiCommand(RED) {
        * numeric payload override or the raw editor's mode dropdown — must be
        * split before it hits the wire, or it truncates to main mode 0 and the
        * vehicle ignores the mode change. ArduPilot reads param2 as the whole
-       * custom_mode, so only px4 profiles are normalized. An explicit nonzero
-       * param3 is preserved.
+       * custom_mode, so only px4 profiles are normalized. A packed param2
+       * carries the sub mode too, so its split sub overwrites param3 (a stale
+       * dropdown value there would otherwise flip AUTO.MISSION to AUTO.RTL); a
+       * bare main-mode param2 is left alone and any separate param3 preserved.
        */
       if (
         defaults.firmware === 'px4' &&
@@ -449,9 +451,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
         const split = splitPx4CustomMode(fields.param2);
         if (split) {
           fields.param2 = split.main;
-          if (!Number(fields.param3)) {
-            fields.param3 = split.sub;
-          }
+          fields.param3 = split.sub;
         }
       }
 
@@ -459,16 +459,13 @@ module.exports = function registerMavlinkAiCommand(RED) {
        * PX4 NAV_TAKEOFF semantics (issue #143): param7 is AMSL on PX4 (NaN =
        * use MIS_TAKEOFF_ALT) while ArduPilot treats it as relative-to-home,
        * and a param4 yaw of 0 swings the nose to north (NaN = keep current
-       * heading). When the caller supplied no explicit value, prefer PX4's
-       * own NaN defaults over numbers that are only correct for ArduPilot.
+       * heading). The takeoff builder only writes param7 (from altitude/param7),
+       * so map the altitude and yaw aliases here and fall back to PX4's own NaN
+       * defaults rather than the numbers that are only correct for ArduPilot.
        */
       if (defaults.firmware === 'px4' && selected === 'takeoff' && !useInt) {
-        if (firstDefined(merged.altitude, merged.alt, merged.param7) === undefined) {
-          fields.param7 = NaN;
-        }
-        if (firstDefined(merged.yaw, merged.param4) === undefined) {
-          fields.param4 = NaN;
-        }
+        fields.param7 = firstDefined(merged.altitude, merged.alt, merged.param7, NaN);
+        fields.param4 = firstDefined(merged.yaw, merged.param4, NaN);
       }
 
       const targetSystem = firstDefined(merged.target_system, defaults.defaultTargetSystem, 1);
