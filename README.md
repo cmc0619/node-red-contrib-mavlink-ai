@@ -135,7 +135,8 @@ library's signing primitives (no custom crypto layer):
   forces MAVLink 2 framing, since signed frames are v2-only.
 - **Verify inbound** — checks signatures on received signed packets; a bad
   signature is rejected and surfaced on the In node's errors output as
-  `mavlink/rejected` (`reason: "signature-invalid"`).
+  `mavlink/rejected` (`reason: "signature-invalid"`). Verification also enforces
+  the signing spec's **anti-replay** rule (below).
 - **Require signature** — with verify on, also rejects *unsigned* inbound
   packets (`reason: "signature-required"`).
 - **Link ID** — the 0–255 link id written into outbound signatures.
@@ -146,13 +147,27 @@ it is never written into exported flow JSON. The signature timestamp uses the
 protocol library's default; raw `sendRaw` buffers are sent as-is and are not
 signed.
 
-**Scope note:** verification checks signature *authenticity* only. MAVLink
-signing's optional replay protection — per-`(sysid, compid, linkId)` monotonic
-timestamp state and a freshness window — is **not** implemented, because the
-protocol library exposes only the authenticity check and stateful, persisted
-replay tracking is out of scope for this minimal support. A captured, validly
-signed frame can therefore be replayed; do not rely on signing alone as an
-anti-replay control.
+**Anti-replay.** Verification is not authenticity-only. As the signing spec
+requires, a validly signed frame is discarded when either:
+
+- its timestamp is **older than the last accepted timestamp** for its
+  `(sysid, compid, link_id)` stream (the monotonic rule), or
+- its timestamp is **more than one minute behind the receiver's clock** (the
+  freshness window).
+
+Both are rejected with `reason: "signature-replayed"`. This is part of
+verification — there is no separate switch; enabling *Verify inbound* enables it.
+
+State is **in-memory** and needs no persistence: the freshness window is what
+covers a Node-RED restart. After a restart the receiver has no stored per-stream
+timestamps, but a captured frame replayed later is still more than a minute old,
+so the freshness window drops it; the monotonic rule then catches any replay
+*within* the minute once a fresh frame re-establishes the stream baseline.
+
+This assumes the sender's signing timestamp tracks real time (10 µs units since
+2015-01-01) — which the spec requires senders to bootstrap from their clock, a
+stored maximum, or GPS. A vehicle with no valid time source is out of scope by
+design; it should not be signing (or flying) with an untrustworthy clock.
 
 ## Validation model
 

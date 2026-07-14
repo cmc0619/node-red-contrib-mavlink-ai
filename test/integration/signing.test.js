@@ -240,3 +240,93 @@ test('routed connection verifies against the matched profile key', async (t) => 
   assert.strictEqual(reject.sysid, 2);
   assert.strictEqual(reject.reason, 'signature-invalid');
 });
+
+/**
+ * Anti-replay end-to-end (#100): a connection that verifies signatures accepts a
+ * signed frame once, then rejects a byte-for-byte replay of the *same* frame
+ * with `signature-replayed` — the monotonic-timestamp rule the signing spec
+ * requires, surfaced on the same structured rejection path as other diagnostics.
+ */
+test('connection rejects a replayed signed frame', async (t) => {
+  const RED = new MockRED().loadNodes();
+
+  RED.create('mavlink-ai-profile', {
+    id: 'p_replay',
+    name: 'Replay',
+    profileType: 'gcs',
+    dialect: 'ardupilotmega',
+    mavlinkVersion: 'v2',
+    sourceSystemId: 255,
+    sourceComponentId: 190,
+    defaultTargetSystem: 1,
+    defaultTargetComponent: 1,
+    verifyInbound: true,
+    requireSignature: true,
+    signingLinkId: 1,
+    credentials: { signingPassphrase: 'replay-secret' }
+  });
+
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c_replay',
+    name: 'Replay UDP',
+    profile: 'p_replay',
+    transport: 'udp-peer',
+    routingMode: 'single-profile',
+    unmatchedPolicy: 'default',
+    bindAddress: '127.0.0.1',
+    bindPort: 0,
+    reconnect: false,
+    heartbeat: false
+  });
+
+  const addr = await new Promise((resolve) => conn._transport.once('listening', resolve));
+  const port = addr.port;
+
+  const bundle = loadDialect('ardupilotmega');
+  const signer = new MavlinkCodec({
+    bundle,
+    version: 'v2',
+    sysid: 1,
+    compid: 1,
+    signing: { passphrase: 'replay-secret', linkId: 2, signOutbound: true }
+  });
+  /** One frame, captured so the exact bytes (and timestamp) can be replayed. */
+  const frame = signer.encode('HEARTBEAT', HEARTBEAT);
+
+  const sock = dgram.createSocket('udp4');
+  t.after(async () => {
+    await RED.close(conn);
+    await new Promise((r) => sock.close(r));
+  });
+
+  const until = (attach, sendOnce, label) =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        clearInterval(retry);
+        reject(new Error(`timeout: ${label}`));
+      }, 5000);
+      const done = (v) => {
+        clearTimeout(timer);
+        clearInterval(retry);
+        resolve(v);
+      };
+      attach(done);
+      sendOnce();
+      const retry = setInterval(sendOnce, 200);
+    });
+
+  const msg = await until(
+    (done) => conn.subscribe({ messageNames: ['HEARTBEAT'] }, done),
+    () => sock.send(frame, port, '127.0.0.1'),
+    'first signed frame accepted'
+  );
+  assert.strictEqual(msg.payload.name, 'HEARTBEAT');
+
+  const reject = await until(
+    (done) => conn.emitter.on('rejected', done),
+    () => sock.send(frame, port, '127.0.0.1'),
+    'replayed frame rejected'
+  );
+  assert.strictEqual(reject.reason, 'signature-replayed');
+  assert.strictEqual(reject.sysid, 1);
+});
