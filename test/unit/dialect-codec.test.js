@@ -163,3 +163,54 @@ test('encode rejects unresolvable enum-name strings with the field named (#36)',
   const statustext = codec.encode('STATUSTEXT', { severity: 6, text: 'hello' });
   assert.ok(Buffer.isBuffer(statustext));
 });
+
+/**
+ * Round-trip a message through encode + the streaming decoder.
+ *
+ * @param {MavlinkCodec} codec
+ * @param {string} name
+ * @param {object} fields
+ * @returns {Promise<object>} decoded normalized message
+ */
+function roundTrip(codec, name, fields) {
+  const buf = codec.encode(name, fields);
+  return new Promise((resolve) => {
+    const dec = codec.createDecoder((packet) => resolve(codec.decode(packet, { profile: 'x' })));
+    dec.write(buf);
+  });
+}
+
+/**
+ * Each char-field case would corrupt before the #137 fix: "123" becomes the
+ * Number 123 and serializes to zero bytes; "GENERIC" collides with enum member
+ * names; a numeric param_id must address that literal parameter, not param
+ * index 42. A normal param name (ARMING_CHECK) must still round-trip unchanged.
+ */
+test('char[] fields are never enum/number-resolved: digit and enum-name text survive (#137)', async () => {
+  const b = loadDialect('ardupilotmega');
+  const codec = new MavlinkCodec({ bundle: b, version: 'v2', sysid: 1, compid: 1 });
+
+  const digits = await roundTrip(codec, 'STATUSTEXT', { severity: 6, text: '123' });
+  assert.strictEqual(digits.fields.text, '123');
+
+  const collide = await roundTrip(codec, 'STATUSTEXT', { severity: 6, text: 'GENERIC' });
+  assert.strictEqual(collide.fields.text, 'GENERIC');
+
+  const param = await roundTrip(codec, 'PARAM_SET', {
+    target_system: 1,
+    target_component: 1,
+    param_id: '42',
+    param_value: 1,
+    param_type: 2
+  });
+  assert.strictEqual(param.fields.param_id, '42');
+
+  const named = await roundTrip(codec, 'PARAM_SET', {
+    target_system: 1,
+    target_component: 1,
+    param_id: 'ARMING_CHECK',
+    param_value: 1,
+    param_type: 2
+  });
+  assert.strictEqual(named.fields.param_id, 'ARMING_CHECK');
+});
