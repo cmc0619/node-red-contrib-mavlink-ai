@@ -1,0 +1,148 @@
+[
+  {
+    "id": "flow29",
+    "type": "tab",
+    "label": "MAVLink AI - 29 Plane Survey: Gimbal & Photo",
+    "disabled": false,
+    "info": "Aerial survey/mapping payload on a fixed-wing: point a camera gimbal straight down, then capture photos. Uses the mavlink-ai-payload node for both the gimbal aim (DO_MOUNT_CONTROL, degrees) and the camera trigger (IMAGE_START_CAPTURE).\n\nThe camera is usually a separate MAVLink component, so the photo node targets component 100 (MAV_COMP_ID_CAMERA) — adjust to your camera. For real mapping you would trigger by distance rather than manually; MAV_CMD_DO_SET_CAM_TRIGG_DIST is tracked for a future payload-node release (see the roadmap). Debug-wired only; add a connection to actuate."
+  },
+  {
+    "id": "ai_profile_plane",
+    "type": "mavlink-ai-profile",
+    "name": "AI Profile - Plane",
+    "profileType": "plane",
+    "firmware": "ardupilot",
+    "dialect": "ardupilotmega",
+    "customDialectPath": "",
+    "mavlinkVersion": "auto",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
+    "defaultTargetSystem": 1,
+    "defaultTargetComponent": 1,
+    "preferredMissionItemType": "MISSION_ITEM_INT",
+    "defaultMissionType": "mission",
+    "heartbeatType": "",
+    "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
+    "debugProtocol": false
+  },
+  {
+    "id": "n29_note",
+    "type": "comment",
+    "z": "flow29",
+    "name": "Point gimbal down, then capture",
+    "info": "",
+    "x": 250,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "n29_i1",
+    "type": "inject",
+    "z": "flow29",
+    "name": "Aim gimbal straight down",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 200,
+    "y": 120,
+    "wires": [
+      [
+        "n29_gimbal"
+      ]
+    ]
+  },
+  {
+    "id": "n29_gimbal",
+    "type": "mavlink-ai-payload",
+    "z": "flow29",
+    "name": "Gimbal: pitch -90",
+    "profile": "ai_profile_plane",
+    "connection": "",
+    "action": "gimbal_aim",
+    "targetComponent": "",
+    "interval": "",
+    "count": "",
+    "sequence": "",
+    "streamId": "",
+    "statusFrequency": "",
+    "pitch": "-90",
+    "roll": "0",
+    "yaw": "0",
+    "instance": "",
+    "pwm": "",
+    "on": false,
+    "gripAction": "release",
+    "x": 480,
+    "y": 120,
+    "wires": [
+      [
+        "n29_dbg"
+      ]
+    ]
+  },
+  {
+    "id": "n29_i2",
+    "type": "inject",
+    "z": "flow29",
+    "name": "Take survey photo (comp 100)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "payload": "{\"target_component\":100}",
+    "payloadType": "json",
+    "x": 210,
+    "y": 200,
+    "wires": [
+      [
+        "n29_photo"
+      ]
+    ]
+  },
+  {
+    "id": "n29_photo",
+    "type": "mavlink-ai-payload",
+    "z": "flow29",
+    "name": "Take Photo",
+    "profile": "ai_profile_plane",
+    "connection": "",
+    "action": "camera_photo",
+    "targetComponent": "",
+    "interval": "",
+    "count": "1",
+    "sequence": "",
+    "streamId": "",
+    "statusFrequency": "",
+    "pitch": "",
+    "roll": "",
+    "yaw": "",
+    "instance": "",
+    "pwm": "",
+    "on": false,
+    "gripAction": "release",
+    "x": 470,
+    "y": 200,
+    "wires": [
+      [
+        "n29_dbg"
+      ]
+    ]
+  },
+  {
+    "id": "n29_dbg",
+    "type": "debug",
+    "z": "flow29",
+    "name": "Would send",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 720,
+    "y": 160,
+    "wires": []
+  }
+]
