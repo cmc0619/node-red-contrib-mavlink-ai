@@ -133,7 +133,7 @@ test('param node read uses the configured Param index when Param ID is blank', a
 
 test('param node auto set reads the type from the vehicle, then sets with it', async () => {
   const { conn, node } = setup({ action: 'set', paramId: 'RC1_MIN', paramValue: '3', paramType: 'auto' });
-  // Respond to the detour read with UINT8 (type 1), then echo the set.
+  /** Respond to the detour read with UINT8 (type 1), then echo the set. */
   conn.send = (m) => {
     conn.sent.push(m);
     queueMicrotask(() => {
@@ -154,6 +154,24 @@ test('param node auto set reads the type from the vehicle, then sets with it', a
   const result = outputs.map((o) => o[0]).filter(Boolean).pop();
   assert.strictEqual(result.topic, 'param/set');
   assert.strictEqual(result.payload.applied, true);
+});
+
+test('param node auto set rejects a value that does not fit the detected type', async () => {
+  const { conn, node } = setup({ action: 'set', paramId: 'RC1_MIN', paramValue: '300', paramType: 'auto' });
+  /** The vehicle reports UINT8 (type 1); 300 cannot fit, so the set must not send. */
+  conn.send = (m) => {
+    conn.sent.push(m);
+    queueMicrotask(() => {
+      if (m.name === 'PARAM_REQUEST_READ') {
+        conn.deliver(paramValue({ id: 'RC1_MIN', value: 9, type: 1 }));
+      }
+    });
+    return Promise.resolve();
+  };
+  const outputs = await run(node, { payload: {} });
+  assert.ok(!conn.sent.some((m) => m.name === 'PARAM_SET'));
+  const error = outputs.map((o) => o[2]).filter(Boolean).pop();
+  assert.strictEqual(error.payload.code, 'PARAM_VALUE_RANGE');
 });
 
 test('param node list assembles params and emits progress', async () => {
