@@ -214,3 +214,49 @@ test('char[] fields are never enum/number-resolved: digit and enum-name text sur
   });
   assert.strictEqual(named.fields.param_id, 'ARMING_CHECK');
 });
+
+/** A HEARTBEAT with numeric fields, for version-detection round-trips. */
+const HB_FIELDS = { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 };
+
+test('v1 encode strips MAVLink-2 extension fields (#138)', async () => {
+  const b = loadDialect('common');
+  const codec = new MavlinkCodec({ bundle: b, version: 'v1', sysid: 1, compid: 1 });
+  /**
+   * COMMAND_ACK core is 3 bytes (command:2 + result:1); progress, result_param2,
+   * target_system, target_component are MAVLink-2 extensions the v1 wire omits.
+   */
+  const buf = codec.encode('COMMAND_ACK', { command: 400, result: 0 });
+  assert.strictEqual(buf[0], 0xfe);
+  assert.strictEqual(buf[1], 3, 'v1 payload length must exclude extension fields');
+  /** The truncated frame still carries a valid CRC and decodes its base fields. */
+  const decoded = await roundTrip(codec, 'COMMAND_ACK', { command: 400, result: 0 });
+  assert.strictEqual(decoded.fields.command, 400);
+  assert.strictEqual(decoded.fields.result, 0);
+});
+
+test('raw.magic reflects the real wire version, including v1 (#138)', async () => {
+  const b = loadDialect('common');
+  const v1 = new MavlinkCodec({ bundle: b, version: 'v1', sysid: 1, compid: 1 });
+  const v2 = new MavlinkCodec({ bundle: b, version: 'v2', sysid: 1, compid: 1 });
+  assert.strictEqual((await roundTrip(v1, 'HEARTBEAT', HB_FIELDS)).raw.magic, 0xfe);
+  assert.strictEqual((await roundTrip(v2, 'HEARTBEAT', HB_FIELDS)).raw.magic, 0xfd);
+});
+
+test('auto version detects v1 from a real parsed frame, not header.magic (#138, #152)', async () => {
+  const b = loadDialect('common');
+  const peer = new MavlinkCodec({ bundle: b, version: 'v1', sysid: 3, compid: 1 });
+  const v1frame = peer.encode('HEARTBEAT', HB_FIELDS);
+  const auto = new MavlinkCodec({ bundle: b, version: 'auto', sysid: 255, compid: 190 });
+  assert.strictEqual(auto.effectiveVersion(3), 'v2', 'v2 until an inbound frame is seen');
+
+  /** Parse the real frame the way the connection does, then feed the wire byte. */
+  const packet = await new Promise((resolve) => {
+    const dec = auto.createDecoder((p) => resolve(p));
+    dec.write(v1frame);
+  });
+  assert.strictEqual(packet.header.magic, 0, 'node-mavlink v1 parser leaves header.magic 0 — the bug this guards');
+  auto.noteInboundMagic(packet.buffer[0], packet.header.sysid);
+
+  assert.strictEqual(auto.effectiveVersion(3), 'v1');
+  assert.strictEqual(auto.encode('HEARTBEAT', HB_FIELDS, { targetSystem: 3 })[0], 0xfe);
+});
