@@ -19,6 +19,7 @@
     inputs: 0,
     outputs: 1,
     icon: 'bridge.svg',
+    paletteLabel: 'MAVLink In (subscription)',
     label: function () {
       return this.name || 'mavlink ai in';
     },
@@ -60,6 +61,9 @@
     <label for="node-input-connection">Connection</label>
     <input type="text" id="node-input-connection">
   </div>
+  <div class="form-tips" style="margin: -6px 0 8px 105px; width: 70%;">
+    This node does <b>not</b> open a link — it's a filtered <b>subscription</b> to messages the selected <b>Connection</b> already decodes. Many In nodes can share one connection (across flow tabs); the connection decodes each packet once and distributes it.
+  </div>
   <div class="form-row">
     <label for="node-input-messageNames">Messages</label>
     <input type="text" id="node-input-messageNames" placeholder="HEARTBEAT,GLOBAL_POSITION_INT (blank = all)">
@@ -100,7 +104,20 @@
 </script>
 
 <script type="text/html" data-help-name="mavlink-ai-in">
-  <p>Receives decoded MAVLink messages from a shared <b>MAVLink AI Connection</b>. The connection decodes packets once and distributes them to matching subscribers.</p>
+  <p>A filtered <b>subscription</b> to decoded MAVLink messages from a shared <b>MAVLink AI Connection</b>. It is an ordinary flow node — it does <b>not</b> open a link, define an identity, or decode the byte stream itself.</p>
+  <h3>How it fits together</h3>
+  <p>Three distinct pieces, easy to confuse:</p>
+  <ul>
+    <li><b>Profile</b> (config node) — identity and protocol defaults (dialect, source system/component, MAVLink version).</li>
+    <li><b>Connection</b> (config node) — the serial/UDP/TCP link. It owns the socket, decodes the incoming stream <b>once</b>, and distributes decoded messages to all subscribers.</li>
+    <li><b>MAVLink In</b> (this node) — a subscriber that receives that decoded stream and applies its own filters. It creates no transport of its own.</li>
+  </ul>
+  <p>The selected connection is <b>shared</b>: many In nodes — on the same tab or across different flow tabs — can subscribe to one connection at once. Adding In nodes does not open extra ports or re-decode the same bytes; each just gets its own filtered view.</p>
+  <pre>Flight controller
+  → shared Connection (decodes once)
+     → MAVLink In: HEARTBEAT             → status flow
+     → MAVLink In: GLOBAL_POSITION_INT   → navigation flow
+     → MAVLink In: COMMAND_ACK           → command-result flow</pre>
   <h3>Outputs</h3>
   <p>The node only shows the outputs you enable, in this fixed order (disabled outputs are skipped, so the port numbers shift):</p>
   <ul>

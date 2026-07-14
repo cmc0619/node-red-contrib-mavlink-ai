@@ -10,6 +10,7 @@ Import these flows from Node-RED using **Menu → Import → Examples → node-r
 - `07-filter-global-position-int.json` — Filter and rate-limit position telemetry.
 - `08-raw-packet-debug.json` — Inspect decoded and raw packet output.
 - `09-serial-connection.json` — Receive MAVLink over serial.
+- `30-shared-connection-subscribers.json` — Multiple MAVLink In subscribers sharing one connection (HEARTBEAT, position, ACK).
 
 ## 02 Vehicle control
 
