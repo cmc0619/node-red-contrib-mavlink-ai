@@ -180,6 +180,53 @@ test('CommandSend keeps waiting through MAV_RESULT_IN_PROGRESS (#16)', async () 
   assert.ok(progress.some((x) => x.state === 'in_progress' && x.progress === 40));
 });
 
+/**
+ * After MAV_RESULT_IN_PROGRESS the vehicle owns the operation; a timeout must
+ * extend the wait, not retransmit — a retransmit could restart a long-running
+ * command (calibration, motor test) mid-run. Before #144, the IN_PROGRESS
+ * branch reset the retry counter and re-armed a timeout whose expiry still
+ * called _sendCommand(), so a second COMMAND_LONG went out.
+ */
+test('CommandSend does not retransmit after IN_PROGRESS; a later ACK still resolves it (#144)', async () => {
+  const conn = new FakeConnection();
+  const wf = new CommandSend(opts(conn, { timeoutMs: 15, maxRetries: 3 }));
+  const keepAlive = setInterval(() => {}, 5); // workflow timers are unref'd
+  try {
+    const p = wf.run();
+    await delay(0);
+    assert.strictEqual(conn.sent.length, 1); // initial COMMAND_LONG
+    conn.deliverAck({ command: 400, result: 5, progress: 20 });
+    assert.strictEqual(wf.state, 'in_progress');
+    await delay(25); // let a full timeout window elapse with no further ack
+    assert.strictEqual(conn.sent.length, 1); // still no retransmit while in progress
+    conn.deliverAck({ command: 400, result: 0 });
+    const res = await p;
+    assert.strictEqual(res.payload.result, 0);
+  } finally {
+    clearInterval(keepAlive);
+  }
+});
+
+/**
+ * The extended wait is still bounded: if the vehicle stops reporting after
+ * IN_PROGRESS, the workflow fails with COMMAND_TIMEOUT rather than hanging — and
+ * without ever having retransmitted (#144).
+ */
+test('CommandSend times out (bounded) after IN_PROGRESS silence without retransmitting (#144)', async () => {
+  const conn = new FakeConnection();
+  const wf = new CommandSend(opts(conn, { timeoutMs: 10, maxRetries: 2 }));
+  const keepAlive = setInterval(() => {}, 5);
+  try {
+    const p = wf.run();
+    await delay(0);
+    conn.deliverAck({ command: 400, result: 5, progress: 10 });
+    await assert.rejects(p, (e) => e.code === 'COMMAND_TIMEOUT');
+  } finally {
+    clearInterval(keepAlive);
+  }
+  assert.strictEqual(conn.sent.length, 1); // never retransmitted while in progress
+});
+
 test('CommandSend COMMAND_INT omits confirmation and resends unchanged (#17)', async () => {
   const conn = new FakeConnection();
   const wf = new CommandSend(
