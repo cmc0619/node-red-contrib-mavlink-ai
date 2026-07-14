@@ -397,22 +397,19 @@
   <hr>
   <h4 style="margin:6px 0;">MAVLink 2 Signing</h4>
   <div class="form-row">
-    <label for="node-config-input-signOutbound">Sign outbound</label>
-    <input type="checkbox" id="node-config-input-signOutbound" style="display: inline-block; width: auto; vertical-align: top;">
-    <span style="color:#888;">sign packets we send (forces MAVLink 2)</span>
+    <label for="node-config-input-signOutbound" title="Sign packets we send (forces MAVLink 2)">Sign outbound</label>
+    <input type="checkbox" id="node-config-input-signOutbound" title="Sign packets we send (forces MAVLink 2)" style="display: inline-block; width: auto; vertical-align: top;">
   </div>
   <div class="form-row">
-    <label for="node-config-input-verifyInbound">Verify inbound</label>
-    <input type="checkbox" id="node-config-input-verifyInbound" style="display: inline-block; width: auto; vertical-align: top;">
-    <span style="color:#888;">check signatures on packets we receive</span>
+    <label for="node-config-input-verifyInbound" title="Check signatures on packets we receive">Verify inbound</label>
+    <input type="checkbox" id="node-config-input-verifyInbound" title="Check signatures on packets we receive" style="display: inline-block; width: auto; vertical-align: top;">
   </div>
   <div class="form-tips mav-signing-detail" style="margin: -4px 0 8px 105px; width: 70%;">
     Verifying also enforces the signing spec's <b>anti-replay</b> rules — a signed frame is dropped if its timestamp is older than the last on its <code>(sysid, compid, link&nbsp;id)</code> stream, or more than a minute behind the receiver's clock (rejected as <code>signature-replayed</code>). In-memory; the freshness window covers restarts. No separate switch.
   </div>
   <div class="form-row mav-signing-require">
-    <label for="node-config-input-requireSignature">Require signature</label>
-    <input type="checkbox" id="node-config-input-requireSignature" style="display: inline-block; width: auto; vertical-align: top;">
-    <span style="color:#888;">reject unsigned inbound packets</span>
+    <label for="node-config-input-requireSignature" title="Reject unsigned inbound packets">Require signature</label>
+    <input type="checkbox" id="node-config-input-requireSignature" title="Reject unsigned inbound packets" style="display: inline-block; width: auto; vertical-align: top;">
   </div>
   <div class="form-row mav-signing-detail">
     <label for="node-config-input-signingPassphrase">Passphrase</label>
