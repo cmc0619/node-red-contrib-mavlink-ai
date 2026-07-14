@@ -289,3 +289,59 @@ test('profile with only verify flags (no passphrase) still returns signing (#15)
   assert.strictEqual(signing.passphrase, '');
   assert.strictEqual(signing.verifyInbound, true);
 });
+
+test('signing replay: an authentic frame is accepted once, its replay rejected (#100)', async () => {
+  const signer = new MavlinkCodec({
+    bundle,
+    sysid: 2,
+    compid: 1,
+    signing: { passphrase: 'replaykey', linkId: 4, signOutbound: true }
+  });
+  const pkt = await decodeOne(signer, signer.encode('HEARTBEAT', HEARTBEAT));
+  const verifier = new MavlinkCodec({
+    bundle,
+    sysid: 1,
+    compid: 1,
+    signing: { passphrase: 'replaykey', verifyInbound: true }
+  });
+  assert.strictEqual(verifier.verifyInboundPacket(pkt).reason, 'signature-valid');
+  const replay = verifier.verifyInboundPacket(pkt);
+  assert.strictEqual(replay.accepted, false);
+  assert.strictEqual(replay.reason, 'signature-replayed');
+});
+
+test('signing replay state is durable across a codec restart (#101)', async () => {
+  const backing = {};
+  const store = {
+    load: (k) => backing[k] || {},
+    save: (k, m) => {
+      backing[k] = m;
+    }
+  };
+  const signer = new MavlinkCodec({
+    bundle,
+    sysid: 2,
+    compid: 1,
+    signing: { passphrase: 'durablekey', linkId: 4, signOutbound: true }
+  });
+  const pkt = await decodeOne(signer, signer.encode('HEARTBEAT', HEARTBEAT));
+
+  const before = new MavlinkCodec({
+    bundle,
+    sysid: 1,
+    compid: 1,
+    signing: { passphrase: 'durablekey', verifyInbound: true },
+    replayStore: store
+  });
+  assert.strictEqual(before.verifyInboundPacket(pkt).accepted, true);
+
+  /** A fresh codec seeded from the same store (a restart) rejects the replay. */
+  const after = new MavlinkCodec({
+    bundle,
+    sysid: 1,
+    compid: 1,
+    signing: { passphrase: 'durablekey', verifyInbound: true },
+    replayStore: store
+  });
+  assert.strictEqual(after.verifyInboundPacket(pkt).reason, 'signature-replayed');
+});

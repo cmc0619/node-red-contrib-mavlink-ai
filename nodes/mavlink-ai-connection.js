@@ -1,7 +1,9 @@
 'use strict';
 
+const path = require('path');
 const { EventEmitter } = require('events');
 const { MavlinkCodec } = require('../lib/protocol/mavlink-codec');
+const { FileReplayStore } = require('../lib/protocol/replay-store');
 const { createTransport } = require('../lib/transport');
 const { validateConnectionConfig } = require('../lib/transport/transport-fields');
 const { PacketRouter } = require('../lib/routing/packet-router');
@@ -19,6 +21,32 @@ const { MavlinkError, toMavlinkError, errorPayload } = require('../lib/util/erro
  * that floods the outbound queue. The default remains 1000 ms.
  */
 const HEARTBEAT_MIN_INTERVAL_MS = 1000;
+
+/**
+ * Anti-replay persistence is a single JSON file per Node-RED userDir (#101), so
+ * its store is shared across connection instances keyed by that path. Unlike the
+ * per-connection state below, this is a shared *external* resource: one handle
+ * lets concurrent signing connections advance their own key scopes without
+ * clobbering each other (the lost update if each kept a separate in-memory copy
+ * of the same file). Keyed by absolute path.
+ */
+const replayStoresByFile = new Map();
+
+/**
+ * The shared {@link FileReplayStore} for a state-file path, created once.
+ *
+ * @param {string} file
+ * @param {function(Error): void} onUnwritable
+ * @returns {FileReplayStore}
+ */
+function sharedReplayStore(file, onUnwritable) {
+  let store = replayStoresByFile.get(file);
+  if (!store) {
+    store = new FileReplayStore({ file, onUnwritable });
+    replayStoresByFile.set(file, store);
+  }
+  return store;
+}
 
 /**
  * mavlink-ai-connection (DESIGN.md §8, §11, §19).
@@ -79,6 +107,22 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node._decoder = null;
     node._transport = null;
     node._codec = null;
+    /**
+     * Durable anti-replay backing shared by every codec this connection builds
+     * (#101), so signature replay protection survives a Node-RED restart. It is
+     * only written to when a codec actually verifies signed frames; a connection
+     * with no signing never persists. Absent a userDir (e.g. under test) or when
+     * the location is unwritable, codecs fall back to in-memory replay state.
+     */
+    const userDir = RED.settings && RED.settings.userDir;
+    node._replayStore = userDir
+      ? sharedReplayStore(path.join(userDir, 'mavlink-ai', 'replay-state.json'), (err) =>
+          node.warn(
+            `mavlink-ai-connection '${node.name || node.id}': signing replay state is not persistable ` +
+              `(${err.message}); anti-replay is enforced in-memory for this session only.`
+          )
+        )
+      : null;
     node._router = null;
     node._queue = null;
     /**
@@ -171,7 +215,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
 
     try {
       node._codec = new MavlinkCodec(
-        Object.assign({ bundle: node.profile.getDialect() }, node.profile.getProtocolOptions())
+        Object.assign(
+          { bundle: node.profile.getDialect(), replayStore: node._replayStore },
+          node.profile.getProtocolOptions()
+        )
       );
       node._codecByProfile.set(node.profile.id, { profile: node.profile, codec: node._codec });
     } catch (err) {
@@ -244,7 +291,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
       let codec;
       try {
         codec = new MavlinkCodec(
-          Object.assign({ bundle: profile.getDialect() }, profile.getProtocolOptions())
+          Object.assign(
+            { bundle: profile.getDialect(), replayStore: node._replayStore },
+            profile.getProtocolOptions()
+          )
         );
       } catch (err) {
         throw new MavlinkError(
@@ -525,7 +575,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
       // running with the profile it already had rather than ending up
       // half-swapped between two dialects.
       const codec = new MavlinkCodec(
-        Object.assign({ bundle: newProfile.getDialect() }, newProfile.getProtocolOptions())
+        Object.assign(
+          { bundle: newProfile.getDialect(), replayStore: node._replayStore },
+          newProfile.getProtocolOptions()
+        )
       );
       // The transport/session and its learned peers stay up across this rebuild,
       // so carry over the per-peer wire versions the old codec detected (#69):
@@ -667,7 +720,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
       let codec;
       try {
         codec = new MavlinkCodec(
-          Object.assign({ bundle: profile.getDialect() }, profile.getProtocolOptions())
+          Object.assign(
+            { bundle: profile.getDialect(), replayStore: node._replayStore },
+            profile.getProtocolOptions()
+          )
         );
       } catch (err) {
         /** The restored profile still cannot build a codec: stay inactive. */
@@ -1336,6 +1392,13 @@ module.exports = function registerMavlinkAiConnection(RED) {
     // --- lifecycle (DESIGN.md §19) ------------------------------------------
     node.on('close', function closeConnection(done) {
       stopHeartbeat();
+      /**
+       * Persist the last accepted signing timestamps before shutdown so replay
+       * protection survives the restart (#101); a no-op when nothing was signed.
+       */
+      if (node._replayStore) {
+        node._replayStore.flush();
+      }
       node.subscriptions.clear();
       node.locks.clear();
       node._codecByProfile.clear();
