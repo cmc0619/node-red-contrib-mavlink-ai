@@ -4,6 +4,7 @@ const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { firstDefined, toInt, toBool } = require('../lib/util/validation');
 const { buildFanout } = require('../lib/swarm/fanout');
 const { CommandSend } = require('../lib/command/command-workflow');
+const { watchConfigBadge } = require('../lib/util/node-lifecycle');
 
 /**
  * mavlink-ai-fanout (issue #46).
@@ -25,8 +26,17 @@ module.exports = function registerMavlinkAiFanout(RED) {
     const node = this;
 
     node.name = config.name;
-    node.profile = RED.nodes.getNode(config.profile);
-    node.connection = config.connection ? RED.nodes.getNode(config.connection) : null;
+    /**
+     * Resolve node.profile + node.connection and keep their idle badges live
+     * across deploys. The connection is only *needed* when await-acks is on
+     * (otherwise the node emits mavlink/send for a downstream Out node), so a
+     * missing connection is badged only in that case (#164).
+     */
+    watchConfigBadge(RED, node, config, {
+      profile: 'required',
+      connection: 'optional',
+      connectionRequiredWhen: () => toBool(config.awaitAck, false)
+    });
     node.command = config.command || '';
     node.mode = config.mode === 'broadcast' ? 'broadcast' : 'fanout';
     node.sendAs = config.sendAs || 'long';

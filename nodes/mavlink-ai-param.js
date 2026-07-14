@@ -5,6 +5,7 @@ const { toInt, firstDefined } = require('../lib/util/validation');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { resolveWorkflowContext } = require('../lib/util/workflow-profile');
+const { watchConfigBadge } = require('../lib/util/node-lifecycle');
 
 /**
  * mavlink-ai-param (planner #8).
@@ -22,10 +23,17 @@ module.exports = function registerMavlinkAiParam(RED) {
     const node = this;
 
     node.name = config.name;
-    node.connection = RED.nodes.getNode(config.connection);
-    // Optional profile override. Kept as the raw config-node id (not resolved
-    // here) so a dangling reference fails the workflow loudly instead of
-    // silently running under the connection's default profile.
+    /**
+     * Resolve node.connection and keep its "missing connection" badge live
+     * across deploys — a connection added/fixed after the first deploy would
+     * otherwise leave a stale red badge (#164).
+     */
+    watchConfigBadge(RED, node, config, { connection: 'required' });
+    /**
+     * Optional profile override. Kept as the raw config-node id (not resolved
+     * here) so a dangling reference fails the workflow loudly instead of
+     * silently running under the connection's default profile.
+     */
     node.profileRef = config.profile || '';
     node.action = config.action || 'read';
     node.paramId = config.paramId || '';
@@ -37,10 +45,6 @@ module.exports = function registerMavlinkAiParam(RED) {
     node.paramValue = config.paramValue == null ? '' : String(config.paramValue).trim();
     node.timeoutMs = toInt(config.timeoutMs, 3000);
     node.maxRetries = toInt(config.maxRetries, 3);
-
-    if (!node.connection) {
-      node.status({ fill: 'red', shape: 'ring', text: 'missing connection' });
-    }
 
     // Active workflow objects, aborted when the node closes (#83) so a partial
     // deploy doesn't leave subscriptions, response timers, and the param lock
