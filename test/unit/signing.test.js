@@ -289,3 +289,45 @@ test('profile with only verify flags (no passphrase) still returns signing (#15)
   assert.strictEqual(signing.passphrase, '');
   assert.strictEqual(signing.verifyInbound, true);
 });
+
+test('signing replay: an authentic frame is accepted once, its replay rejected (#100)', async () => {
+  const signer = new MavlinkCodec({
+    bundle,
+    sysid: 2,
+    compid: 1,
+    signing: { passphrase: 'replaykey', linkId: 4, signOutbound: true }
+  });
+  const pkt = await decodeOne(signer, signer.encode('HEARTBEAT', HEARTBEAT));
+  const verifier = new MavlinkCodec({
+    bundle,
+    sysid: 1,
+    compid: 1,
+    signing: { passphrase: 'replaykey', verifyInbound: true }
+  });
+  assert.strictEqual(verifier.verifyInboundPacket(pkt).reason, 'signature-valid');
+  const replay = verifier.verifyInboundPacket(pkt);
+  assert.strictEqual(replay.accepted, false);
+  assert.strictEqual(replay.reason, 'signature-replayed');
+});
+
+test('outbound signing timestamps are monotonic so same-ms bursts are not self-rejected', async () => {
+  const signer = new MavlinkCodec({
+    bundle,
+    sysid: 2,
+    compid: 1,
+    signing: { passphrase: 'burstkey', linkId: 3, signOutbound: true }
+  });
+  /** Two frames encoded back-to-back land in the same millisecond. */
+  const p1 = await decodeOne(signer, signer.encode('HEARTBEAT', HEARTBEAT));
+  const p2 = await decodeOne(signer, signer.encode('HEARTBEAT', HEARTBEAT));
+  assert.ok(p2.signature.timestamp > p1.signature.timestamp, 'second frame has a strictly greater timestamp');
+
+  const verifier = new MavlinkCodec({
+    bundle,
+    sysid: 1,
+    compid: 1,
+    signing: { passphrase: 'burstkey', verifyInbound: true }
+  });
+  assert.strictEqual(verifier.verifyInboundPacket(p1).reason, 'signature-valid');
+  assert.strictEqual(verifier.verifyInboundPacket(p2).reason, 'signature-valid');
+});
