@@ -1,7 +1,12 @@
 # node-red-contrib-mavlink-ai
 
-A clean v2-style Node-RED MAVLink module designed around profiles, connections,
-routing, and reusable action nodes.
+A full-featured Node-RED MAVLink module built around a clean v2 architecture:
+reusable profiles, shared connections, routed multi-vehicle links, rich message
+builders, mission/parameter workflows, command presets, and swarm helpers.
+
+**About the name:** the `-ai` suffix is a disclosure, not a feature. This
+package is written by AI, with human direction and review. There is no AI at
+runtime — it is a plain MAVLink integration.
 
 This repo is intentionally separate from earlier MAVLink Node-RED experiments so
 both versions can coexist in the same Node-RED runtime.
@@ -10,8 +15,10 @@ both versions can coexist in the same Node-RED runtime.
 
 v2 baseline is implemented: profiles (with a firmware abstraction field), the
 protocol/dialect layer, the UDP / TCP / serial connection runtime, routing with
-per-profile decode, subscriptions, the in/out/build/filter/command nodes, and
-the mission download/upload/clear workflows. Serial is optional and lazy-loaded.
+per-profile decode, subscriptions, the in/out/build/filter/command nodes, the
+mission download/upload/clear workflows, parameter workflows, guided/offboard
+setpoints, payload control, and swarm registry/fan-out helpers. Serial is
+optional and lazy-loaded.
 
 Dialect support has two sources: **bundled** dialects and a **custom** MAVLink
 XML path. A custom dialect is simply an XML file readable by the Node-RED
@@ -31,18 +38,79 @@ provenance (repo, ref, resolved commit, timestamp, per-file SHA-256), and the
 editor can show whether a same-named bundled dialect exists plus a message/enum
 diff against it. See `lib/dialects/xml-catalog.js`.
 
-Remaining release/readiness items live in [`RELEASE_SCOPE.md`](RELEASE_SCOPE.md)
-and the open sections of [`ROADMAP.md`](ROADMAP.md).
+Remaining release/readiness items live in the open sections of
+[`ROADMAP.md`](ROADMAP.md) and the issue tracker. (`RELEASE_SCOPE.md` records
+resolved design decisions, not open work.)
+
+## Features
+
+- **MAVLink v1/v2 framing** with per-peer version selection (`v1` / `v2` /
+  `auto` on the profile).
+- **Multiple connection types**: UDP (in/out/peer), TCP (client/server), and
+  optional/lazy-loaded serial.
+- **Profile-based architecture**: MAVLink identity, dialect, firmware, vehicle
+  type, signing, target defaults, and mission defaults live in reusable config
+  nodes.
+- **Connection-based runtime**: one connection owns transport, decode, routing,
+  subscriptions, queueing, heartbeat, locks, and peer state.
+- **Bundled and custom XML dialects**: use bundled dialects or compile local or
+  mounted MAVLink XML dialects at runtime, with a downloadable official XML
+  catalog.
+- **No silent dialect fallback**: invalid dialects, bad XML, missing includes,
+  include cycles, and unsupported remote includes fail loudly with structured
+  errors.
+- **Dynamic message builder**: message fields render from dialect metadata, with
+  visible descriptions, units, types, and enum dropdowns where metadata exists.
+- **Command presets**: arm/disarm, mode, takeoff, land, RTL, guided/autonomy,
+  mission, and telemetry/system commands with a friendly, profile-aware UI.
+- **COMMAND_ACK workflow**: optionally wait for command acknowledgement with
+  timeout/retry behavior and readable `MAV_RESULT_*` names.
+- **Mission workflows**: download, upload, and clear with progress output,
+  timeout/retry handling, and `MISSION_ITEM_INT` coordinate scaling.
+- **Parameter workflows**: read (by id or index), set (with runtime type
+  auto-detection), or fetch the full list with progress and gap refill.
+- **Guided/offboard setpoints**: `SET_POSITION_TARGET_LOCAL_NED` /
+  `_GLOBAL_INT` with named `type_mask` presets and friendly up-positive
+  altitude handling.
+- **Payload control**: camera, gimbal (command- and gimbal-manager-based),
+  servo, relay, and gripper verbs for any vehicle type.
+- **Multi-vehicle routing**: route inbound packets by sysid/compid to the
+  correct profile and decode with that profile's dialect.
+- **UDP peer tracking by sysid**: `udp-peer` learns multiple vehicle endpoints
+  on one port and sends target-specific traffic back to the right sysid.
+- **Swarm helpers**: discover active systems from HEARTBEAT, maintain named
+  groups, fan out commands per vehicle, convert local meter offsets to global
+  targets, and aggregate ACK results.
+- **MAVLink 2 signing**: sign outbound, verify/require inbound, with spec
+  anti-replay enforcement (freshness window + monotonic timestamps).
+- **Importable examples**: connection, message, command, mission, parameter,
+  telemetry, move/payload, raw/debug, swarm, and safety-gated workflows.
 
 ## Install
+
+From npm:
 
 ```bash
 cd ~/.node-red
 npm install node-red-contrib-mavlink-ai
 ```
 
+From source:
+
+```bash
+cd ~/.node-red
+git clone https://github.com/cmc0619/node-red-contrib-mavlink-ai.git
+npm install ./node-red-contrib-mavlink-ai
+```
+
 `serialport` is an **optional** dependency. UDP and TCP work without it; it is
-only loaded when a serial transport is actually used.
+only loaded when a serial transport is actually used. To enable serial in an
+environment where the optional dependency was skipped:
+
+```bash
+cd ~/.node-red
+npm install serialport
+```
 
 ## Compatibility
 
@@ -80,41 +148,201 @@ Route      = how sysid/compid packets map to profiles
 Nodes      = what actions or filters happen in a flow
 ```
 
-## Node types
+## Node reference
 
-Config nodes:
+### `mavlink-ai-profile` (config)
 
-```text
-mavlink-ai-profile      MAVLink identity, dialect, vehicle/protocol defaults
-mavlink-ai-connection   transport/session, decode, routing, queue, heartbeat
+MAVLink identity and protocol defaults. Profiles do not own sockets; they
+describe how messages should be interpreted and built.
+
+- dialect: bundled, or custom XML (local path or a catalog download)
+- MAVLink version: v1, v2, or auto
+- source system/component id
+- default target system/component id
+- profile type: GCS, companion computer, copter, plane, rover, boat, sub,
+  tracker, generic
+- firmware: generic, ArduPilot, PX4, custom
+- mission defaults (mission type, preferred item format)
+- heartbeat identity
+- MAVLink 2 signing options (see below)
+
+### `mavlink-ai-connection` (config)
+
+Transport, decode, routing, subscriptions, queueing, heartbeat, and runtime
+state. The connection is the shared wire/runtime object — multiple tabs and
+flow nodes reference the same connection without hidden global state.
+
+- UDP in / out / peer
+- TCP client / server
+- serial, when `serialport` is installed
+- heartbeat enable/interval
+- single-profile or routed mode
+- accepted sysids/compids
+- route table (sysid/compid pattern → profile)
+- unmatched packet policy
+- outbound queue settings
+
+### `mavlink-ai-in`
+
+Subscribes to decoded MAVLink messages from a connection. This is a
+**connection subscription**, not a socket of its own. Filter by message name
+and sysid/compid, with optional raw output, optional diagnostics/errors output,
+rate limiting, and changed-only mode. Output shape is the decoded message
+contract (see [Message contracts](#message-contracts)).
+
+### `mavlink-ai-out`
+
+Sends normalized outbound messages or raw MAVLink buffers through a connection.
+
+```js
+msg.topic = "mavlink/send";
+msg.payload = {
+  name: "COMMAND_LONG",
+  target_system: 1,
+  target_component: 1,
+  fields: {
+    command: "MAV_CMD_COMPONENT_ARM_DISARM",
+    param1: 1
+  }
+};
 ```
 
-Regular flow nodes:
+Raw buffers can be sent with `topic: "mavlink/raw"`, but raw sends are
+intentionally not signed or normalized.
+
+### `mavlink-ai-build`
+
+Builds a normalized outbound message without sending it — for raw/advanced
+message construction, custom dialect messages, and wire-level control. Fields
+render dynamically from the selected profile's dialect with visible help and
+enum dropdowns; `COMMAND_LONG`/`COMMAND_INT` selection shows a visible pointer
+at the command node. Output goes to `mavlink-ai-out`.
+
+### `mavlink-ai-filter`
+
+Filters decoded MAVLink messages in a flow: by message name, by sysid/compid
+(comma lists supported), rate limit per message/sysid/compid, and changed-only
+filtering. Useful after `mavlink-ai-in` or any decoded MAVLink stream.
+
+### `mavlink-ai-command`
+
+Friendly command builder for common vehicle commands, grouped by workflow:
 
 ```text
-mavlink-ai-in        subscribe to decoded messages from a connection
-mavlink-ai-out       send normalized messages or raw buffers
-mavlink-ai-build     build a normalized outbound message (no send)
-mavlink-ai-filter    filter decoded messages, with rate limiting
-mavlink-ai-command   build common commands (arm, mode, takeoff, message interval, ...)
-mavlink-ai-mission   run mission download/upload/clear workflows
-mavlink-ai-param     read/set a parameter or request the full parameter list
-mavlink-ai-move      send guided/offboard position-target setpoints (friendly type_mask)
-mavlink-ai-payload   control camera, gimbal, servo, relay, gripper (any vehicle type)
-mavlink-ai-swarm     registry of active vehicles discovered from HEARTBEAT
-mavlink-ai-fanout    expand one command into per-vehicle messages, aggregate ACKs
+Basic Flight        Arm · Disarm · Set Mode · Takeoff · Land · RTL
+Guided / Autonomy   Go To / Reposition · Change Speed · Condition Yaw · Spin / Rotate
+Mission             Mission Start · Pause Mission · Resume Mission
+Telemetry / System  Request Message · Set Message Interval · Stop Message Interval · Reboot Autopilot
+Advanced            Raw MAV_CMD_* escape hatch with metadata-driven parameter help
+```
+
+Features: preset-specific editor fields, profile-aware flight-mode names for
+ArduPilot and PX4, `COMMAND_LONG` and `COMMAND_INT` support, lat/lon float
+degrees converted to degE7 for `COMMAND_INT`, optional await-ACK mode with
+timeout/retry, readable `MAV_RESULT_*` names, and a confirmation gate on
+reboot. Camera and gimbal control live in `mavlink-ai-payload`.
+
+### `mavlink-ai-mission`
+
+Runs the mission protocol state machine (download / upload / clear) so flows do
+not hand-wire `MISSION_*` messages.
+
+```js
+msg.payload = {
+  action: "upload",
+  target_system: 1,
+  items: [
+    { lat: 37.7749, lon: -122.4194, alt: 15, command: "MAV_CMD_NAV_TAKEOFF" },
+    { lat: 37.7750, lon: -122.4195, alt: 50, command: "MAV_CMD_NAV_WAYPOINT" },
+    { lat: 37.7751, lon: -122.4196, alt: 0,  command: "MAV_CMD_NAV_LAND" }
+  ]
+};
+```
+
+Outputs: **1** final result (`mission/downloaded`, `mission/uploaded`,
+`mission/cleared`), **2** progress events, **3** structured errors/timeouts.
+
+Notes: `lat`/`lon` are float degrees (converted to degE7 automatically for
+`MISSION_ITEM_INT`; raw `x`/`y` accepted for advanced callers); upload answers
+`MISSION_REQUEST` with `MISSION_ITEM` and `MISSION_REQUEST_INT` with
+`MISSION_ITEM_INT` per request; clear supports an optional acknowledged mode;
+operations are locked per connection/profile/mission type.
+
+### `mavlink-ai-param`
+
+Parameter protocol workflows: **read one** (by id, or by index), **set one**,
+or **request the full list**.
+
+```js
+msg.payload = { action: "read", param_id: "ARMING_CHECK" };
+msg.payload = { action: "set", param_id: "ARMING_CHECK", param_value: 1 };
+msg.payload = { action: "list" };
+```
+
+Features: timeout/retry, progress output and gap refill for full-list reads on
+lossy links, case-insensitive param ids, float32-aware applied checks,
+PX4 byte-union integer handling, and a param type dropdown with
+**Auto (detect from vehicle)** — the set workflow reads the parameter first to
+learn its real `MAV_PARAM_TYPE`, so a wrong manual type can't corrupt a PX4
+integer parameter.
+
+### `mavlink-ai-move`
+
+Guided/offboard position-target setpoints (`SET_POSITION_TARGET_LOCAL_NED` /
+`SET_POSITION_TARGET_GLOBAL_INT`) with named `type_mask` presets — Position,
+Position + Yaw, Velocity, Velocity + Yaw rate, Position + Velocity, Yaw only,
+Yaw-rate only, or a raw custom mask. Local NED and global frames (relative and
+terrain altitude variants), with up-positive altitude/climb inputs mapped to
+NED `-z`/`-vz`. One message per input; pair with an inject loop for the
+continuous streams offboard control needs (built-in streaming is tracked in
+issue [#128](https://github.com/cmc0619/node-red-contrib-mavlink-ai/issues/128)).
+
+### `mavlink-ai-payload`
+
+Payload control verbs for any vehicle type, with the target component
+first-class: take photo, start/stop video, set camera mode, trigger-by-distance,
+gimbal aim (`DO_MOUNT_CONTROL` or the gimbal-manager
+`GIMBAL_MANAGER_SET_PITCHYAW` message), servo, relay, and gripper.
+
+### `mavlink-ai-swarm`
+
+Registry of active MAVLink systems discovered from HEARTBEAT and telemetry:
+sysid/compid, vehicle type, autopilot, armed state, mode (via the vehicle's own
+autopilot/type), system status, position, battery summary, last-seen, and
+stale/expired state. Named groups can be static or type-based:
+
+```json
+{ "scouts": [1, 2], "all-copters": { "type": "MAV_TYPE_QUADROTOR" } }
+```
+
+### `mavlink-ai-fanout`
+
+Expands one logical command into one message per target vehicle. Targets come
+from explicit sysids, per-target objects, or swarm registry output; supports
+dry-run, pacing, per-target overrides, await-ACK aggregation, and
+stop-on-first-error or continue-on-error.
+
+```js
+msg.payload = {
+  command: "MAV_CMD_DO_REPOSITION",
+  command_int: true,
+  origin: { lat: 39.1, lon: -75.1, alt: 40 },
+  targets: [
+    { sysid: 1, north: 0, east: 0,   up: 0 },
+    { sysid: 2, north: 0, east: 10,  up: 0 },
+    { sysid: 3, north: 0, east: -10, up: 0 }
+  ]
+};
 ```
 
 ## Swarm orchestration
 
 Multi-vehicle use is a first-class concern, not a hand-rolled pattern: the
-**swarm** node maintains a registry of active systems (type, armed state, mode,
-position, battery, stale/expired) from HEARTBEAT and telemetry, with named
-groups (`{"scouts": [1, 2], "all-copters": {"type": "MAV_TYPE_QUADROTOR"}}`).
-The **fanout** node expands one logical command into one message per target
-system — *fan-out* — or, explicitly and only when asked, a single
-`target_system` 0 message — *broadcast*. These are different things: formation
-movement is fan-out, because each vehicle needs its own target position.
+**swarm** node maintains the registry, and the **fanout** node expands one
+logical command into one message per target system — *fan-out* — or, explicitly
+and only when asked, a single `target_system` 0 message — *broadcast*. These
+are different things: formation movement is fan-out, because each vehicle needs
+its own target position.
 
 Fan-out understands meters: give an `origin` and per-target `north`/`east`/`up`
 offsets and it converts to global lat/lon/alt (and degE7 for `COMMAND_INT`)
@@ -192,18 +420,28 @@ Two layers, on purpose:
 
 1. Drop a **MAVLink AI In** node onto a flow.
 2. Create a **MAVLink AI Profile** (defaults act as a lightweight GCS).
+   - For ArduPilot, start with the `ardupilotmega` dialect; for generic
+     MAVLink-only traffic, `common` is fine.
+   - Leave the source id at the GCS-style default (`255`/`190`) unless you know
+     otherwise.
 3. Create a **MAVLink AI Connection** referencing the profile, transport
-   `udp-peer`, bind `0.0.0.0:14550`.
+   `udp-peer`, bind `0.0.0.0:14550`. Enable heartbeat if this node should act
+   like a lightweight GCS.
 4. Point SITL or a vehicle at `udp:127.0.0.1:14550` and watch HEARTBEAT decode.
+5. Add a **MAVLink AI Command** node (Arm, Set Mode, Takeoff, Request Message,
+   Set Message Interval, …) and wire it to a **MAVLink AI Out** node.
 
 Importable flows live in [`examples/`](examples/).
 
 The examples also include a dependency-free, read-only vehicle status web page,
 an advisory safety monitor, a local display geofence, mission upload/clear,
-a gated parameter browser, and JSONL telemetry record/replay. After importing
-the status flow, open `/mavlink-ai/status` on the Node-RED host. These examples
-compose the normalized v2 message contracts; they do not recreate the earlier
-package's hidden message bus or require the legacy `node-red-dashboard` palette.
+a gated parameter browser, JSONL telemetry record/replay, offboard/guided move
+sequences, and payload control. After importing the status flow, open
+`/mavlink-ai/status` on the Node-RED host. These examples compose the
+normalized v2 message contracts; they do not recreate the earlier package's
+hidden message bus or require the legacy `node-red-dashboard` palette.
+Safety-sensitive examples are debug-wired or dry-run by default until
+deliberately connected to a real vehicle.
 
 ## Message contracts
 
@@ -250,24 +488,39 @@ decoded, signature-checked, or labeled with the wrong profile.
 ```text
 nodes/   Node-RED node registration + editor HTML (thin)
 lib/
-  dialects/   dialect loader (bundled dialects + runtime-compiled custom XML)
-  protocol/   codec, normalizer, enum resolver, validator
+  dialects/   dialect loader (bundled dialects + runtime-compiled custom XML + XML catalog)
+  protocol/   codec, normalizer, enum resolver, validator, replay tracker
   transport/  udp / tcp / serial (serial lazy-loaded)
   routing/    route table + packet router
   runtime/    subscription registry, outbound queue, lock manager
-  mission/    state machine + download/upload workflows
+  command/    command presets, COMMAND_ACK workflow, flight modes
+  mission/    state machine + download/upload/clear workflows
+  param/      parameter workflows
+  move/       position-target setpoint builder
+  payload/    payload control verbs
+  swarm/      vehicle registry, fan-out, coordinate helpers
   util/       structured status/errors, validation
+  editor-api.js  shared /mavlink-ai/* admin endpoints
 ```
 
 Node files never call `node-mavlink` directly — they go through the `lib`
 layer. There is no global parser/dialect/connection state; everything is scoped
 to a config-node instance.
 
-## Dependency rule
+## Dependencies
 
-`node-mavlink` is a core runtime dependency. `serialport` must be optional and
-lazy-loaded only when a serial transport is configured. UDP/TCP usage must not
-require serial support.
+Required:
+
+- `node-mavlink` — MAVLink parser/serializer and protocol primitives
+- `mavlink-mappings` — bundled dialect mappings
+- `mavlink-mappings-gen` — custom XML dialect compilation
+- `xml2js` — XML parsing for custom dialects
+
+Optional:
+
+- `serialport` — only required for serial connections; lazy-loaded when a
+  serial transport is configured. UDP/TCP usage must not require serial
+  support.
 
 ## Tests
 
@@ -278,10 +531,27 @@ npm run test:integration
 ```
 
 The integration test runs a UDP loopback against a simulated vehicle: HEARTBEAT
-decode, COMMAND_LONG encode, and a full mission download.
+decode, COMMAND_LONG encode, signing/verification, peer learning, and a full
+mission download.
+
+**Real hardware validation is welcome.** If you test this with ArduPilot, PX4,
+SITL, a Pixhawk-class flight controller, a companion computer, a MAVLink
+camera/gimbal, or a multi-vehicle setup, please open an issue with what worked,
+what failed, and what hardware/firmware was involved.
 
 ## Design docs
 
 - [`DESIGN.md`](DESIGN.md)
 - [`RELEASE_SCOPE.md`](RELEASE_SCOPE.md)
 - [`ROADMAP.md`](ROADMAP.md)
+
+## Support
+
+- Issues: https://github.com/cmc0619/node-red-contrib-mavlink-ai/issues
+- MAVLink protocol: https://mavlink.io/
+- ArduPilot: https://ardupilot.org/
+- PX4: https://px4.io/
+
+## License
+
+MIT
