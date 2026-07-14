@@ -198,10 +198,12 @@ test('param node without connection emits a structured error', async () => {
   assert.strictEqual(error.payload.code, 'NO_CONNECTION');
 });
 
-// Node-RED leaves the param node in place when only its referenced connection
-// changed, so its constructor never re-runs. Before #164 the "missing
-// connection" badge set at construction never refreshed, so a connection added
-// after the first deploy left a stale red badge.
+/**
+ * Node-RED leaves the param node in place when only its referenced connection
+ * changed, so its constructor never re-runs. Before #164 the "missing
+ * connection" badge set at construction never refreshed, so a connection added
+ * after the first deploy left a stale red badge.
+ */
 test('param node clears its "missing connection" badge when a connection is added on redeploy (#164)', () => {
   const RED = new MockRED().loadNodes();
   const node = RED.create('mavlink-ai-param', { id: 'pm3', connection: 'conn1', action: 'read', paramId: 'X' });

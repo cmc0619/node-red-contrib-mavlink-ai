@@ -234,10 +234,12 @@ module.exports = function registerMavlinkAiCommand(RED) {
     const node = this;
 
     node.name = config.name;
-    // Resolve node.profile + node.connection and keep their idle badges live
-    // across deploys. The connection is only *needed* when await-acks is on
-    // (otherwise the node emits mavlink/send for a downstream Out node), so a
-    // missing connection is badged only in that case (#164).
+    /**
+     * Resolve node.profile + node.connection and keep their idle badges live
+     * across deploys. The connection is only *needed* when await-acks is on
+     * (otherwise the node emits mavlink/send for a downstream Out node), so a
+     * missing connection is badged only in that case (#164).
+     */
     watchConfigBadge(RED, node, config, {
       profile: 'required',
       connection: 'optional',

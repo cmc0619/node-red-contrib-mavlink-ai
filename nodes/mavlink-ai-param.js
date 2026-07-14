@@ -23,13 +23,17 @@ module.exports = function registerMavlinkAiParam(RED) {
     const node = this;
 
     node.name = config.name;
-    // Resolve node.connection and keep its "missing connection" badge live
-    // across deploys — a connection added/fixed after the first deploy would
-    // otherwise leave a stale red badge (#164).
+    /**
+     * Resolve node.connection and keep its "missing connection" badge live
+     * across deploys — a connection added/fixed after the first deploy would
+     * otherwise leave a stale red badge (#164).
+     */
     watchConfigBadge(RED, node, config, { connection: 'required' });
-    // Optional profile override. Kept as the raw config-node id (not resolved
-    // here) so a dangling reference fails the workflow loudly instead of
-    // silently running under the connection's default profile.
+    /**
+     * Optional profile override. Kept as the raw config-node id (not resolved
+     * here) so a dangling reference fails the workflow loudly instead of
+     * silently running under the connection's default profile.
+     */
     node.profileRef = config.profile || '';
     node.action = config.action || 'read';
     node.paramId = config.paramId || '';

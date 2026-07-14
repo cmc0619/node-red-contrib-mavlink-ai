@@ -566,9 +566,11 @@ test('await-ack workflow sends carry the node profile id', async () => {
   assert.strictEqual(sent[0].profile, 'p1');
 });
 
-// The command node's connection is only needed for await-acks; without it the
-// node emits mavlink/send for a downstream Out node. So a missing connection is
-// badged only when await-acks is enabled (#164).
+/**
+ * The command node's connection is only needed for await-acks; without it the
+ * node emits mavlink/send for a downstream Out node. So a missing connection is
+ * badged only when await-acks is enabled (#164).
+ */
 test('command node badges a missing connection only when await-acks is enabled (#164)', () => {
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-profile', {
@@ -576,11 +578,11 @@ test('command node badges a missing connection only when await-acks is enabled (
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
 
-  // await-acks off, no connection → profile valid, no error badge.
+  /** await-acks off, no connection → profile valid, no error badge. */
   const emitOnly = RED.create('mavlink-ai-command', { id: 'c3', profile: 'p1', command: 'arm', awaitAck: false });
   assert.deepStrictEqual(emitOnly.statusHistory.at(-1), {});
 
-  // await-acks on, no connection → "missing connection".
+  /** await-acks on, no connection → "missing connection". */
   const needsConn = RED.create('mavlink-ai-command', { id: 'c4', profile: 'p1', command: 'arm', awaitAck: true });
   assert.deepStrictEqual(needsConn.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'missing connection' });
 });

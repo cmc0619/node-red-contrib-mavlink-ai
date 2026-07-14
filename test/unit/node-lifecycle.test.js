@@ -75,7 +75,7 @@ test('watchConfigBadge clears a stale "missing connection" badge when the connec
 });
 
 test('watchConfigBadge only badges an optional connection when it is actually needed', () => {
-  // awaitAck off: a missing connection is fine (the node emits mavlink/send).
+  /** awaitAck off: a missing connection is fine (the node emits mavlink/send). */
   const off = makeHarness({});
   watchConfigBadge(off.RED, off.node, { connection: '' }, {
     connection: 'optional',
@@ -83,7 +83,7 @@ test('watchConfigBadge only badges an optional connection when it is actually ne
   });
   assert.deepStrictEqual(off.node.statusHistory.at(-1), {});
 
-  // awaitAck on: the connection is required, so a missing one is badged (#164).
+  /** awaitAck on: the connection is required, so a missing one is badged (#164). */
   const on = makeHarness({});
   watchConfigBadge(on.RED, on.node, { connection: '' }, {
     connection: 'optional',
@@ -94,8 +94,10 @@ test('watchConfigBadge only badges an optional connection when it is actually ne
 
 test('watchConfigBadge reports invalid profile ahead of a missing connection', () => {
   const { RED, node } = makeHarness({ p1: validProfile });
-  // Profile id points nowhere (invalid) and the connection is missing too;
-  // the profile problem is the one to surface first.
+  /**
+   * Profile id points nowhere (invalid) and the connection is missing too;
+   * the profile problem is the one to surface first.
+   */
   watchConfigBadge(RED, node, { profile: 'missing', connection: '' }, {
     profile: 'required',
     connection: 'required'
