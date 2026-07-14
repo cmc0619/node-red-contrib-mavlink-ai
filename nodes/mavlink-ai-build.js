@@ -6,6 +6,7 @@ const { validate } = require('../lib/protocol/message-validator');
 const { toBool, firstDefined } = require('../lib/util/validation');
 const { errorPayload } = require('../lib/util/errors');
 const { registerEditorApi } = require('../lib/editor-api');
+const { watchProfileBadge } = require('../lib/util/node-lifecycle');
 
 /**
  * mavlink-ai-build (DESIGN.md §13.3).
@@ -23,7 +24,11 @@ module.exports = function registerMavlinkAiBuild(RED) {
     const node = this;
 
     node.name = config.name;
-    node.profile = RED.nodes.getNode(config.profile);
+    /**
+     * Resolves node.profile and keeps the "invalid profile" badge live across
+     * deploys, so a profile fixed after this node was deployed clears the badge.
+     */
+    watchProfileBadge(RED, node, config);
     node.messageName = config.messageName || 'HEARTBEAT';
     node.fieldsJson = config.fields || '';
     node.applyDefaults = toBool(config.applyDefaults, true);
@@ -35,10 +40,6 @@ module.exports = function registerMavlinkAiBuild(RED) {
       } catch (e) {
         node.warn(`mavlink-ai-build: invalid fields JSON, ignoring (${e.message})`);
       }
-    }
-
-    if (!node.profile || !node.profile.isValid || !node.profile.isValid()) {
-      node.status({ fill: 'red', shape: 'ring', text: 'invalid profile' });
     }
 
     node.on('input', (msg, send, done) => {
