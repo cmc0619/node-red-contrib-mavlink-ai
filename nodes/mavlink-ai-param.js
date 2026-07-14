@@ -1,6 +1,6 @@
 'use strict';
 
-const { ParamRead, ParamSet, ParamList } = require('../lib/param/param-workflow');
+const { ParamRead, ParamSet, ParamSetAuto, ParamList } = require('../lib/param/param-workflow');
 const { toInt, firstDefined } = require('../lib/util/validation');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
@@ -29,7 +29,9 @@ module.exports = function registerMavlinkAiParam(RED) {
     node.profileRef = config.profile || '';
     node.action = config.action || 'read';
     node.paramId = config.paramId || '';
-    node.paramType = config.paramType || 'MAV_PARAM_TYPE_REAL32';
+    node.paramIndex = config.paramIndex == null ? '' : String(config.paramIndex).trim();
+    /** 'auto' detects the wire type from the vehicle before a set (read-before-set). */
+    node.paramType = config.paramType || 'auto';
     // Static "Set one" value. Trimmed to '' when unset so a blank field falls
     // through to msg.payload.param_value rather than coercing to 0 (Number('')).
     node.paramValue = config.paramValue == null ? '' : String(config.paramValue).trim();
@@ -140,7 +142,13 @@ module.exports = function registerMavlinkAiParam(RED) {
       try {
         if (action === 'read') {
           opts.paramId = firstDefined(payload.param_id, node.paramId, '');
-          opts.paramIndex = payload.param_index;
+          /**
+           * Param ID takes precedence; the index is only used when no id is
+           * given, avoiding a conflicting request that names an id but a
+           * vehicle reads by the (>=0) index.
+           */
+          const index = firstDefined(payload.param_index, indexOrUndefined(node.paramIndex));
+          opts.paramIndex = opts.paramId ? undefined : index;
           workflow = new ParamRead(opts);
         } else if (action === 'set') {
           opts.paramId = firstDefined(payload.param_id, node.paramId, '');
@@ -148,8 +156,14 @@ module.exports = function registerMavlinkAiParam(RED) {
           // treated as "unset" (not 0) so a blank editor leaves it to the msg.
           const configValue = node.paramValue === '' ? undefined : node.paramValue;
           opts.value = firstDefined(payload.param_value, payload.value, configValue);
-          opts.paramType = firstDefined(payload.param_type, node.paramType);
-          workflow = new ParamSet(opts);
+          const requestedType = firstDefined(payload.param_type, node.paramType);
+          if (isAutoType(requestedType)) {
+            /** Detect the wire type from the vehicle, then set with it. */
+            workflow = new ParamSetAuto(opts);
+          } else {
+            opts.paramType = requestedType;
+            workflow = new ParamSet(opts);
+          }
         } else if (action === 'list') {
           workflow = new ParamList(opts);
         } else {
@@ -212,6 +226,33 @@ module.exports = function registerMavlinkAiParam(RED) {
 
   RED.nodes.registerType('mavlink-ai-param', MavlinkAiParamNode);
 };
+
+/**
+ * True when a param type selection means "detect from the vehicle" rather than
+ * a concrete MAV_PARAM_TYPE.
+ *
+ * @param {*} type
+ * @returns {boolean}
+ */
+function isAutoType(type) {
+  return String(type == null ? '' : type).trim().toLowerCase() === 'auto';
+}
+
+/**
+ * Parse a configured read-by-index value to a non-negative integer, or
+ * undefined for a blank/invalid field (so it never overrides a msg index or
+ * turns into a spurious index-0 read).
+ *
+ * @param {*} v
+ * @returns {number|undefined}
+ */
+function indexOrUndefined(v) {
+  if (v === undefined || v === null || String(v).trim() === '') {
+    return undefined;
+  }
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 ? n : undefined;
+}
 
 /**
  * Build a short status-bar label for a progress event.

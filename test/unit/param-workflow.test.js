@@ -10,6 +10,7 @@ const {
   unionFloatToInt,
   ParamRead,
   ParamSet,
+  ParamSetAuto,
   ParamList
 } = require('../../lib/param/param-workflow');
 
@@ -334,4 +335,45 @@ test('param workflow without a profile sends no profile reference', async () => 
   conn.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 1100 }));
   await p;
   assert.ok(!('profile' in conn.sent[0]));
+});
+
+test('ParamSetAuto reads the type, then sets with it', async () => {
+  const conn = new FakeConnection();
+  const enums = loadDialect('ardupilotmega').enums;
+  const wf = new ParamSetAuto({ connection: conn, targetSystem: 1, targetComponent: 1, enums, paramId: 'RC1_MIN', value: 3 });
+  const p = wf.run();
+  /** Let the detour read subscribe and send, then reply with UINT8 (type 1). */
+  await delay(0);
+  conn.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 9, type: 1 }));
+  /** Let the set subscribe and send, then echo the applied value. */
+  await delay(0);
+  conn.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 3, type: 1 }));
+  const result = await p;
+  assert.deepStrictEqual(conn.sent.map((m) => m.name), ['PARAM_REQUEST_READ', 'PARAM_SET']);
+  assert.strictEqual(conn.sent[1].fields.param_type, 1);
+  assert.strictEqual(result.topic, 'param/set');
+});
+
+test('ParamSetAuto.abort during the detour read rejects and never sets', async () => {
+  const conn = new FakeConnection();
+  const wf = new ParamSetAuto({ connection: conn, targetSystem: 1, targetComponent: 1, paramId: 'RC1_MIN', value: 3 });
+  const p = wf.run();
+  /** The detour read is now in flight; aborting must reject before any set. */
+  await delay(0);
+  wf.abort('closed');
+  await assert.rejects(p, (e) => e.code === 'PARAM_ABORTED');
+  assert.deepStrictEqual(conn.sent.map((m) => m.name), ['PARAM_REQUEST_READ']);
+});
+
+test('ParamSetAuto.abort during the set rejects after the type was detected', async () => {
+  const conn = new FakeConnection();
+  const wf = new ParamSetAuto({ connection: conn, targetSystem: 1, targetComponent: 1, paramId: 'RC1_MIN', value: 3 });
+  const p = wf.run();
+  /** Complete the detour read so the set becomes the in-flight child. */
+  await delay(0);
+  conn.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 9, type: 1 }));
+  await delay(0);
+  wf.abort('closed');
+  await assert.rejects(p, (e) => e.code === 'PARAM_ABORTED');
+  assert.deepStrictEqual(conn.sent.map((m) => m.name), ['PARAM_REQUEST_READ', 'PARAM_SET']);
 });
