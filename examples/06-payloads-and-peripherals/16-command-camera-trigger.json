@@ -30,87 +30,147 @@
     "type": "inject",
     "z": "flow16",
     "name": "Take photo (camera comp 100)",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "payload": "{\"target_component\":100}",
     "payloadType": "json",
     "x": 200,
     "y": 100,
-    "wires": [["n16_photo"]]
+    "wires": [
+      [
+        "n16_photo"
+      ]
+    ]
   },
   {
     "id": "n16_photo",
-    "type": "mavlink-ai-command",
+    "type": "mavlink-ai-payload",
     "z": "flow16",
     "name": "Take Photo",
     "profile": "ai_profile_copter",
-    "command": "take_photo",
-    "sendAs": "long",
-    "awaitAck": false,
-    "timeoutMs": 3000,
-    "maxRetries": 3,
-    "fields": "",
-    "presetFields": "{\"count\":1}",
+    "connection": "",
+    "action": "camera_photo",
+    "targetComponent": "",
+    "interval": "",
+    "count": "",
+    "sequence": "",
+    "streamId": "",
+    "statusFrequency": "",
+    "pitch": "",
+    "roll": "",
+    "yaw": "",
+    "instance": "",
+    "pwm": "",
+    "on": false,
+    "gripAction": "release",
     "x": 470,
     "y": 100,
-    "wires": [["n16_dbg"]]
+    "wires": [
+      [
+        "n16_dbg"
+      ]
+    ]
   },
   {
     "id": "n16_i2",
     "type": "inject",
     "z": "flow16",
     "name": "Start video",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "payload": "{\"target_component\":100}",
     "payloadType": "json",
     "x": 150,
     "y": 160,
-    "wires": [["n16_start"]]
+    "wires": [
+      [
+        "n16_start"
+      ]
+    ]
   },
   {
     "id": "n16_start",
-    "type": "mavlink-ai-command",
+    "type": "mavlink-ai-payload",
     "z": "flow16",
     "name": "Start Video Recording",
     "profile": "ai_profile_copter",
-    "command": "start_video",
-    "sendAs": "long",
-    "awaitAck": false,
-    "timeoutMs": 3000,
-    "maxRetries": 3,
-    "fields": "",
-    "presetFields": "{\"stream_id\":0}",
+    "connection": "",
+    "action": "camera_video_start",
+    "targetComponent": "",
+    "interval": "",
+    "count": "",
+    "sequence": "",
+    "streamId": "",
+    "statusFrequency": "",
+    "pitch": "",
+    "roll": "",
+    "yaw": "",
+    "instance": "",
+    "pwm": "",
+    "on": false,
+    "gripAction": "release",
     "x": 500,
     "y": 160,
-    "wires": [["n16_dbg"]]
+    "wires": [
+      [
+        "n16_dbg"
+      ]
+    ]
   },
   {
     "id": "n16_i3",
     "type": "inject",
     "z": "flow16",
     "name": "Stop video",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "payload": "{\"target_component\":100}",
     "payloadType": "json",
     "x": 150,
     "y": 220,
-    "wires": [["n16_stop"]]
+    "wires": [
+      [
+        "n16_stop"
+      ]
+    ]
   },
   {
     "id": "n16_stop",
-    "type": "mavlink-ai-command",
+    "type": "mavlink-ai-payload",
     "z": "flow16",
     "name": "Stop Video Recording",
     "profile": "ai_profile_copter",
-    "command": "stop_video",
-    "sendAs": "long",
-    "awaitAck": false,
-    "timeoutMs": 3000,
-    "maxRetries": 3,
-    "fields": "",
-    "presetFields": "{\"stream_id\":0}",
+    "connection": "",
+    "action": "camera_video_stop",
+    "targetComponent": "",
+    "interval": "",
+    "count": "",
+    "sequence": "",
+    "streamId": "",
+    "statusFrequency": "",
+    "pitch": "",
+    "roll": "",
+    "yaw": "",
+    "instance": "",
+    "pwm": "",
+    "on": false,
+    "gripAction": "release",
     "x": 500,
     "y": 220,
-    "wires": [["n16_dbg"]]
+    "wires": [
+      [
+        "n16_dbg"
+      ]
+    ]
   },
   {
     "id": "n16_dbg",

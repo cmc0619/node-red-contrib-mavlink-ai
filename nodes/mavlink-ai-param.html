@@ -1,4 +1,19 @@
 <script type="text/javascript">
+  /**
+   * Inclusive [min, max] wire ranges for the fixed-width integer MAV_PARAM_TYPEs,
+   * used to reject an editor Value that cannot fit the selected type before it
+   * silently overflows on the wire (e.g. UINT8 = 300). REAL32/REAL64 carry no
+   * integer constraint and are intentionally absent.
+   */
+  const MAV_PARAM_TYPE_RANGES = {
+    MAV_PARAM_TYPE_UINT8: [0, 255],
+    MAV_PARAM_TYPE_INT8: [-128, 127],
+    MAV_PARAM_TYPE_UINT16: [0, 65535],
+    MAV_PARAM_TYPE_INT16: [-32768, 32767],
+    MAV_PARAM_TYPE_UINT32: [0, 4294967295],
+    MAV_PARAM_TYPE_INT32: [-2147483648, 2147483647]
+  };
+
   RED.nodes.registerType('mavlink-ai-param', {
     category: 'MAVLink AI',
     color: '#FFE6B3',
@@ -9,12 +24,70 @@
       action: { value: 'read', required: true },
       paramId: { value: '' },
       paramType: { value: 'MAV_PARAM_TYPE_REAL32' },
-      // Static value for "Set one". Blank means "take it from the flow"
-      // (msg.payload.param_value), so pre-existing flows that source the value
-      // from a message keep working unchanged.
-      paramValue: { value: '' },
-      timeoutMs: { value: 3000, validate: RED.validators.number() },
-      maxRetries: { value: 3, validate: RED.validators.number() }
+      /**
+       * Static value for "Set one". Blank means "take it from the flow"
+       * (msg.payload.param_value), so pre-existing flows that source the value
+       * from a message keep working unchanged. Only validated for the set
+       * action; a non-blank value must be numeric and fit the selected integer
+       * type. The action and param type are read from the live form controls
+       * when the edit tray is open, falling back to the saved node properties
+       * for headless validation, so the check reflects in-progress dropdown
+       * changes rather than the stale saved values.
+       */
+      paramValue: {
+        value: '',
+        validate: function (v) {
+          const action = $('#node-input-action').length ? $('#node-input-action').val() : this.action;
+          if (action !== 'set') {
+            return true;
+          }
+          const s = String(v == null ? '' : v).trim();
+          /** Blank defers the value to msg.payload.param_value at runtime. */
+          if (s === '') {
+            return true;
+          }
+          const n = Number(s);
+          if (!Number.isFinite(n)) {
+            return false;
+          }
+          const paramType = $('#node-input-paramType').length ? $('#node-input-paramType').val() : this.paramType;
+          const range = MAV_PARAM_TYPE_RANGES[paramType];
+          if (range) {
+            return Number.isInteger(n) && n >= range[0] && n <= range[1];
+          }
+          /** REAL32/REAL64: any finite number is acceptable. */
+          return true;
+        }
+      },
+      /**
+       * Positive timeout and non-negative integer retries. The runtime already
+       * clamps out-of-range values to the defaults (param-workflow.js), so
+       * reject them here too rather than showing a value the node won't use.
+       * Blank/whitespace is rejected up front because Number('') is 0, which
+       * would otherwise slip a cleared field past the numeric checks.
+       */
+      timeoutMs: {
+        value: 3000,
+        validate: function (v) {
+          const s = String(v == null ? '' : v).trim();
+          if (s === '') {
+            return false;
+          }
+          const n = Number(s);
+          return Number.isFinite(n) && n >= 1;
+        }
+      },
+      maxRetries: {
+        value: 3,
+        validate: function (v) {
+          const s = String(v == null ? '' : v).trim();
+          if (s === '') {
+            return false;
+          }
+          const n = Number(s);
+          return Number.isFinite(n) && n >= 0 && Number.isInteger(n);
+        }
+      }
     },
     inputs: 1,
     outputs: 3,
@@ -24,15 +97,27 @@
       return this.name || (this.action ? 'param ' + this.action : 'mavlink ai param');
     },
     oneditprepare: function () {
-      // Show the param id / type / value rows only for the actions that use
-      // them (list needs neither; read needs no value/type).
+      /**
+       * Re-run the Value field's validator so its range check reflects the
+       * current Action / Param type, which those cross-field validators read
+       * from the live form controls.
+       */
+      function revalidateValue() {
+        $('#node-input-paramValue').trigger('change');
+      }
+      /**
+       * Show the param id / type / value rows only for the actions that use
+       * them (list needs neither; read needs no value/type).
+       */
       function refresh() {
         const action = $('#node-input-action').val();
         $('.mav-param-id').toggle(action === 'read' || action === 'set');
         $('.mav-param-type').toggle(action === 'set');
         $('.mav-param-value').toggle(action === 'set');
+        revalidateValue();
       }
       $('#node-input-action').on('change', refresh);
+      $('#node-input-paramType').on('change', revalidateValue);
       refresh();
     }
   });
@@ -50,6 +135,9 @@
   <div class="form-row">
     <label for="node-input-profile">Profile</label>
     <input type="text" id="node-input-profile">
+  </div>
+  <div class="form-tips" style="margin: -6px 0 8px 105px; width: 70%;">
+    Optional — <b>overrides</b> the connection's profile. Leave blank to use the target's routed profile, falling back to the connection's own profile.
   </div>
   <div class="form-row">
     <label for="node-input-action">Action</label>

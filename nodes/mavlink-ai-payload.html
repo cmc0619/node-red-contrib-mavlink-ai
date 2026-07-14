@@ -1,0 +1,188 @@
+<script type="text/javascript">
+  /**
+   * Payload actions mapped to the input rows they use, so the editor shows only
+   * the relevant fields. Keys match the BUILDERS in lib/payload/payload.js.
+   */
+  const MAV_PAYLOAD_FIELDS = {
+    camera_photo: ['interval', 'count', 'sequence'],
+    camera_video_start: ['streamId', 'statusFrequency'],
+    camera_video_stop: ['streamId'],
+    gimbal_aim: ['pitch', 'roll', 'yaw'],
+    servo: ['instance', 'pwm'],
+    relay: ['instance', 'on'],
+    gripper: ['instance', 'gripAction']
+  };
+
+  RED.nodes.registerType('mavlink-ai-payload', {
+    category: 'MAVLink AI',
+    color: '#FFE6B3',
+    defaults: {
+      name: { value: '' },
+      profile: { value: '', type: 'mavlink-ai-profile', required: true },
+      connection: { value: '', type: 'mavlink-ai-connection', required: false },
+      action: { value: 'camera_photo', required: true },
+      /** Blank => the profile's default component; set it for a camera/gimbal on its own component id. */
+      targetComponent: { value: '' },
+      interval: { value: '' },
+      count: { value: '' },
+      sequence: { value: '' },
+      streamId: { value: '' },
+      statusFrequency: { value: '' },
+      pitch: { value: '' },
+      roll: { value: '' },
+      yaw: { value: '' },
+      instance: { value: '' },
+      /** Required (numeric) only for the servo action. */
+      pwm: {
+        value: '',
+        validate: function (v) {
+          const action = $('#node-input-action').length ? $('#node-input-action').val() : this.action;
+          if (action !== 'servo') {
+            return true;
+          }
+          return Number.isFinite(Number(String(v == null ? '' : v).trim()));
+        }
+      },
+      on: { value: false },
+      gripAction: { value: 'release' }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: 'font-awesome/fa-camera',
+    label: function () {
+      return this.name || 'payload ' + (this.action || '').replace(/_/g, ' ');
+    },
+    oneditprepare: function () {
+      const $action = $('#node-input-action');
+
+      /** Show only the input rows the selected action uses. */
+      function refresh() {
+        const fields = MAV_PAYLOAD_FIELDS[$action.val()] || [];
+        $('.mav-payload-field').each(function () {
+          const key = $(this).attr('data-field');
+          $(this).toggle(fields.indexOf(key) !== -1);
+        });
+        $('#node-input-pwm').trigger('change');
+      }
+
+      $action.on('change', refresh);
+      refresh();
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="mavlink-ai-payload">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="MAVLink Payload">
+  </div>
+  <div class="form-row">
+    <label for="node-input-profile">Profile</label>
+    <input type="text" id="node-input-profile">
+  </div>
+  <div class="form-row">
+    <label for="node-input-connection">Connection</label>
+    <input type="text" id="node-input-connection">
+  </div>
+  <div class="form-tips" style="margin: -6px 0 8px 105px; width: 70%;">
+    Set a Connection to <b>send</b> directly; leave it empty to emit a <code>mavlink/send</code> message for a <b>mavlink-ai-out</b> node.
+  </div>
+  <div class="form-row">
+    <label for="node-input-action">Action</label>
+    <select id="node-input-action">
+      <optgroup label="Camera">
+        <option value="camera_photo">Take Photo</option>
+        <option value="camera_video_start">Start Video</option>
+        <option value="camera_video_stop">Stop Video</option>
+      </optgroup>
+      <optgroup label="Gimbal / Mount">
+        <option value="gimbal_aim">Aim (pitch / yaw)</option>
+      </optgroup>
+      <optgroup label="Servo / Relay">
+        <option value="servo">Set Servo (PWM)</option>
+        <option value="relay">Set Relay (on / off)</option>
+      </optgroup>
+      <optgroup label="Gripper">
+        <option value="gripper">Grab / Release</option>
+      </optgroup>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-input-targetComponent">Component</label>
+    <input type="number" id="node-input-targetComponent" min="0" max="255" step="1" placeholder="blank = autopilot; e.g. 100 for a camera">
+  </div>
+
+  <div class="form-row mav-payload-field" data-field="interval">
+    <label for="node-input-interval">Interval (s)</label>
+    <input type="number" step="any" id="node-input-interval" placeholder="0 = single shot">
+  </div>
+  <div class="form-row mav-payload-field" data-field="count">
+    <label for="node-input-count">Count</label>
+    <input type="number" step="1" id="node-input-count" placeholder="1">
+  </div>
+  <div class="form-row mav-payload-field" data-field="sequence">
+    <label for="node-input-sequence">Sequence</label>
+    <input type="number" step="1" id="node-input-sequence" placeholder="0">
+  </div>
+  <div class="form-row mav-payload-field" data-field="streamId">
+    <label for="node-input-streamId">Stream ID</label>
+    <input type="number" step="1" id="node-input-streamId" placeholder="0 = all streams">
+  </div>
+  <div class="form-row mav-payload-field" data-field="statusFrequency">
+    <label for="node-input-statusFrequency">Status Hz</label>
+    <input type="number" step="any" id="node-input-statusFrequency" placeholder="0">
+  </div>
+
+  <div class="form-row mav-payload-field" data-field="pitch">
+    <label for="node-input-pitch">Pitch (°)</label>
+    <input type="number" step="any" id="node-input-pitch" placeholder="+ up / - down">
+  </div>
+  <div class="form-row mav-payload-field" data-field="roll">
+    <label for="node-input-roll">Roll (°)</label>
+    <input type="number" step="any" id="node-input-roll" placeholder="0">
+  </div>
+  <div class="form-row mav-payload-field" data-field="yaw">
+    <label for="node-input-yaw">Yaw (°)</label>
+    <input type="number" step="any" id="node-input-yaw" placeholder="relative to vehicle">
+  </div>
+
+  <div class="form-row mav-payload-field" data-field="instance">
+    <label for="node-input-instance">Instance</label>
+    <input type="number" step="1" id="node-input-instance" placeholder="servo / relay / gripper number">
+  </div>
+  <div class="form-row mav-payload-field" data-field="pwm">
+    <label for="node-input-pwm">PWM (µs)</label>
+    <input type="number" step="1" id="node-input-pwm" placeholder="typically 1000–2000">
+  </div>
+  <div class="form-row mav-payload-field" data-field="on">
+    <label for="node-input-on">Relay on</label>
+    <input type="checkbox" id="node-input-on" style="width:auto; vertical-align:middle;">
+  </div>
+  <div class="form-row mav-payload-field" data-field="gripAction">
+    <label for="node-input-gripAction">Gripper</label>
+    <select id="node-input-gripAction">
+      <option value="release">Release</option>
+      <option value="grab">Grab</option>
+    </select>
+  </div>
+</script>
+
+<script type="text/html" data-help-name="mavlink-ai-payload">
+  <p>Controls onboard <b>payloads and peripherals</b> — camera, gimbal/mount, servo, relay, gripper — building the right <code>COMMAND_LONG</code> without the build node. These verbs are not drone-specific: servos, relays and grippers are just as useful on rovers, boats and submarines (lights, manipulators, sample release) as cameras and gimbals are on copters and survey planes.</p>
+  <h3>Sending</h3>
+  <p>With a <b>Connection</b> the node sends the command directly; without one it emits a <code>mavlink/send</code> message to wire into a <b>mavlink-ai-out</b> node. A <b>Profile</b> is always required for encoding.</p>
+  <h3>Component</h3>
+  <p>Payload devices are often separate MAVLink components. Set <b>Component</b> to the device's component id (e.g. <code>100</code> for a camera); leave it blank to address the profile's default component.</p>
+  <h3>Actions</h3>
+  <ul>
+    <li><b>Take Photo / Start Video / Stop Video</b> — <code>IMAGE_START_CAPTURE</code> / <code>VIDEO_START_CAPTURE</code> / <code>VIDEO_STOP_CAPTURE</code>.</li>
+    <li><b>Aim (pitch / yaw)</b> — <code>DO_MOUNT_CONTROL</code> in degrees, under MAVLink targeting. The message-based gimbal-manager protocol is a planned follow-up.</li>
+    <li><b>Set Servo (PWM)</b> — <code>DO_SET_SERVO</code> (instance + PWM µs, typically 1000–2000).</li>
+    <li><b>Set Relay (on / off)</b> — <code>DO_SET_RELAY</code>.</li>
+    <li><b>Grab / Release</b> — <code>DO_GRIPPER</code>.</li>
+  </ul>
+  <h3>Inputs</h3>
+  <p><code>msg.payload</code> overrides any editor value: <code>action</code>, <code>target_system</code>, <code>target_component</code>, and the per-action fields (<code>interval</code>, <code>count</code>, <code>sequence</code>, <code>stream_id</code>, <code>status_frequency</code>, <code>pitch</code>, <code>roll</code>, <code>yaw</code>, <code>instance</code>, <code>pwm</code>, <code>on</code>, <code>grip_action</code>).</p>
+  <h3>Output</h3>
+  <p>Without a connection, a <code>mavlink/send</code> message for <b>mavlink-ai-out</b>. Failures are emitted as a structured <code>mavlink/error</code> message on the same output.</p>
+</script>
