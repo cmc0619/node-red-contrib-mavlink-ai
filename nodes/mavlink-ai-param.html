@@ -9,6 +9,10 @@
       action: { value: 'read', required: true },
       paramId: { value: '' },
       paramType: { value: 'MAV_PARAM_TYPE_REAL32' },
+      // Static value for "Set one". Blank means "take it from the flow"
+      // (msg.payload.param_value), so pre-existing flows that source the value
+      // from a message keep working unchanged.
+      paramValue: { value: '' },
       timeoutMs: { value: 3000, validate: RED.validators.number() },
       maxRetries: { value: 3, validate: RED.validators.number() }
     },
@@ -26,6 +30,7 @@
         const action = $('#node-input-action').val();
         $('.mav-param-id').toggle(action === 'read' || action === 'set');
         $('.mav-param-type').toggle(action === 'set');
+        $('.mav-param-value').toggle(action === 'set');
       }
       $('#node-input-action').on('change', refresh);
       refresh();
@@ -71,6 +76,10 @@
       <option value="MAV_PARAM_TYPE_REAL64">REAL64 (double)</option>
     </select>
   </div>
+  <div class="form-row mav-param-value">
+    <label for="node-input-paramValue">Value</label>
+    <input type="text" id="node-input-paramValue" placeholder="e.g. 1100 — leave blank to use msg.payload.param_value">
+  </div>
   <div class="form-row">
     <label for="node-input-timeoutMs">Timeout ms</label>
     <input type="number" id="node-input-timeoutMs">
@@ -86,13 +95,13 @@
   <h3>Actions</h3>
   <ul>
     <li><b>Read one</b> — read a single parameter by <code>Param ID</code> (or by <code>msg.payload.param_index</code>).</li>
-    <li><b>Set one</b> — set <code>Param ID</code> to <code>msg.payload.param_value</code> with the chosen <code>Param type</code>, then confirm via the echoed <code>PARAM_VALUE</code>.</li>
+    <li><b>Set one</b> — set <code>Param ID</code> to the editor <code>Value</code> (or <code>msg.payload.param_value</code> when <code>Value</code> is left blank) with the chosen <code>Param type</code>, then confirm via the echoed <code>PARAM_VALUE</code>.</li>
     <li><b>Request list</b> — request the full parameter list and assemble it; missing items are re-requested on a lossy link.</li>
   </ul>
   <h3>Profile</h3>
   <p><b>Profile</b> (optional) pins the workflow to a specific profile: its dialect, firmware behavior, source identity, signing, and target defaults are used, and every outbound message is encoded with it. Left empty, the target system/component is resolved through the connection's route table (the same resolution inbound packets get) and falls back to the connection's default profile. <code>msg.payload.profile</code> overrides per message. On routed connections with component-specific routes, set an explicit profile — target defaults can make route resolution ambiguous.</p>
   <h3>Inputs</h3>
-  <p><code>msg.payload</code> may set <code>target_system</code>, <code>target_component</code>, <code>action</code>, <code>profile</code>, <code>param_id</code>, <code>param_index</code>, <code>param_value</code>, and <code>param_type</code>, overriding the editor values.</p>
+  <p><code>msg.payload</code> may set <code>target_system</code>, <code>target_component</code>, <code>action</code>, <code>profile</code>, <code>param_id</code>, <code>param_index</code>, <code>param_value</code>, and <code>param_type</code>, overriding the editor values. For <b>Set one</b>, <code>msg.payload.param_value</code> takes precedence over the editor <code>Value</code>, so a static default can still be overridden per message.</p>
   <h3>Details</h3>
   <p>Param IDs are matched case-insensitively (<code>rc1_min</code> works). When the effective profile's firmware is <b>px4</b>, integer-typed parameter values are encoded/decoded using the PX4 byte-union convention automatically; other firmwares use the plain cast convention.</p>
   <h3>Outputs</h3>
