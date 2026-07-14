@@ -190,15 +190,15 @@ test('CommandSend keeps waiting through MAV_RESULT_IN_PROGRESS (#16)', async () 
 test('CommandSend does not retransmit after IN_PROGRESS; a later ACK still resolves it (#144)', async () => {
   const conn = new FakeConnection();
   const wf = new CommandSend(opts(conn, { timeoutMs: 15, maxRetries: 3 }));
-  const keepAlive = setInterval(() => {}, 5); // workflow timers are unref'd
+  const keepAlive = setInterval(() => {}, 5); /** workflow timers are unref'd */
   try {
     const p = wf.run();
     await delay(0);
-    assert.strictEqual(conn.sent.length, 1); // initial COMMAND_LONG
+    assert.strictEqual(conn.sent.length, 1); /** initial COMMAND_LONG */
     conn.deliverAck({ command: 400, result: 5, progress: 20 });
     assert.strictEqual(wf.state, 'in_progress');
-    await delay(25); // let a full timeout window elapse with no further ack
-    assert.strictEqual(conn.sent.length, 1); // still no retransmit while in progress
+    await delay(25); /** let a full timeout window elapse with no further ack */
+    assert.strictEqual(conn.sent.length, 1); /** still no retransmit while in progress */
     conn.deliverAck({ command: 400, result: 0 });
     const res = await p;
     assert.strictEqual(res.payload.result, 0);
@@ -224,7 +224,7 @@ test('CommandSend times out (bounded) after IN_PROGRESS silence without retransm
   } finally {
     clearInterval(keepAlive);
   }
-  assert.strictEqual(conn.sent.length, 1); // never retransmitted while in progress
+  assert.strictEqual(conn.sent.length, 1); /** never retransmitted while in progress */
 });
 
 test('CommandSend COMMAND_INT omits confirmation and resends unchanged (#17)', async () => {
