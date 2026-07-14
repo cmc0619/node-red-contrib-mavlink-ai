@@ -44,6 +44,11 @@ module.exports = function registerMavlinkAiPayload(RED) {
     node.pwm = config.pwm;
     node.relayOn = config.on;
     node.gripAction = config.gripAction;
+    node.gimbalDeviceId = config.gimbalDeviceId;
+    node.yawLock = config.yawLock;
+    node.cameraMode = config.cameraMode;
+    node.distance = config.distance;
+    node.triggerNow = config.triggerNow;
 
     if (!node.profile || !node.profile.isValid || !node.profile.isValid()) {
       node.status({ fill: 'red', shape: 'ring', text: 'invalid profile' });
@@ -64,8 +69,6 @@ module.exports = function registerMavlinkAiPayload(RED) {
       const defaults = node.profile.getDefaults ? node.profile.getDefaults() : {};
       const action = firstDefined(payload.action, node.action);
       const targetSystem = firstDefined(payload.target_system, defaults.defaultTargetSystem, 1);
-      // Payload devices are often a distinct component; the node's own default
-      // wins over the profile's autopilot component when set.
       /**
        * Payload devices are often a distinct component; the node's own default
        * wins over the profile's autopilot component when set.
@@ -106,8 +109,13 @@ module.exports = function registerMavlinkAiPayload(RED) {
           yaw: toNum(firstDefined(payload.yaw, node.yaw), undefined),
           instance: toNum(firstDefined(payload.instance, node.instance), undefined),
           pwm: toNum(firstDefined(payload.pwm, node.pwm), undefined),
-          on: toBool(firstDefined(payload.on, node.on), false),
-          action: firstDefined(payload.grip_action, node.gripAction)
+          on: toBool(firstDefined(payload.on, node.relayOn), false),
+          action: firstDefined(payload.grip_action, node.gripAction),
+          gimbalDeviceId: toNum(firstDefined(payload.gimbal_device_id, node.gimbalDeviceId), undefined),
+          yawLock: toBool(firstDefined(payload.yaw_lock, node.yawLock), false),
+          cameraMode: firstDefined(payload.camera_mode, node.cameraMode),
+          distance: toNum(firstDefined(payload.distance, node.distance), undefined),
+          triggerNow: toBool(firstDefined(payload.trigger_now, node.triggerNow), false)
         });
       } catch (err) {
         const e = toMavlinkError(err, 'BAD_PAYLOAD');
