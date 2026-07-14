@@ -1,6 +1,6 @@
 # Examples
 
-Import these flows from Node-RED using **Menu → Import → Examples → node-red-contrib-mavlink-ai**. The folders below are deliberate: they keep the import menu organized while retaining the original `01` through `20` filenames.
+Import these flows from Node-RED using **Menu → Import → Examples → node-red-contrib-mavlink-ai**. The folders below are deliberate: they keep the import menu organized while retaining the sequential `01` through `30` filenames.
 
 ## 01 Getting started
 

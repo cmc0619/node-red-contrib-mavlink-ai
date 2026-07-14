@@ -112,3 +112,17 @@ test('missing connection shows an error badge instead of crashing (#46)', () => 
   const node = RED.create('mavlink-ai-swarm', { id: 's1', connection: 'nope' });
   assert.deepStrictEqual(node.statusHistory[0], { fill: 'red', shape: 'ring', text: 'missing connection' });
 });
+
+/**
+ * A swarm node with no connection used to early-return without an input handler,
+ * so a triggering message was silently swallowed (#154). It now emits a
+ * structured NO_CONNECTION error like the mission/param nodes.
+ */
+test('mavlink-ai-swarm without a connection emits NO_CONNECTION, not silence (#154)', async () => {
+  const RED = new MockRED().loadNodes();
+  const node = RED.create('mavlink-ai-swarm', { id: 's1', connection: 'missing' });
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected.length, 1);
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'NO_CONNECTION');
+});

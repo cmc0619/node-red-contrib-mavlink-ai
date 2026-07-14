@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { CommandSend } = require('../../lib/command/command-workflow');
-const { resolveFlightMode, knownModes } = require('../../lib/command/flight-modes');
+const { resolveFlightMode, knownModes, modeNameForCustomMode } = require('../../lib/command/flight-modes');
 const { LockManager } = require('../../lib/runtime/lock-manager');
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -219,6 +219,14 @@ test('resolveFlightMode maps ArduPilot modes per vehicle type (#20)', () => {
   assert.deepStrictEqual(resolveFlightMode('ardupilot', 'boat', 'AUTO'), { base_mode: 1, custom_mode: 10 });
   // Case/spacing tolerant.
   assert.deepStrictEqual(resolveFlightMode('ardupilot', 'copter', 'alt hold'), { base_mode: 1, custom_mode: 2 });
+});
+
+/** Recent ArduPilot modes added in #155: ArduCopter TURTLE (28), ArduPlane AUTOLAND (26). */
+test('resolveFlightMode maps recently-added ArduPilot modes and reverse-looks-up (#155)', () => {
+  assert.deepStrictEqual(resolveFlightMode('ardupilot', 'copter', 'TURTLE'), { base_mode: 1, custom_mode: 28 });
+  assert.deepStrictEqual(resolveFlightMode('ardupilot', 'plane', 'AUTOLAND'), { base_mode: 1, custom_mode: 26 });
+  assert.strictEqual(modeNameForCustomMode('ardupilot', 'copter', 28), 'TURTLE');
+  assert.strictEqual(modeNameForCustomMode('ardupilot', 'plane', 26), 'AUTOLAND');
 });
 
 /**

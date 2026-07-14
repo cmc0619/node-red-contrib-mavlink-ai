@@ -10,7 +10,7 @@
     "id": "ai_profile_onboard_preview",
     "type": "mavlink-ai-profile",
     "name": "AI Profile - Onboard Preview",
-    "profileType": "gcs",
+    "profileType": "companion-computer",
     "dialectSource": "bundled",
     "dialect": "ardupilotmega",
     "customDialectPath": "",
@@ -24,7 +24,6 @@
     "heartbeatType": "MAV_TYPE_ONBOARD_CONTROLLER",
     "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
     "firmware": "ardupilot",
-    "vehicleType": "copter",
     "debugProtocol": false
   },
   {
