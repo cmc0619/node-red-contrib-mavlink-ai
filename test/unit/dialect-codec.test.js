@@ -180,19 +180,22 @@ function roundTrip(codec, name, fields) {
   });
 }
 
+/**
+ * Each char-field case would corrupt before the #137 fix: "123" becomes the
+ * Number 123 and serializes to zero bytes; "GENERIC" collides with enum member
+ * names; a numeric param_id must address that literal parameter, not param
+ * index 42. A normal param name (ARMING_CHECK) must still round-trip unchanged.
+ */
 test('char[] fields are never enum/number-resolved: digit and enum-name text survive (#137)', async () => {
   const b = loadDialect('ardupilotmega');
   const codec = new MavlinkCodec({ bundle: b, version: 'v2', sysid: 1, compid: 1 });
 
-  // All-digit text would become the Number 123 and serialize to zero bytes.
   const digits = await roundTrip(codec, 'STATUSTEXT', { severity: 6, text: '123' });
   assert.strictEqual(digits.fields.text, '123');
 
-  // "GENERIC" collides with MAV_TYPE_GENERIC / other enum members.
   const collide = await roundTrip(codec, 'STATUSTEXT', { severity: 6, text: 'GENERIC' });
   assert.strictEqual(collide.fields.text, 'GENERIC');
 
-  // A numeric param_id must address that literal parameter, not param index 42.
   const param = await roundTrip(codec, 'PARAM_SET', {
     target_system: 1,
     target_component: 1,
@@ -202,7 +205,6 @@ test('char[] fields are never enum/number-resolved: digit and enum-name text sur
   });
   assert.strictEqual(param.fields.param_id, '42');
 
-  // A normal param name still round-trips unchanged.
   const named = await roundTrip(codec, 'PARAM_SET', {
     target_system: 1,
     target_component: 1,
