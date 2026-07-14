@@ -94,6 +94,34 @@ test('param node set uses payload value and reports applied', async () => {
   assert.strictEqual(result.payload.applied, true);
 });
 
+test('param node set uses the editor Value when the flow omits param_value', async () => {
+  const { conn, node } = setup({ action: 'set', paramId: 'RC1_MIN', paramValue: '1500' });
+  const outputs = await run(node, { payload: {} }, () => conn.deliver(paramValue({ value: 1500 })));
+  const set = conn.sent.find((m) => m.name === 'PARAM_SET');
+  assert.ok(set);
+  assert.strictEqual(set.fields.param_value, 1500);
+  const result = outputs[outputs.length - 1][0];
+  assert.strictEqual(result.topic, 'param/set');
+  assert.strictEqual(result.payload.applied, true);
+});
+
+test('param node set lets the flow param_value override the editor Value', async () => {
+  const { conn, node } = setup({ action: 'set', paramId: 'RC1_MIN', paramValue: '1500' });
+  await run(node, { payload: { param_value: 1234 } }, () => conn.deliver(paramValue({ value: 1234 })));
+  const set = conn.sent.find((m) => m.name === 'PARAM_SET');
+  assert.ok(set);
+  assert.strictEqual(set.fields.param_value, 1234);
+});
+
+test('param node set with a blank editor Value and no flow value fails, not sets 0', async () => {
+  const { conn, node } = setup({ action: 'set', paramId: 'RC1_MIN', paramValue: '' });
+  const outputs = await run(node, { payload: {} });
+  assert.ok(!conn.sent.some((m) => m.name === 'PARAM_SET'));
+  const error = outputs[0][2];
+  assert.strictEqual(error.topic, 'mavlink/error');
+  assert.strictEqual(error.payload.code, 'BAD_PARAM_SET');
+});
+
 test('param node list assembles params and emits progress', async () => {
   const { conn, node } = setup({ action: 'list' });
   const outputs = await run(node, { payload: {} }, () => {

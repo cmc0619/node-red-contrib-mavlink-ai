@@ -30,6 +30,9 @@ module.exports = function registerMavlinkAiParam(RED) {
     node.action = config.action || 'read';
     node.paramId = config.paramId || '';
     node.paramType = config.paramType || 'MAV_PARAM_TYPE_REAL32';
+    // Static "Set one" value. Trimmed to '' when unset so a blank field falls
+    // through to msg.payload.param_value rather than coercing to 0 (Number('')).
+    node.paramValue = config.paramValue == null ? '' : String(config.paramValue).trim();
     node.timeoutMs = toInt(config.timeoutMs, 3000);
     node.maxRetries = toInt(config.maxRetries, 3);
 
@@ -141,7 +144,10 @@ module.exports = function registerMavlinkAiParam(RED) {
           workflow = new ParamRead(opts);
         } else if (action === 'set') {
           opts.paramId = firstDefined(payload.param_id, node.paramId, '');
-          opts.value = firstDefined(payload.param_value, payload.value);
+          // Editor Value is a fallback for the flow value; an empty field is
+          // treated as "unset" (not 0) so a blank editor leaves it to the msg.
+          const configValue = node.paramValue === '' ? undefined : node.paramValue;
+          opts.value = firstDefined(payload.param_value, payload.value, configValue);
           opts.paramType = firstDefined(payload.param_type, node.paramType);
           workflow = new ParamSet(opts);
         } else if (action === 'list') {
