@@ -1,6 +1,7 @@
 'use strict';
 
 const { badgeForState } = require('../lib/util/status');
+const { safeDetach } = require('../lib/util/node-lifecycle');
 
 /**
  * mavlink-ai-out (DESIGN.md §13.2).
@@ -52,7 +53,7 @@ module.exports = function registerMavlinkAiOut(RED) {
     });
 
     node.on('close', function close(done) {
-      node.connection.emitter.removeListener('status', onStatus);
+      safeDetach(node, () => node.connection.emitter.removeListener('status', onStatus));
       done();
     });
   }

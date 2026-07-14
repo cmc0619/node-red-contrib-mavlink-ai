@@ -4,6 +4,7 @@ const { VehicleRegistry } = require('../lib/swarm/vehicle-registry');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { toInt, toBool } = require('../lib/util/validation');
 const { badgeForState } = require('../lib/util/status');
+const { safeDetach } = require('../lib/util/node-lifecycle');
 
 // Messages the registry consumes. HEARTBEAT discovers vehicles; the rest
 // enrich known vehicles with position/status.
@@ -184,8 +185,10 @@ module.exports = function registerMavlinkAiSwarm(RED) {
     updateBadge();
 
     node.on('close', (done) => {
-      node.connection.unsubscribe(subId);
-      node.connection.emitter.removeListener('status', onStatus);
+      safeDetach(node, () => {
+        node.connection.unsubscribe(subId);
+        node.connection.emitter.removeListener('status', onStatus);
+      });
       for (const t of timers) {
         clearInterval(t);
       }
