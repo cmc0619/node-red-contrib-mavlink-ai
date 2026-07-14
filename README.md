@@ -324,7 +324,8 @@ stop-on-first-error or continue-on-error.
 
 ```js
 msg.payload = {
-  command: "go_to",
+  command: "MAV_CMD_DO_REPOSITION",
+  command_int: true,
   origin: { lat: 39.1, lon: -75.1, alt: 40 },
   targets: [
     { sysid: 1, north: 0, east: 0,   up: 0 },
