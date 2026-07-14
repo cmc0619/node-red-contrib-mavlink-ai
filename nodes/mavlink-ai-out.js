@@ -1,6 +1,7 @@
 'use strict';
 
 const { badgeForState } = require('../lib/util/status');
+const { safeDetach } = require('../lib/util/node-lifecycle');
 
 /**
  * mavlink-ai-out (DESIGN.md §13.2).
@@ -52,18 +53,7 @@ module.exports = function registerMavlinkAiOut(RED) {
     });
 
     node.on('close', function close(done) {
-      /**
-       * Guard the dereference and always signal done(): on a full undeploy the
-       * connection config node may already be gone, and a throw would abort the
-       * deploy (issue #140).
-       */
-      try {
-        if (node.connection) {
-          node.connection.emitter.removeListener('status', onStatus);
-        }
-      } catch (err) {
-        node.error(`Error detaching from connection on close: ${err && err.message ? err.message : err}`);
-      }
+      safeDetach(node, () => node.connection.emitter.removeListener('status', onStatus));
       done();
     });
   }

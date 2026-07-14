@@ -2,6 +2,7 @@
 
 const { parseList, parseIdList, toInt, toNum, toBool } = require('../lib/util/validation');
 const { badgeForState } = require('../lib/util/status');
+const { safeDetach } = require('../lib/util/node-lifecycle');
 
 // Minimum interval between rx-counter badge updates. Status updates travel to
 // every open editor over the admin websocket, so pushing one per message at
@@ -105,25 +106,16 @@ module.exports = function registerMavlinkAiIn(RED) {
     node.status(badgeForState(node.connection.statusState, node.connection.statusState));
 
     node.on('close', function close(done) {
-      /**
-       * On a full undeploy the connection config node may already be torn down,
-       * so guard every dereference and always signal done() — a throw here would
-       * otherwise abort the deploy (issue #140).
-       */
-      try {
-        if (node.connection) {
-          node.connection.unsubscribe(subId);
-          node.connection.emitter.removeListener('status', onStatus);
-          if (onDecodeError) {
-            node.connection.emitter.removeListener('decodeError', onDecodeError);
-          }
-          if (onRejected) {
-            node.connection.emitter.removeListener('rejected', onRejected);
-          }
+      safeDetach(node, () => {
+        node.connection.unsubscribe(subId);
+        node.connection.emitter.removeListener('status', onStatus);
+        if (onDecodeError) {
+          node.connection.emitter.removeListener('decodeError', onDecodeError);
         }
-      } catch (err) {
-        node.error(`Error detaching from connection on close: ${err && err.message ? err.message : err}`);
-      }
+        if (onRejected) {
+          node.connection.emitter.removeListener('rejected', onRejected);
+        }
+      });
       done();
     });
   }
