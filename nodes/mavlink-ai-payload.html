@@ -7,7 +7,10 @@
     camera_photo: ['interval', 'count', 'sequence'],
     camera_video_start: ['streamId', 'statusFrequency'],
     camera_video_stop: ['streamId'],
+    camera_mode: ['cameraMode'],
+    cam_trigger_distance: ['distance', 'triggerNow'],
     gimbal_aim: ['pitch', 'roll', 'yaw'],
+    gimbal_manager_aim: ['pitch', 'yaw', 'gimbalDeviceId', 'yawLock'],
     servo: ['instance', 'pwm'],
     relay: ['instance', 'on'],
     gripper: ['instance', 'gripAction']
@@ -44,7 +47,23 @@
         }
       },
       on: { value: false },
-      gripAction: { value: 'release' }
+      gripAction: { value: 'release' },
+      gimbalDeviceId: { value: '' },
+      yawLock: { value: false },
+      cameraMode: { value: 'image' },
+      /** Required (non-negative) only for the trigger-by-distance action. */
+      distance: {
+        value: '',
+        validate: function (v) {
+          const action = $('#node-input-action').length ? $('#node-input-action').val() : this.action;
+          if (action !== 'cam_trigger_distance') {
+            return true;
+          }
+          const n = Number(String(v == null ? '' : v).trim());
+          return Number.isFinite(n) && n >= 0;
+        }
+      },
+      triggerNow: { value: false }
     },
     inputs: 1,
     outputs: 1,
@@ -94,9 +113,12 @@
         <option value="camera_photo">Take Photo</option>
         <option value="camera_video_start">Start Video</option>
         <option value="camera_video_stop">Stop Video</option>
+        <option value="camera_mode">Set Mode (image / video / survey)</option>
+        <option value="cam_trigger_distance">Trigger by Distance</option>
       </optgroup>
       <optgroup label="Gimbal / Mount">
-        <option value="gimbal_aim">Aim (pitch / yaw)</option>
+        <option value="gimbal_aim">Aim — mount control (legacy)</option>
+        <option value="gimbal_manager_aim">Aim — gimbal manager</option>
       </optgroup>
       <optgroup label="Servo / Relay">
         <option value="servo">Set Servo (PWM)</option>
@@ -165,6 +187,32 @@
       <option value="grab">Grab</option>
     </select>
   </div>
+  <div class="form-row mav-payload-field" data-field="gimbalDeviceId">
+    <label for="node-input-gimbalDeviceId">Gimbal ID</label>
+    <input type="number" step="1" min="0" max="255" id="node-input-gimbalDeviceId" placeholder="0 = all gimbals">
+  </div>
+  <div class="form-row mav-payload-field" data-field="yawLock">
+    <label for="node-input-yawLock">Yaw lock</label>
+    <input type="checkbox" id="node-input-yawLock" style="width:auto; vertical-align:middle;">
+    <span style="margin-left:6px; color:#888;">earth-frame yaw (else follow vehicle)</span>
+  </div>
+  <div class="form-row mav-payload-field" data-field="cameraMode">
+    <label for="node-input-cameraMode">Camera mode</label>
+    <select id="node-input-cameraMode">
+      <option value="image">Image</option>
+      <option value="video">Video</option>
+      <option value="survey">Survey</option>
+    </select>
+  </div>
+  <div class="form-row mav-payload-field" data-field="distance">
+    <label for="node-input-distance">Distance (m)</label>
+    <input type="number" step="any" min="0" id="node-input-distance" placeholder="0 = disable trigger-by-distance">
+  </div>
+  <div class="form-row mav-payload-field" data-field="triggerNow">
+    <label for="node-input-triggerNow">Trigger now</label>
+    <input type="checkbox" id="node-input-triggerNow" style="width:auto; vertical-align:middle;">
+    <span style="margin-left:6px; color:#888;">also shoot one frame immediately</span>
+  </div>
 </script>
 
 <script type="text/html" data-help-name="mavlink-ai-payload">
@@ -176,13 +224,16 @@
   <h3>Actions</h3>
   <ul>
     <li><b>Take Photo / Start Video / Stop Video</b> — <code>IMAGE_START_CAPTURE</code> / <code>VIDEO_START_CAPTURE</code> / <code>VIDEO_STOP_CAPTURE</code>.</li>
-    <li><b>Aim (pitch / yaw)</b> — <code>DO_MOUNT_CONTROL</code> in degrees, under MAVLink targeting. The message-based gimbal-manager protocol is a planned follow-up.</li>
+    <li><b>Set Mode (image / video / survey)</b> — <code>SET_CAMERA_MODE</code>.</li>
+    <li><b>Trigger by Distance</b> — <code>DO_SET_CAM_TRIGG_DIST</code>: shoot every N metres of travel (the backbone of fixed-wing mapping). <code>0</code> disables it; <b>Trigger now</b> also fires one frame immediately.</li>
+    <li><b>Aim — mount control (legacy)</b> — <code>DO_MOUNT_CONTROL</code> in degrees, under MAVLink targeting. Widely supported.</li>
+    <li><b>Aim — gimbal manager</b> — <code>GIMBAL_MANAGER_SET_PITCHYAW</code>, the modern gimbal-manager protocol. This is a <b>message</b>, not a command; pitch/yaw are entered in degrees and sent in radians (the angular rates are sent as NaN — the message's "ignore" sentinel — so a static aim isn't misread as "move at 0 rad/s"). <b>Gimbal ID</b> <code>0</code> targets all gimbals; <b>Yaw lock</b> makes yaw earth-frame instead of following the vehicle.</li>
     <li><b>Set Servo (PWM)</b> — <code>DO_SET_SERVO</code> (instance + PWM µs, typically 1000–2000).</li>
     <li><b>Set Relay (on / off)</b> — <code>DO_SET_RELAY</code>.</li>
     <li><b>Grab / Release</b> — <code>DO_GRIPPER</code>.</li>
   </ul>
   <h3>Inputs</h3>
-  <p><code>msg.payload</code> overrides any editor value: <code>action</code>, <code>target_system</code>, <code>target_component</code>, and the per-action fields (<code>interval</code>, <code>count</code>, <code>sequence</code>, <code>stream_id</code>, <code>status_frequency</code>, <code>pitch</code>, <code>roll</code>, <code>yaw</code>, <code>instance</code>, <code>pwm</code>, <code>on</code>, <code>grip_action</code>).</p>
+  <p><code>msg.payload</code> overrides any editor value: <code>action</code>, <code>target_system</code>, <code>target_component</code>, and the per-action fields (<code>interval</code>, <code>count</code>, <code>sequence</code>, <code>stream_id</code>, <code>status_frequency</code>, <code>camera_mode</code>, <code>distance</code>, <code>trigger_now</code>, <code>pitch</code>, <code>roll</code>, <code>yaw</code>, <code>gimbal_device_id</code>, <code>yaw_lock</code>, <code>instance</code>, <code>pwm</code>, <code>on</code>, <code>grip_action</code>).</p>
   <h3>Output</h3>
   <p>Without a connection, a <code>mavlink/send</code> message for <b>mavlink-ai-out</b>. Failures are emitted as a structured <code>mavlink/error</code> message on the same output.</p>
 </script>
