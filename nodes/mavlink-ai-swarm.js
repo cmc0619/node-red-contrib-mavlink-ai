@@ -168,8 +168,19 @@ module.exports = function registerMavlinkAiSwarm(RED) {
     updateBadge();
 
     node.on('close', (done) => {
-      node.connection.unsubscribe(subId);
-      node.connection.emitter.removeListener('status', onStatus);
+      /**
+       * Always clear our own interval timers and signal done(), guarding the
+       * connection dereference: on a full undeploy the connection config node
+       * may already be gone, and a throw would abort the deploy (issue #140).
+       */
+      try {
+        if (node.connection) {
+          node.connection.unsubscribe(subId);
+          node.connection.emitter.removeListener('status', onStatus);
+        }
+      } catch (err) {
+        node.error(`Error detaching from connection on close: ${err && err.message ? err.message : err}`);
+      }
       for (const t of timers) {
         clearInterval(t);
       }

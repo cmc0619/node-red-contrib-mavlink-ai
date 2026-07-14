@@ -21,6 +21,15 @@ const { MavlinkError, toMavlinkError, errorPayload } = require('../lib/util/erro
 const HEARTBEAT_MIN_INTERVAL_MS = 1000;
 
 /**
+ * Upper bound on how long the close handler waits for a transport stop() to
+ * settle before signalling Node-RED anyway (issue #140). A socket or server
+ * whose close() callback never fires would otherwise leave the deploy hung; a
+ * bounded wait turns that into a clean (if slightly delayed) close. Stays well
+ * under Node-RED's own close timeout so this fallback wins first.
+ */
+const CLOSE_STOP_TIMEOUT_MS = 5000;
+
+/**
  * mavlink-ai-connection (DESIGN.md §8, §11, §19).
  *
  * The connection config node owns the wire: transport/session, the codec built
@@ -1335,37 +1344,70 @@ module.exports = function registerMavlinkAiConnection(RED) {
 
     // --- lifecycle (DESIGN.md §19) ------------------------------------------
     node.on('close', function closeConnection(done) {
-      stopHeartbeat();
-      node.subscriptions.clear();
-      node.locks.clear();
-      node._codecByProfile.clear();
-      if (node._queue) {
-        node._queue.clear();
+      /**
+       * Node-RED aborts the deploy if a close handler throws synchronously, and
+       * hangs it if done() is never called or is called twice (issue #140). So
+       * synchronous teardown runs inside try/catch — a throw in decoder.destroy()
+       * or any clear() is logged, not propagated — and done() is funnelled
+       * through finish(), which fires exactly once no matter which branch (or a
+       * stop() that rejects, throws, or never settles) reaches it.
+       */
+      let settled = false;
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        done();
+      };
+      try {
+        stopHeartbeat();
+        node.subscriptions.clear();
+        node.locks.clear();
+        node._codecByProfile.clear();
+        if (node._queue) {
+          node._queue.clear();
+        }
+        if (node._decoder) {
+          node._decoder.destroy();
+          node._decoder = null;
+        }
+        node.emitter.removeAllListeners();
+      } catch (err) {
+        node.error(`Error tearing down connection on close: ${err && err.message ? err.message : err}`);
       }
-      if (node._decoder) {
-        node._decoder.destroy();
-        node._decoder = null;
-      }
-      node.emitter.removeAllListeners();
       node.statusState = 'closed';
       node.statusDetail = 'Connection closed';
+
+      /**
+       * A prior deactivate() nulls _transport but leaves its stop() promise on
+       * _deactivating; await whichever is pending so Node-RED does not signal
+       * this node closed (and let a replacement bind the same port) while the
+       * old socket is still open — the EADDRINUSE this guards against.
+       */
+      let pending = node._deactivating;
       if (node._transport) {
         const transport = node._transport;
         node._transport = null;
-        transport
-          .stop()
-          .then(() => done())
-          .catch(() => done());
-      } else if (node._deactivating) {
-        /**
-         * A prior deactivate() already nulled _transport but its stop() may
-         * still be closing the socket. Await it so Node-RED does not signal
-         * this node closed — and let a replacement bind the same port — while
-         * the old handle is still open (the EADDRINUSE this change prevents).
-         */
-        node._deactivating.then(() => done(), () => done());
+        try {
+          pending = transport.stop();
+        } catch (err) {
+          node.error(`Error stopping transport on close: ${err && err.message ? err.message : err}`);
+          pending = null;
+        }
+      }
+      if (pending && typeof pending.then === 'function') {
+        const guard = setTimeout(finish, CLOSE_STOP_TIMEOUT_MS);
+        if (typeof guard.unref === 'function') {
+          guard.unref();
+        }
+        const done1 = () => {
+          clearTimeout(guard);
+          finish();
+        };
+        pending.then(done1, done1);
       } else {
-        done();
+        finish();
       }
     });
   }

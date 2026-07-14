@@ -52,7 +52,18 @@ module.exports = function registerMavlinkAiOut(RED) {
     });
 
     node.on('close', function close(done) {
-      node.connection.emitter.removeListener('status', onStatus);
+      /**
+       * Guard the dereference and always signal done(): on a full undeploy the
+       * connection config node may already be gone, and a throw would abort the
+       * deploy (issue #140).
+       */
+      try {
+        if (node.connection) {
+          node.connection.emitter.removeListener('status', onStatus);
+        }
+      } catch (err) {
+        node.error(`Error detaching from connection on close: ${err && err.message ? err.message : err}`);
+      }
       done();
     });
   }

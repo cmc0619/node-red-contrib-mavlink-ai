@@ -64,9 +64,16 @@ module.exports = function registerMavlinkAiIn(RED) {
     let lastStatusAt = 0;
     const subId = node.connection.subscribe(filter, (message) => {
       count += 1;
-      const decoded = { topic: message.topic, payload: message.payload };
+      /**
+       * The connection decodes once and hands the SAME message/payload object to
+       * every subscriber (§20), so clone before forwarding into the flow (issue
+       * #141). Without this, a downstream Change/Function node mutating
+       * msg.payload.fields would corrupt the copy that other mavlink-ai-in nodes
+       * on this connection already forwarded, and the shared _buffer likewise.
+       */
+      const decoded = RED.util.cloneMessage({ topic: message.topic, payload: message.payload });
       if (node.outputRaw) {
-        const raw = { topic: 'mavlink/raw', payload: message._buffer };
+        const raw = RED.util.cloneMessage({ topic: 'mavlink/raw', payload: message._buffer });
         node.send([decoded, raw]);
       } else {
         node.send(decoded);
@@ -84,8 +91,9 @@ module.exports = function registerMavlinkAiIn(RED) {
     let onDecodeError = null;
     let onRejected = null;
     if (node.outputErrors) {
-      onDecodeError = (message) => sendAt(errorIndex, { topic: message.topic, payload: message.payload });
-      onRejected = (info) => sendAt(errorIndex, { topic: 'mavlink/rejected', payload: info });
+      onDecodeError = (message) =>
+        sendAt(errorIndex, RED.util.cloneMessage({ topic: message.topic, payload: message.payload }));
+      onRejected = (info) => sendAt(errorIndex, RED.util.cloneMessage({ topic: 'mavlink/rejected', payload: info }));
       node.connection.emitter.on('decodeError', onDecodeError);
       node.connection.emitter.on('rejected', onRejected);
     }
@@ -97,13 +105,24 @@ module.exports = function registerMavlinkAiIn(RED) {
     node.status(badgeForState(node.connection.statusState, node.connection.statusState));
 
     node.on('close', function close(done) {
-      node.connection.unsubscribe(subId);
-      node.connection.emitter.removeListener('status', onStatus);
-      if (onDecodeError) {
-        node.connection.emitter.removeListener('decodeError', onDecodeError);
-      }
-      if (onRejected) {
-        node.connection.emitter.removeListener('rejected', onRejected);
+      /**
+       * On a full undeploy the connection config node may already be torn down,
+       * so guard every dereference and always signal done() — a throw here would
+       * otherwise abort the deploy (issue #140).
+       */
+      try {
+        if (node.connection) {
+          node.connection.unsubscribe(subId);
+          node.connection.emitter.removeListener('status', onStatus);
+          if (onDecodeError) {
+            node.connection.emitter.removeListener('decodeError', onDecodeError);
+          }
+          if (onRejected) {
+            node.connection.emitter.removeListener('rejected', onRejected);
+          }
+        }
+      } catch (err) {
+        node.error(`Error detaching from connection on close: ${err && err.message ? err.message : err}`);
       }
       done();
     });
