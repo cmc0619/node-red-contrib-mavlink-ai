@@ -118,6 +118,66 @@ test('set_mode numeric custom_mode still works without a firmware table (#20)', 
   assert.strictEqual(out.fields.param2, 4);
 });
 
+test('set_mode on PX4 sends main mode in param2 and sub mode in param3 (#136)', async () => {
+  const { RED, node } = setupWithFirmware({ command: 'set_mode' }, { firmware: 'px4', profileType: 'copter' });
+  const offboard = await RED.inject(node, { payload: { mode: 'OFFBOARD' } });
+  assert.strictEqual(offboard.collected[0].payload.fields.param1, 1);
+  assert.strictEqual(offboard.collected[0].payload.fields.param2, 6); // OFFBOARD main
+  assert.strictEqual(offboard.collected[0].payload.fields.param3, 0);
+  const mission = await RED.inject(node, { payload: { mode: 'MISSION' } });
+  assert.strictEqual(mission.collected[0].payload.fields.param2, 4); // AUTO main
+  assert.strictEqual(mission.collected[0].payload.fields.param3, 4); // MISSION sub
+});
+
+test('set_mode on PX4 splits a HEARTBEAT-packed numeric custom_mode (#136)', async () => {
+  const { RED, node } = setupWithFirmware({ command: 'set_mode' }, { firmware: 'px4', profileType: 'copter' });
+  // 393216 = (6 << 16): the packed OFFBOARD word a HEARTBEAT reports.
+  const { collected } = await RED.inject(node, { payload: { custom_mode: 393216 } });
+  assert.strictEqual(collected[0].payload.fields.param2, 6);
+  assert.strictEqual(collected[0].payload.fields.param3, 0);
+});
+
+test('raw MAV_CMD_DO_SET_MODE on PX4 splits a packed param2 (#136)', async () => {
+  const { RED, node } = setupWithFirmware({ command: 'MAV_CMD_DO_SET_MODE' }, { firmware: 'px4', profileType: 'copter' });
+  // Packed AUTO.RTL = (4 << 16) | (5 << 24), as the raw editor's mode dropdown stores it.
+  const { collected } = await RED.inject(node, { payload: { param1: 1, param2: ((4 << 16) | (5 << 24)) >>> 0 } });
+  assert.strictEqual(collected[0].payload.fields.param2, 4);
+  assert.strictEqual(collected[0].payload.fields.param3, 5);
+});
+
+test('set_mode on ArduPilot keeps the whole custom_mode in param2 (#136)', async () => {
+  const { RED, node } = setupWithFirmware({ command: 'set_mode' }, { firmware: 'ardupilot', profileType: 'copter' });
+  // AUTO_RTL is 27 — a value that must NOT be mistaken for anything packed.
+  const { collected } = await RED.inject(node, { payload: { mode: 'AUTO_RTL' } });
+  assert.strictEqual(collected[0].payload.fields.param2, 27);
+  assert.strictEqual(collected[0].payload.fields.param3, 0);
+});
+
+test('takeoff on PX4 defaults altitude and yaw to NaN (#143)', async () => {
+  const { RED, node } = setupWithFirmware({ command: 'takeoff' }, { firmware: 'px4', profileType: 'copter' });
+  const { collected } = await RED.inject(node, { payload: {} });
+  const out = collected[0].payload;
+  assert.strictEqual(out.fields.command, 'MAV_CMD_NAV_TAKEOFF');
+  // NaN altitude = use the vehicle's MIS_TAKEOFF_ALT (param7 is AMSL on PX4,
+  // so a fixed default like 10 would be underground at most field sites).
+  assert.ok(Number.isNaN(out.fields.param7));
+  // NaN yaw = keep the current heading instead of swinging to north (0).
+  assert.ok(Number.isNaN(out.fields.param4));
+});
+
+test('takeoff on PX4 keeps an explicit altitude (AMSL) (#143)', async () => {
+  const { RED, node } = setupWithFirmware({ command: 'takeoff' }, { firmware: 'px4', profileType: 'copter' });
+  const { collected } = await RED.inject(node, { payload: { altitude: 500 } });
+  assert.strictEqual(collected[0].payload.fields.param7, 500);
+});
+
+test('takeoff keeps the relative-altitude default of 10 on ArduPilot (#143)', async () => {
+  const { RED, node } = setupWithFirmware({ command: 'takeoff' }, { firmware: 'ardupilot', profileType: 'copter' });
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected[0].payload.fields.param7, 10);
+  assert.strictEqual(collected[0].payload.fields.param4, 0);
+});
+
 test('sendAs int builds COMMAND_INT with degE7 lat/lon (#17)', async () => {
   const { RED, node } = setup({ command: 'MAV_CMD_DO_REPOSITION', sendAs: 'int' });
   const { collected } = await RED.inject(node, {

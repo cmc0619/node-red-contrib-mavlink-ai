@@ -221,22 +221,41 @@ test('resolveFlightMode maps ArduPilot modes per vehicle type (#20)', () => {
   assert.deepStrictEqual(resolveFlightMode('ardupilot', 'copter', 'alt hold'), { base_mode: 1, custom_mode: 2 });
 });
 
-test('resolveFlightMode maps PX4 main/sub modes (#20)', () => {
-  // POSITION -> POSCTL main 3.
+test('resolveFlightMode maps PX4 main/sub modes as separate DO_SET_MODE params (#20, #136)', () => {
+  // POSITION -> POSCTL main 3, no sub. The bare main mode goes in param2 —
+  // PX4's commander reads (uint8) custom_main_mode there, not the packed word.
   assert.deepStrictEqual(resolveFlightMode('px4', 'copter', 'POSITION'), {
     base_mode: 1,
-    custom_mode: (3 << 16) >>> 0
+    custom_mode: 3,
+    custom_submode: 0
   });
   // MISSION -> AUTO(4).MISSION(4).
   assert.deepStrictEqual(resolveFlightMode('px4', 'copter', 'MISSION'), {
     base_mode: 1,
-    custom_mode: ((4 << 16) | (4 << 24)) >>> 0
+    custom_mode: 4,
+    custom_submode: 4
   });
   // RTL alias RETURN -> AUTO(4).RTL(5).
   assert.deepStrictEqual(resolveFlightMode('px4', 'copter', 'RETURN'), {
     base_mode: 1,
-    custom_mode: ((4 << 16) | (5 << 24)) >>> 0
+    custom_mode: 4,
+    custom_submode: 5
   });
+  // OFFBOARD is the mode a packed param2 would truncate to main 0 for.
+  assert.deepStrictEqual(resolveFlightMode('px4', 'copter', 'OFFBOARD'), {
+    base_mode: 1,
+    custom_mode: 6,
+    custom_submode: 0
+  });
+});
+
+test('splitPx4CustomMode splits packed values and passes bare main modes through (#136)', () => {
+  const { splitPx4CustomMode } = require('../../lib/command/flight-modes');
+  assert.deepStrictEqual(splitPx4CustomMode(((6 << 16) >>> 0)), { main: 6, sub: 0 });
+  assert.deepStrictEqual(splitPx4CustomMode(((4 << 16) | (5 << 24)) >>> 0), { main: 4, sub: 5 });
+  assert.strictEqual(splitPx4CustomMode(6), null);
+  assert.strictEqual(splitPx4CustomMode('nope'), null);
+  assert.strictEqual(splitPx4CustomMode(NaN), null);
 });
 
 test('resolveFlightMode fails loudly for unknown modes/firmware (#20)', () => {

@@ -3,7 +3,7 @@
 const { MavlinkError, errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { firstDefined, toInt, toBool } = require('../lib/util/validation');
 const { registerEditorApi } = require('../lib/editor-api');
-const { resolveFlightMode } = require('../lib/command/flight-modes');
+const { resolveFlightMode, splitPx4CustomMode } = require('../lib/command/flight-modes');
 const { CommandSend } = require('../lib/command/command-workflow');
 const {
   validateTargetSystem,
@@ -320,6 +320,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
           );
           params.base_mode = firstDefined(merged.base_mode, resolved.base_mode);
           params.custom_mode = firstDefined(merged.custom_mode, resolved.custom_mode);
+          params.custom_submode = firstDefined(merged.custom_submode, resolved.custom_submode);
         } catch (err) {
           const e = toMavlinkError(err, 'UNKNOWN_MODE');
           return sendError(msg, send, done, e.code, e.message, e.context);
@@ -428,6 +429,45 @@ module.exports = function registerMavlinkAiCommand(RED) {
         const key = `param${i}`;
         if (merged[key] !== undefined && built[key] === undefined) {
           fields[key] = merged[key];
+        }
+      }
+
+      /**
+       * PX4 DO_SET_MODE packing (issue #136): the PX4 commander reads param2
+       * as the bare custom *main* mode and param3 as the bare sub mode, so a
+       * HEARTBEAT-packed custom_mode ((main << 16) | (sub << 24)) — from a
+       * numeric payload override or the raw editor's mode dropdown — must be
+       * split before it hits the wire, or it truncates to main mode 0 and the
+       * vehicle ignores the mode change. ArduPilot reads param2 as the whole
+       * custom_mode, so only px4 profiles are normalized. An explicit nonzero
+       * param3 is preserved.
+       */
+      if (
+        defaults.firmware === 'px4' &&
+        (String(fields.command) === 'MAV_CMD_DO_SET_MODE' || Number(fields.command) === 176)
+      ) {
+        const split = splitPx4CustomMode(fields.param2);
+        if (split) {
+          fields.param2 = split.main;
+          if (!Number(fields.param3)) {
+            fields.param3 = split.sub;
+          }
+        }
+      }
+
+      /**
+       * PX4 NAV_TAKEOFF semantics (issue #143): param7 is AMSL on PX4 (NaN =
+       * use MIS_TAKEOFF_ALT) while ArduPilot treats it as relative-to-home,
+       * and a param4 yaw of 0 swings the nose to north (NaN = keep current
+       * heading). When the caller supplied no explicit value, prefer PX4's
+       * own NaN defaults over numbers that are only correct for ArduPilot.
+       */
+      if (defaults.firmware === 'px4' && selected === 'takeoff' && !useInt) {
+        if (firstDefined(merged.altitude, merged.alt, merged.param7) === undefined) {
+          fields.param7 = NaN;
+        }
+        if (firstDefined(merged.yaw, merged.param4) === undefined) {
+          fields.param4 = NaN;
         }
       }
 
