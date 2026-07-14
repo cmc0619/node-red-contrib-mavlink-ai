@@ -1,4 +1,17 @@
 <script type="text/javascript">
+  // Inclusive [min, max] wire ranges for the fixed-width integer MAV_PARAM_TYPEs.
+  // Used to reject an editor Value that can't fit the selected type before it
+  // silently overflows on the wire (e.g. UINT8 = 300). REAL32/REAL64 have no
+  // integer constraint and are absent here.
+  const MAV_PARAM_TYPE_RANGES = {
+    MAV_PARAM_TYPE_UINT8: [0, 255],
+    MAV_PARAM_TYPE_INT8: [-128, 127],
+    MAV_PARAM_TYPE_UINT16: [0, 65535],
+    MAV_PARAM_TYPE_INT16: [-32768, 32767],
+    MAV_PARAM_TYPE_UINT32: [0, 4294967295],
+    MAV_PARAM_TYPE_INT32: [-2147483648, 2147483647]
+  };
+
   RED.nodes.registerType('mavlink-ai-param', {
     category: 'MAVLink AI',
     color: '#FFE6B3',
@@ -11,10 +24,46 @@
       paramType: { value: 'MAV_PARAM_TYPE_REAL32' },
       // Static value for "Set one". Blank means "take it from the flow"
       // (msg.payload.param_value), so pre-existing flows that source the value
-      // from a message keep working unchanged.
-      paramValue: { value: '' },
-      timeoutMs: { value: 3000, validate: RED.validators.number() },
-      maxRetries: { value: 3, validate: RED.validators.number() }
+      // from a message keep working unchanged. Only validated for Set; a
+      // non-blank value must be numeric and fit the selected integer type.
+      paramValue: {
+        value: '',
+        validate: function (v) {
+          if (this.action !== 'set') {
+            return true;
+          }
+          const s = String(v == null ? '' : v).trim();
+          if (s === '') {
+            return true; // blank => sourced from msg.payload.param_value
+          }
+          const n = Number(s);
+          if (!Number.isFinite(n)) {
+            return false;
+          }
+          const range = MAV_PARAM_TYPE_RANGES[this.paramType];
+          if (range) {
+            return Number.isInteger(n) && n >= range[0] && n <= range[1];
+          }
+          return true; // REAL32/REAL64: any finite number
+        }
+      },
+      // Positive timeout and non-negative integer retries. The runtime already
+      // clamps out-of-range values to the defaults (param-workflow.js), so
+      // reject them here too rather than showing a value the node won't use.
+      timeoutMs: {
+        value: 3000,
+        validate: function (v) {
+          const n = Number(v);
+          return Number.isFinite(n) && n >= 1;
+        }
+      },
+      maxRetries: {
+        value: 3,
+        validate: function (v) {
+          const n = Number(v);
+          return Number.isFinite(n) && n >= 0 && Number.isInteger(n);
+        }
+      }
     },
     inputs: 1,
     outputs: 3,
@@ -50,6 +99,9 @@
   <div class="form-row">
     <label for="node-input-profile">Profile</label>
     <input type="text" id="node-input-profile">
+  </div>
+  <div class="form-tips" style="margin: -6px 0 8px 105px; width: 70%;">
+    Optional — <b>overrides</b> the connection's profile. Leave blank to use the target's routed profile, falling back to the connection's own profile.
   </div>
   <div class="form-row">
     <label for="node-input-action">Action</label>
