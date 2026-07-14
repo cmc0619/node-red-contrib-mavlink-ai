@@ -147,26 +147,27 @@ it is never written into exported flow JSON. The signature timestamp uses the
 protocol library's default; raw `sendRaw` buffers are sent as-is and are not
 signed.
 
-**Anti-replay.** Verification is not authenticity-only: as the signing spec
-requires, a validly signed frame is accepted only when its timestamp is greater
-than the last accepted timestamp for its `(sysid, compid, link_id)` stream.
-A captured frame replayed later is rejected with `reason: "signature-replayed"`.
-This is part of verification — there is no separate switch; enabling *Verify
-inbound* enables it.
+**Anti-replay.** Verification is not authenticity-only. As the signing spec
+requires, a validly signed frame is discarded when either:
 
-The timestamp state is **durable**: it is persisted to
-`<userDir>/mavlink-ai/replay-state.json`, so a frame accepted before a Node-RED
-restart is still rejected after one. State is namespaced by a non-secret
-key-identity fingerprint (never the passphrase or signing key), so rotating the
-signing key starts fresh rather than inheriting stale timestamps. If that file
-is not writable, anti-replay still holds for the running process (in-memory) and
-a one-time warning is logged.
+- its timestamp is **older than the last accepted timestamp** for its
+  `(sysid, compid, link_id)` stream (the monotonic rule), or
+- its timestamp is **more than one minute behind the receiver's clock** (the
+  freshness window).
 
-*Recovery:* a vehicle reboot advances its timestamp (still accepted); a vehicle
-clock rollback makes its timestamps regress and they are rejected until they
-again exceed the stored maximum — delete `replay-state.json` (or clear that
-scope) to reset after an intentional rollback or re-key. A future refinement may
-add the spec's optional "too far in the future" freshness window.
+Both are rejected with `reason: "signature-replayed"`. This is part of
+verification — there is no separate switch; enabling *Verify inbound* enables it.
+
+State is **in-memory** and needs no persistence: the freshness window is what
+covers a Node-RED restart. After a restart the receiver has no stored per-stream
+timestamps, but a captured frame replayed later is still more than a minute old,
+so the freshness window drops it; the monotonic rule then catches any replay
+*within* the minute once a fresh frame re-establishes the stream baseline.
+
+This assumes the sender's signing timestamp tracks real time (10 µs units since
+2015-01-01) — which the spec requires senders to bootstrap from their clock, a
+stored maximum, or GPS. A vehicle with no valid time source is out of scope by
+design; it should not be signing (or flying) with an untrustworthy clock.
 
 ## Validation model
 

@@ -407,7 +407,7 @@
     <span style="color:#888;">check signatures on packets we receive</span>
   </div>
   <div class="form-tips mav-signing-detail" style="margin: -4px 0 8px 105px; width: 70%;">
-    Verifying also enforces the signing spec's <b>anti-replay</b> rule — a signed frame is accepted only if its timestamp advances its <code>(sysid, compid, link&nbsp;id)</code> stream; a replay is rejected as <code>signature-replayed</code>. This state persists across restarts in <code>userDir/mavlink-ai/replay-state.json</code>. No separate switch.
+    Verifying also enforces the signing spec's <b>anti-replay</b> rules — a signed frame is dropped if its timestamp is older than the last on its <code>(sysid, compid, link&nbsp;id)</code> stream, or more than a minute behind the receiver's clock (rejected as <code>signature-replayed</code>). In-memory; the freshness window covers restarts. No separate switch.
   </div>
   <div class="form-row mav-signing-require">
     <label for="node-config-input-requireSignature">Require signature</label>
