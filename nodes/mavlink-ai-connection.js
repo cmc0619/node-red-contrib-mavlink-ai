@@ -1028,7 +1028,13 @@ module.exports = function registerMavlinkAiConnection(RED) {
       // ignores v2 frames, and a mixed fleet must not have one peer's version
       // flip framing for all of them (#69). Noted on the default codec (which
       // encodes outbound) here; the matched profile's codec is updated below.
-      node._codec.noteInboundMagic(header.magic, header.sysid);
+      /**
+       * Read the wire version from the actual first frame byte, not
+       * header.magic: node-mavlink's v1 parser never sets header.magic (it
+       * stays 0), so a v1 (0xFE) frame would otherwise never be detected (#138).
+       */
+      const wireMagic = packet.buffer && packet.buffer.length ? packet.buffer[0] : header.magic;
+      node._codec.noteInboundMagic(wireMagic, header.sysid);
 
       // 1. Route on the framed header (sysid/compid) before decoding. A
       //    matched route whose profile cannot be resolved rejects the packet
@@ -1060,7 +1066,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       // so a send that encodes with that profile's codec frames to the peer's
       // version too (#69). No-op when it is the default codec (already noted).
       if (codec !== node._codec) {
-        codec.noteInboundMagic(header.magic, header.sysid);
+        codec.noteInboundMagic(wireMagic, header.sysid);
       }
 
       // 3. MAVLink 2 signature verification (issue #15), using the *matched
