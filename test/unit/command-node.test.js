@@ -235,21 +235,6 @@ test('mission presets: start with range, pause/resume param1 is protected (#50)'
   assert.strictEqual(resumed.collected[0].payload.fields.param1, 1);
 });
 
-test('camera presets build image/video capture commands (#52)', async () => {
-  const { RED, node } = setup({ command: 'take_photo' });
-  const photo = await RED.inject(node, { payload: {} });
-  assert.strictEqual(photo.collected[0].payload.fields.command, 'MAV_CMD_IMAGE_START_CAPTURE');
-  assert.strictEqual(photo.collected[0].payload.fields.param3, 1); // single photo
-
-  const { RED: RED2, node: start } = setup({ command: 'start_video' });
-  const started = await RED2.inject(start, { payload: { target_component: 100 } });
-  assert.strictEqual(started.collected[0].payload.fields.command, 'MAV_CMD_VIDEO_START_CAPTURE');
-  assert.strictEqual(started.collected[0].payload.target_component, 100); // camera component
-
-  const { RED: RED3, node: stop } = setup({ command: 'stop_video' });
-  const stopped = await RED3.inject(stop, { payload: {} });
-  assert.strictEqual(stopped.collected[0].payload.fields.command, 'MAV_CMD_VIDEO_STOP_CAPTURE');
-});
 
 // --- Editor preset fields (#49) ----------------------------------------------
 

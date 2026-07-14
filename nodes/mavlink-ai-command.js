@@ -198,24 +198,6 @@ module.exports = function registerMavlinkAiCommand(RED) {
     pause_mission: () => ({ command: 'MAV_CMD_DO_PAUSE_CONTINUE', param1: 0 }),
     resume_mission: () => ({ command: 'MAV_CMD_DO_PAUSE_CONTINUE', param1: 1 }),
 
-    // --- Camera (#52): cameras are often separate MAVLink components — set
-    // target_component (e.g. 100 for MAV_COMP_ID_CAMERA) when needed. --------
-    take_photo: (p) => ({
-      command: 'MAV_CMD_IMAGE_START_CAPTURE',
-      param2: firstDefined(p.interval, p.param2, 0), // s between captures
-      param3: firstDefined(p.count, p.param3, 1), // 1 = single photo
-      param4: firstDefined(p.sequence, p.param4, 0)
-    }),
-    start_video: (p) => ({
-      command: 'MAV_CMD_VIDEO_START_CAPTURE',
-      param1: firstDefined(p.stream_id, p.param1, 0), // 0 = all streams
-      param2: firstDefined(p.status_frequency, p.param2, 0)
-    }),
-    stop_video: (p) => ({
-      command: 'MAV_CMD_VIDEO_STOP_CAPTURE',
-      param1: firstDefined(p.stream_id, p.param1, 0)
-    }),
-
     // --- Telemetry / System -------------------------------------------------
     reboot: () => ({ command: 'MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN', param1: 1 }),
     request_message: (p) => ({

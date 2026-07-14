@@ -30,12 +30,20 @@
     "type": "inject",
     "z": "flow14",
     "name": "1. Arm",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "payload": "{}",
     "payloadType": "json",
     "x": 130,
     "y": 80,
-    "wires": [["n14_arm"]]
+    "wires": [
+      [
+        "n14_arm"
+      ]
+    ]
   },
   {
     "id": "n14_arm",
@@ -52,19 +60,31 @@
     "presetFields": "",
     "x": 330,
     "y": 80,
-    "wires": [["n14_dbg"]]
+    "wires": [
+      [
+        "n14_dbg"
+      ]
+    ]
   },
   {
     "id": "n14_i2",
     "type": "inject",
     "z": "flow14",
     "name": "2. Takeoff 10 m",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "payload": "{}",
     "payloadType": "json",
     "x": 150,
     "y": 140,
-    "wires": [["n14_takeoff"]]
+    "wires": [
+      [
+        "n14_takeoff"
+      ]
+    ]
   },
   {
     "id": "n14_takeoff",
@@ -81,19 +101,31 @@
     "presetFields": "{\"altitude\":10}",
     "x": 340,
     "y": 140,
-    "wires": [["n14_dbg"]]
+    "wires": [
+      [
+        "n14_dbg"
+      ]
+    ]
   },
   {
     "id": "n14_i3",
     "type": "inject",
     "z": "flow14",
     "name": "3. Spin 360",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "payload": "{}",
     "payloadType": "json",
     "x": 140,
     "y": 200,
-    "wires": [["n14_spin"]]
+    "wires": [
+      [
+        "n14_spin"
+      ]
+    ]
   },
   {
     "id": "n14_spin",
@@ -110,48 +142,80 @@
     "presetFields": "{\"angle\":360,\"rate\":30,\"direction\":\"clockwise\"}",
     "x": 350,
     "y": 200,
-    "wires": [["n14_dbg"]]
+    "wires": [
+      [
+        "n14_dbg"
+      ]
+    ]
   },
   {
     "id": "n14_i4",
     "type": "inject",
     "z": "flow14",
     "name": "4. Take photo",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "payload": "{}",
     "payloadType": "json",
     "x": 150,
     "y": 260,
-    "wires": [["n14_photo"]]
+    "wires": [
+      [
+        "n14_photo"
+      ]
+    ]
   },
   {
     "id": "n14_photo",
-    "type": "mavlink-ai-command",
+    "type": "mavlink-ai-payload",
     "z": "flow14",
     "name": "Take Photo",
     "profile": "ai_profile_copter",
-    "command": "take_photo",
-    "sendAs": "long",
-    "awaitAck": false,
-    "timeoutMs": 3000,
-    "maxRetries": 3,
-    "fields": "",
-    "presetFields": "{\"count\":1}",
+    "connection": "",
+    "action": "camera_photo",
+    "targetComponent": "",
+    "interval": "",
+    "count": "",
+    "sequence": "",
+    "streamId": "",
+    "statusFrequency": "",
+    "pitch": "",
+    "roll": "",
+    "yaw": "",
+    "instance": "",
+    "pwm": "",
+    "on": false,
+    "gripAction": "release",
     "x": 350,
     "y": 260,
-    "wires": [["n14_dbg"]]
+    "wires": [
+      [
+        "n14_dbg"
+      ]
+    ]
   },
   {
     "id": "n14_i5",
     "type": "inject",
     "z": "flow14",
     "name": "5. Land",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "payload": "{}",
     "payloadType": "json",
     "x": 130,
     "y": 320,
-    "wires": [["n14_land"]]
+    "wires": [
+      [
+        "n14_land"
+      ]
+    ]
   },
   {
     "id": "n14_land",
@@ -168,19 +232,31 @@
     "presetFields": "",
     "x": 330,
     "y": 320,
-    "wires": [["n14_dbg"]]
+    "wires": [
+      [
+        "n14_dbg"
+      ]
+    ]
   },
   {
     "id": "n14_i6",
     "type": "inject",
     "z": "flow14",
     "name": "6. Disarm",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "payload": "{}",
     "payloadType": "json",
     "x": 140,
     "y": 380,
-    "wires": [["n14_disarm"]]
+    "wires": [
+      [
+        "n14_disarm"
+      ]
+    ]
   },
   {
     "id": "n14_disarm",
@@ -197,7 +273,11 @@
     "presetFields": "",
     "x": 340,
     "y": 380,
-    "wires": [["n14_dbg"]]
+    "wires": [
+      [
+        "n14_dbg"
+      ]
+    ]
   },
   {
     "id": "n14_dbg",
