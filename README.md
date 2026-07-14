@@ -295,7 +295,7 @@ Yaw-rate only, or a raw custom mask. Local NED and global frames (relative and
 terrain altitude variants), with up-positive altitude/climb inputs mapped to
 NED `-z`/`-vz`. One message per input; pair with an inject loop for the
 continuous streams offboard control needs (built-in streaming is tracked in
-#128).
+issue [#128](https://github.com/cmc0619/node-red-contrib-mavlink-ai/issues/128)).
 
 ### `mavlink-ai-payload`
 
