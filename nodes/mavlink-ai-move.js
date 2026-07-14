@@ -4,6 +4,7 @@ const { buildSetpoint } = require('../lib/move/setpoint');
 const { toNum, firstDefined } = require('../lib/util/validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
+const { watchProfileBadge } = require('../lib/util/node-lifecycle');
 
 /**
  * mavlink-ai-move.
@@ -23,7 +24,11 @@ module.exports = function registerMavlinkAiMove(RED) {
     const node = this;
 
     node.name = config.name;
-    node.profile = RED.nodes.getNode(config.profile);
+    /**
+     * Resolves node.profile and keeps the "invalid profile" badge live across
+     * deploys, so a profile fixed after this node was deployed clears the badge.
+     */
+    watchProfileBadge(RED, node, config);
     node.connection = config.connection ? RED.nodes.getNode(config.connection) : null;
     node.coordinate = config.coordinate || 'local';
     node.preset = config.preset || 'position';
@@ -39,10 +44,6 @@ module.exports = function registerMavlinkAiMove(RED) {
     node.climb = config.climb;
     node.yaw = config.yaw;
     node.yawRate = config.yawRate;
-
-    if (!node.profile || !node.profile.isValid || !node.profile.isValid()) {
-      node.status({ fill: 'red', shape: 'ring', text: 'invalid profile' });
-    }
 
     node.on('input', async (msg, send, done) => {
       const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};

@@ -111,3 +111,25 @@ test('missing profile emits MISSING_PROFILE', async () => {
   assert.strictEqual(collected[0].topic, 'mavlink/error');
   assert.strictEqual(err.code, 'MISSING_PROFILE');
 });
+
+/**
+ * Node-RED leaves this node in place when only the referenced profile config
+ * node changed, so its constructor never re-runs. Before the fix, a profile
+ * fixed after deploy left a stale "invalid profile" badge (and node.profile
+ * pointing at the destroyed old profile). watchProfileBadge re-resolves and
+ * refreshes on flows:started.
+ */
+test('move node clears a stale "invalid profile" badge when the profile is fixed on redeploy', () => {
+  const RED = new MockRED().loadNodes();
+  const node = RED.create('mavlink-ai-move', { id: 'm1', profile: 'p1', connection: '' });
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid profile' });
+  assert.ok(!node.profile);
+
+  RED.create('mavlink-ai-profile', {
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.events.emit('flows:started');
+  assert.deepStrictEqual(node.statusHistory.at(-1), {});
+  assert.ok(node.profile && node.profile.isValid());
+});
