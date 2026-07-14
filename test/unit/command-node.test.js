@@ -118,6 +118,85 @@ test('set_mode numeric custom_mode still works without a firmware table (#20)', 
   assert.strictEqual(out.fields.param2, 4);
 });
 
+/** PX4 reads DO_SET_MODE param2 as the bare main mode and param3 as the bare sub mode. */
+test('set_mode on PX4 sends main mode in param2 and sub mode in param3 (#136)', async () => {
+  const { RED, node } = setupWithFirmware({ command: 'set_mode' }, { firmware: 'px4', profileType: 'copter' });
+  const offboard = await RED.inject(node, { payload: { mode: 'OFFBOARD' } });
+  assert.strictEqual(offboard.collected[0].payload.fields.param1, 1);
+  assert.strictEqual(offboard.collected[0].payload.fields.param2, 6);
+  assert.strictEqual(offboard.collected[0].payload.fields.param3, 0);
+  const mission = await RED.inject(node, { payload: { mode: 'MISSION' } });
+  assert.strictEqual(mission.collected[0].payload.fields.param2, 4);
+  assert.strictEqual(mission.collected[0].payload.fields.param3, 4);
+});
+
+/** 393216 = (6 << 16): the packed OFFBOARD word a HEARTBEAT reports; must split to main 6. */
+test('set_mode on PX4 splits a HEARTBEAT-packed numeric custom_mode (#136)', async () => {
+  const { RED, node } = setupWithFirmware({ command: 'set_mode' }, { firmware: 'px4', profileType: 'copter' });
+  const { collected } = await RED.inject(node, { payload: { custom_mode: 393216 } });
+  assert.strictEqual(collected[0].payload.fields.param2, 6);
+  assert.strictEqual(collected[0].payload.fields.param3, 0);
+});
+
+/** Packed AUTO.RTL = (4 << 16) | (5 << 24), as the raw editor's mode dropdown stores it. */
+test('raw MAV_CMD_DO_SET_MODE on PX4 splits a packed param2 (#136)', async () => {
+  const { RED, node } = setupWithFirmware({ command: 'MAV_CMD_DO_SET_MODE' }, { firmware: 'px4', profileType: 'copter' });
+  const { collected } = await RED.inject(node, { payload: { param1: 1, param2: ((4 << 16) | (5 << 24)) >>> 0 } });
+  assert.strictEqual(collected[0].payload.fields.param2, 4);
+  assert.strictEqual(collected[0].payload.fields.param3, 5);
+});
+
+/**
+ * A packed param2 carries the sub mode; a stale param3 from a prior dropdown
+ * pick must not survive and flip AUTO.MISSION (sub 4) into AUTO.RTL (sub 5).
+ */
+test('raw MAV_CMD_DO_SET_MODE on PX4 overwrites a stale param3 from the packed sub (#136)', async () => {
+  const { RED, node } = setupWithFirmware({ command: 'MAV_CMD_DO_SET_MODE' }, { firmware: 'px4', profileType: 'copter' });
+  const { collected } = await RED.inject(node, {
+    payload: { param1: 1, param2: ((4 << 16) | (4 << 24)) >>> 0, param3: 5 }
+  });
+  assert.strictEqual(collected[0].payload.fields.param2, 4);
+  assert.strictEqual(collected[0].payload.fields.param3, 4);
+});
+
+/** AUTO_RTL is 27 — a bare ArduPilot custom_mode that must NOT be mistaken for packed. */
+test('set_mode on ArduPilot keeps the whole custom_mode in param2 (#136)', async () => {
+  const { RED, node } = setupWithFirmware({ command: 'set_mode' }, { firmware: 'ardupilot', profileType: 'copter' });
+  const { collected } = await RED.inject(node, { payload: { mode: 'AUTO_RTL' } });
+  assert.strictEqual(collected[0].payload.fields.param2, 27);
+  assert.strictEqual(collected[0].payload.fields.param3, 0);
+});
+
+/**
+ * PX4 takeoff param7 is AMSL (NaN = use MIS_TAKEOFF_ALT, so a fixed 10 would be
+ * underground at most field sites) and param4 yaw NaN keeps the current heading.
+ */
+test('takeoff on PX4 defaults altitude and yaw to NaN (#143)', async () => {
+  const { RED, node } = setupWithFirmware({ command: 'takeoff' }, { firmware: 'px4', profileType: 'copter' });
+  const { collected } = await RED.inject(node, { payload: {} });
+  const out = collected[0].payload;
+  assert.strictEqual(out.fields.command, 'MAV_CMD_NAV_TAKEOFF');
+  assert.ok(Number.isNaN(out.fields.param7));
+  assert.ok(Number.isNaN(out.fields.param4));
+});
+
+/** The takeoff builder writes only param7 from altitude/param7, so alt/yaw aliases must be mapped explicitly. */
+test('takeoff on PX4 maps explicit altitude and yaw aliases (#143)', async () => {
+  const { RED, node } = setupWithFirmware({ command: 'takeoff' }, { firmware: 'px4', profileType: 'copter' });
+  const byAltitude = await RED.inject(node, { payload: { altitude: 500 } });
+  assert.strictEqual(byAltitude.collected[0].payload.fields.param7, 500);
+  const byAlias = await RED.inject(node, { payload: { alt: 500, yaw: 90 } });
+  assert.strictEqual(byAlias.collected[0].payload.fields.param7, 500);
+  assert.strictEqual(byAlias.collected[0].payload.fields.param4, 90);
+});
+
+test('takeoff keeps the relative-altitude default of 10 on ArduPilot (#143)', async () => {
+  const { RED, node } = setupWithFirmware({ command: 'takeoff' }, { firmware: 'ardupilot', profileType: 'copter' });
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected[0].payload.fields.param7, 10);
+  assert.strictEqual(collected[0].payload.fields.param4, 0);
+});
+
 test('sendAs int builds COMMAND_INT with degE7 lat/lon (#17)', async () => {
   const { RED, node } = setup({ command: 'MAV_CMD_DO_REPOSITION', sendAs: 'int' });
   const { collected } = await RED.inject(node, {

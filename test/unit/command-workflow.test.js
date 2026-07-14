@@ -221,22 +221,42 @@ test('resolveFlightMode maps ArduPilot modes per vehicle type (#20)', () => {
   assert.deepStrictEqual(resolveFlightMode('ardupilot', 'copter', 'alt hold'), { base_mode: 1, custom_mode: 2 });
 });
 
-test('resolveFlightMode maps PX4 main/sub modes (#20)', () => {
-  // POSITION -> POSCTL main 3.
+/**
+ * PX4 mode names resolve to a bare main mode in custom_mode and a bare sub mode
+ * in custom_submode — the separate values DO_SET_MODE param2/param3 expect, not
+ * the HEARTBEAT-packed word. POSITION -> POSCTL(3); MISSION -> AUTO(4).MISSION(4);
+ * RETURN -> AUTO(4).RTL(5); OFFBOARD(6) is what a packed param2 would truncate to 0.
+ */
+test('resolveFlightMode maps PX4 main/sub modes as separate DO_SET_MODE params (#20, #136)', () => {
   assert.deepStrictEqual(resolveFlightMode('px4', 'copter', 'POSITION'), {
     base_mode: 1,
-    custom_mode: (3 << 16) >>> 0
+    custom_mode: 3,
+    custom_submode: 0
   });
-  // MISSION -> AUTO(4).MISSION(4).
   assert.deepStrictEqual(resolveFlightMode('px4', 'copter', 'MISSION'), {
     base_mode: 1,
-    custom_mode: ((4 << 16) | (4 << 24)) >>> 0
+    custom_mode: 4,
+    custom_submode: 4
   });
-  // RTL alias RETURN -> AUTO(4).RTL(5).
   assert.deepStrictEqual(resolveFlightMode('px4', 'copter', 'RETURN'), {
     base_mode: 1,
-    custom_mode: ((4 << 16) | (5 << 24)) >>> 0
+    custom_mode: 4,
+    custom_submode: 5
   });
+  assert.deepStrictEqual(resolveFlightMode('px4', 'copter', 'OFFBOARD'), {
+    base_mode: 1,
+    custom_mode: 6,
+    custom_submode: 0
+  });
+});
+
+test('splitPx4CustomMode splits packed values and passes bare main modes through (#136)', () => {
+  const { splitPx4CustomMode } = require('../../lib/command/flight-modes');
+  assert.deepStrictEqual(splitPx4CustomMode(((6 << 16) >>> 0)), { main: 6, sub: 0 });
+  assert.deepStrictEqual(splitPx4CustomMode(((4 << 16) | (5 << 24)) >>> 0), { main: 4, sub: 5 });
+  assert.strictEqual(splitPx4CustomMode(6), null);
+  assert.strictEqual(splitPx4CustomMode('nope'), null);
+  assert.strictEqual(splitPx4CustomMode(NaN), null);
 });
 
 test('resolveFlightMode fails loudly for unknown modes/firmware (#20)', () => {
