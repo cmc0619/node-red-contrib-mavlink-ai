@@ -1,6 +1,6 @@
 'use strict';
 
-const { parseList, parseIdList, toInt, toNum, toBool } = require('../lib/util/validation');
+const { parseList, parseIdList, toNum, toBool } = require('../lib/util/validation');
 const { badgeForState } = require('../lib/util/status');
 
 // Minimum interval between rx-counter badge updates. Status updates travel to
@@ -25,8 +25,14 @@ module.exports = function registerMavlinkAiIn(RED) {
     node.connection = RED.nodes.getNode(config.connection);
     node.messageNames = parseList(config.messageNames);
     node.messageIds = parseIdList(config.messageIds);
-    node.sysid = config.sysid === '' || config.sysid == null ? '*' : toInt(config.sysid, '*');
-    node.compid = config.compid === '' || config.compid == null ? '*' : toInt(config.compid, '*');
+    /**
+     * Accept comma-separated id lists ("1,2,3") like the filter node, not just a
+     * single id (#154). parseIdList treats blank/"any"/"*" as no constraint and
+     * drops non-numeric entries, so a stray "1,2" no longer silently narrows to
+     * sysid 1.
+     */
+    node.sysids = parseIdList(config.sysid);
+    node.compids = parseIdList(config.compid);
     node.profileFilter = config.profileFilter || '';
     // toNum, not toInt: sub-1Hz rates like 0.5 are meaningful and truncation
     // would silently disable the limit.
@@ -43,12 +49,27 @@ module.exports = function registerMavlinkAiIn(RED) {
     const filter = {
       messageNames: node.messageNames,
       messageIds: node.messageIds,
-      sysid: node.sysid,
-      compid: node.compid,
+      sysids: node.sysids,
+      compids: node.compids,
       profile: node.profileFilter || undefined,
       rateLimitHz: node.rateLimitHz,
       changedOnly: node.changedOnly
     };
+
+    /**
+     * The visible output ports come from the editor-synced `outputs` property,
+     * but the raw/error port indices are derived from outputRaw/outputErrors. A
+     * hand-edited or imported flow can disagree (e.g. outputRaw:true, outputs:1),
+     * silently dropping raw/error messages. Warn so the mismatch is visible (#154).
+     */
+    const expectedOutputs = 1 + (node.outputRaw ? 1 : 0) + (node.outputErrors ? 1 : 0);
+    const declaredOutputs = Number(config.outputs);
+    if (Number.isFinite(declaredOutputs) && declaredOutputs !== expectedOutputs) {
+      node.warn(
+        `output count mismatch: raw/errors settings imply ${expectedOutputs} output(s) but the node declares ${declaredOutputs}; ` +
+          'some messages may be dropped. Re-open the node and redeploy to resync.'
+      );
+    }
 
     // Output layout: [decoded, raw?, errors?] — the optional outputs keep
     // their relative order, so the errors output index depends on outputRaw.

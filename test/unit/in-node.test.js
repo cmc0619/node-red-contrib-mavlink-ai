@@ -57,3 +57,33 @@ test('mavlink-ai-in without errors output attaches no diagnostics listeners (#22
   assert.strictEqual(conn.emitter.listenerCount('decodeError'), 0);
   assert.strictEqual(conn.emitter.listenerCount('rejected'), 0);
 });
+
+/** A comma-separated SysID config now yields a sysids list, not a narrowed single id (#154). */
+test('mavlink-ai-in passes a sysids list from a comma-separated config (#154)', () => {
+  const RED = new MockRED().loadNodes();
+  let captured;
+  const conn = {
+    id: 'c1',
+    name: 'stub',
+    emitter: new EventEmitter(),
+    statusState: 'connected',
+    subscribe: (filter) => {
+      captured = filter;
+      return 1;
+    },
+    unsubscribe: () => true
+  };
+  RED._nodes.set('c1', conn);
+  RED.create('mavlink-ai-in', { id: 'in1', connection: 'c1', sysid: '1,2', compid: '' });
+  assert.deepStrictEqual(captured.sysids, [1, 2]);
+  assert.deepStrictEqual(captured.compids, []);
+});
+
+/** An imported flow whose port count disagrees with raw/error settings warns rather than silently dropping (#154). */
+test('mavlink-ai-in warns when declared outputs disagree with raw/error settings (#154)', () => {
+  const RED = new MockRED().loadNodes();
+  const conn = stubConnection(RED, 'c1');
+  const node = RED.create('mavlink-ai-in', { id: 'in1', connection: 'c1', outputRaw: true, outputs: 1 });
+  assert.ok(node.warnings.some((w) => /output count mismatch/.test(w)), 'expected an output-count warning');
+  assert.ok(conn); // stubConnection registered
+});

@@ -46,6 +46,22 @@ module.exports = function registerMavlinkAiSwarm(RED) {
 
     if (!node.connection) {
       node.status({ fill: 'red', shape: 'ring', text: 'missing connection' });
+      /**
+       * The registry setup below needs the connection, so we return early — but
+       * still register an input handler so a triggering message gets a structured
+       * NO_CONNECTION error instead of being silently swallowed (#154), matching
+       * mission/param.
+       */
+      node.on('input', (msg, send, done) => {
+        msg.topic = 'mavlink/error';
+        msg.payload = errorPayload({
+          node: 'mavlink-ai-swarm',
+          code: 'NO_CONNECTION',
+          message: 'Swarm node has no connection configured.'
+        });
+        send(msg);
+        done();
+      });
       return;
     }
 

@@ -43,7 +43,8 @@
     "test:smoke": "node test/smoke-load.js",
     "test:unit": "node --test test/unit/*.test.js",
     "test:integration": "node --test test/integration/*.test.js",
-    "test:node-red": "node test/node-red-load.js"
+    "test:node-red": "node test/node-red-load.js",
+    "coverage": "node --test --experimental-test-coverage test/unit/*.test.js"
   },
   "node-red": {
     "nodes": {

@@ -139,3 +139,20 @@ test('one system with several heartbeating components is tracked per compid (#46
   assert.strictEqual(reg.vehicles().length, 2);
   assert.deepStrictEqual(reg.sysids(), [1]); // sysids stay unique for fan-out
 });
+
+/**
+ * VTOL variants (types 19-25), dodecarotor (29), and decarotor (35) were absent
+ * from TYPE_VEHICLE, so those heartbeats produced mode: null (#155). VTOLs fly
+ * ArduPlane modes (custom_mode 15 = plane GUIDED); dodeca/deca fly copter modes
+ * (custom_mode 4 = copter GUIDED).
+ */
+test('VTOL and high-rotor vehicle types resolve mode names in snapshots (#155)', () => {
+  const reg = new VehicleRegistry({ enums: ENUMS, now: makeClock().now });
+  reg.ingest(heartbeat(20, { type: 20, custom_mode: 15 }));
+  reg.ingest(heartbeat(29, { type: 29, custom_mode: 4 }));
+  reg.ingest(heartbeat(35, { type: 35, custom_mode: 4 }));
+  const modes = Object.fromEntries(reg.vehicles().map((v) => [v.sysid, v.mode]));
+  assert.strictEqual(modes[20], 'GUIDED');
+  assert.strictEqual(modes[29], 'GUIDED');
+  assert.strictEqual(modes[35], 'GUIDED');
+});

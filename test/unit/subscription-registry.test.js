@@ -26,6 +26,23 @@ test('filters by sysid', () => {
   assert.deepStrictEqual(got, [1]);
 });
 
+test('filters by a sysids list, and the singular sysid still works (#154)', () => {
+  const reg = new SubscriptionRegistry();
+  const got = [];
+  reg.subscribe({ sysids: [1, 2] }, (m) => got.push(m.payload.sysid));
+  reg.dispatch(msg('HEARTBEAT', 1));
+  reg.dispatch(msg('HEARTBEAT', 2));
+  reg.dispatch(msg('HEARTBEAT', 3));
+  assert.deepStrictEqual(got, [1, 2]);
+
+  /** An empty list means "accept all", like a wildcard. */
+  const reg2 = new SubscriptionRegistry();
+  const all = [];
+  reg2.subscribe({ sysids: [] }, (m) => all.push(m.payload.sysid));
+  reg2.dispatch(msg('HEARTBEAT', 7));
+  assert.deepStrictEqual(all, [7]);
+});
+
 test('rate limit drops bursts', () => {
   const reg = new SubscriptionRegistry();
   let count = 0;
