@@ -99,6 +99,7 @@ mavlink-ai-filter    filter decoded messages, with rate limiting
 mavlink-ai-command   build common commands (arm, mode, takeoff, message interval, ...)
 mavlink-ai-mission   run mission download/upload/clear workflows
 mavlink-ai-param     read/set a parameter or request the full parameter list
+mavlink-ai-move      send guided/offboard position-target setpoints (friendly type_mask)
 mavlink-ai-swarm     registry of active vehicles discovered from HEARTBEAT
 mavlink-ai-fanout    expand one command into per-vehicle messages, aggregate ACKs
 ```

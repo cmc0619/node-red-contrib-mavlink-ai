@@ -1,0 +1,233 @@
+<script type="text/javascript">
+  /**
+   * Setpoint presets mapped to the field groups they drive, so the editor can
+   * show only the relevant inputs. Mirrors PRESETS in lib/move/setpoint.js.
+   * 'custom' exposes every group plus the raw type_mask input.
+   */
+  const MAV_MOVE_PRESETS = {
+    position: { position: true },
+    position_yaw: { position: true, yaw: true },
+    velocity: { velocity: true },
+    velocity_yaw_rate: { velocity: true, yawRate: true },
+    position_velocity: { position: true, velocity: true },
+    yaw: { yaw: true },
+    yaw_rate: { yawRate: true },
+    custom: { position: true, velocity: true, yaw: true, yawRate: true, custom: true }
+  };
+
+  /** Frame options offered per coordinate kind: [value, label]. */
+  const MAV_MOVE_FRAMES = {
+    local: [
+      ['MAV_FRAME_LOCAL_NED', 'Local NED (world)'],
+      ['MAV_FRAME_LOCAL_OFFSET_NED', 'Offset from current (NED)'],
+      ['MAV_FRAME_BODY_OFFSET_NED', 'Body (forward / right / down)']
+    ],
+    global: [
+      ['MAV_FRAME_GLOBAL_RELATIVE_ALT_INT', 'Global, relative altitude'],
+      ['MAV_FRAME_GLOBAL_INT', 'Global, absolute (MSL)'],
+      ['MAV_FRAME_GLOBAL_TERRAIN_ALT_INT', 'Global, terrain altitude']
+    ]
+  };
+
+  RED.nodes.registerType('mavlink-ai-move', {
+    category: 'MAVLink AI',
+    color: '#FFE6B3',
+    defaults: {
+      name: { value: '' },
+      profile: { value: '', type: 'mavlink-ai-profile', required: true },
+      connection: { value: '', type: 'mavlink-ai-connection', required: false },
+      coordinate: { value: 'local', required: true },
+      preset: { value: 'position', required: true },
+      frame: { value: 'MAV_FRAME_LOCAL_NED' },
+      /** Raw 0..65535 mask, only used (and validated) for the 'custom' preset. */
+      typeMask: {
+        value: '',
+        validate: function (v) {
+          const preset = $('#node-input-preset').length ? $('#node-input-preset').val() : this.preset;
+          if (preset !== 'custom') {
+            return true;
+          }
+          const n = Number(String(v == null ? '' : v).trim());
+          return Number.isInteger(n) && n >= 0 && n <= 65535;
+        }
+      },
+      north: { value: '' },
+      east: { value: '' },
+      altitude: { value: '' },
+      lat: { value: '' },
+      lon: { value: '' },
+      velNorth: { value: '' },
+      velEast: { value: '' },
+      climb: { value: '' },
+      yaw: { value: '' },
+      yawRate: { value: '' }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: 'font-awesome/fa-location-arrow',
+    label: function () {
+      return this.name || 'move ' + (this.coordinate === 'global' ? 'global' : 'local');
+    },
+    oneditprepare: function () {
+      const $coordinate = $('#node-input-coordinate');
+      const $preset = $('#node-input-preset');
+      const $frame = $('#node-input-frame');
+      const savedFrame = this.frame;
+
+      /**
+       * Rebuild the frame dropdown for the selected coordinate, preserving the
+       * saved value when it still belongs to that coordinate.
+       */
+      function refreshFrames() {
+        const coordinate = $coordinate.val();
+        const options = MAV_MOVE_FRAMES[coordinate] || MAV_MOVE_FRAMES.local;
+        const current = $frame.val();
+        $frame.empty();
+        options.forEach(function (opt) {
+          $('<option></option>').val(opt[0]).text(opt[1]).appendTo($frame);
+        });
+        const keep = [savedFrame, current].find(function (f) {
+          return options.some(function (opt) { return opt[0] === f; });
+        });
+        $frame.val(keep || options[0][0]);
+      }
+
+      /**
+       * Show only the input rows the current coordinate + preset drive, and
+       * swap the position labels between local (North/East) and global
+       * (Lat/Lon). Re-runs the type_mask validator so its check tracks the
+       * preset.
+       */
+      function refresh() {
+        const coordinate = $coordinate.val();
+        const groups = MAV_MOVE_PRESETS[$preset.val()] || {};
+        const isGlobal = coordinate === 'global';
+
+        $('.mav-move-local-pos').toggle(!!groups.position && !isGlobal);
+        $('.mav-move-global-pos').toggle(!!groups.position && isGlobal);
+        $('.mav-move-velocity').toggle(!!groups.velocity);
+        $('.mav-move-yaw').toggle(!!groups.yaw);
+        $('.mav-move-yawrate').toggle(!!groups.yawRate);
+        $('.mav-move-typemask').toggle(!!groups.custom);
+        $('#node-input-typeMask').trigger('change');
+      }
+
+      $coordinate.on('change', function () {
+        refreshFrames();
+        refresh();
+      });
+      $preset.on('change', refresh);
+      refreshFrames();
+      refresh();
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="mavlink-ai-move">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="MAVLink Move">
+  </div>
+  <div class="form-row">
+    <label for="node-input-profile">Profile</label>
+    <input type="text" id="node-input-profile">
+  </div>
+  <div class="form-row">
+    <label for="node-input-connection">Connection</label>
+    <input type="text" id="node-input-connection">
+  </div>
+  <div class="form-tips" style="margin: -6px 0 8px 105px; width: 70%;">
+    Set a Connection to <b>send</b> the setpoint directly; leave it empty to emit a <code>mavlink/send</code> message for a <b>mavlink-ai-out</b> node.
+  </div>
+  <div class="form-row">
+    <label for="node-input-coordinate">Coordinate</label>
+    <select id="node-input-coordinate">
+      <option value="local">Local (NED, metres)</option>
+      <option value="global">Global (lat / lon)</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-input-preset">Setpoint</label>
+    <select id="node-input-preset">
+      <option value="position">Position</option>
+      <option value="position_yaw">Position + Yaw</option>
+      <option value="velocity">Velocity</option>
+      <option value="velocity_yaw_rate">Velocity + Yaw rate</option>
+      <option value="position_velocity">Position + Velocity</option>
+      <option value="yaw">Yaw only</option>
+      <option value="yaw_rate">Yaw-rate only</option>
+      <option value="custom">Custom (raw type_mask)</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-input-frame">Frame</label>
+    <select id="node-input-frame"></select>
+  </div>
+  <div class="form-row mav-move-typemask">
+    <label for="node-input-typeMask">Type mask</label>
+    <input type="number" id="node-input-typeMask" min="0" max="65535" step="1" placeholder="0..65535 (a SET bit means IGNORE)">
+  </div>
+
+  <div class="form-row mav-move-local-pos">
+    <label for="node-input-north">North (m)</label>
+    <input type="number" step="any" id="node-input-north" placeholder="+ forward / north">
+  </div>
+  <div class="form-row mav-move-local-pos">
+    <label for="node-input-east">East (m)</label>
+    <input type="number" step="any" id="node-input-east" placeholder="+ right / east">
+  </div>
+  <div class="form-row mav-move-global-pos">
+    <label for="node-input-lat">Latitude (°)</label>
+    <input type="number" step="any" id="node-input-lat" placeholder="e.g. 47.397742">
+  </div>
+  <div class="form-row mav-move-global-pos">
+    <label for="node-input-lon">Longitude (°)</label>
+    <input type="number" step="any" id="node-input-lon" placeholder="e.g. 8.545594">
+  </div>
+  <div class="form-row mav-move-local-pos mav-move-global-pos">
+    <label for="node-input-altitude">Altitude (m)</label>
+    <input type="number" step="any" id="node-input-altitude" placeholder="up-positive (mapped to -z for local)">
+  </div>
+
+  <div class="form-row mav-move-velocity">
+    <label for="node-input-velNorth">Vel North (m/s)</label>
+    <input type="number" step="any" id="node-input-velNorth" placeholder="+ forward / north">
+  </div>
+  <div class="form-row mav-move-velocity">
+    <label for="node-input-velEast">Vel East (m/s)</label>
+    <input type="number" step="any" id="node-input-velEast" placeholder="+ right / east">
+  </div>
+  <div class="form-row mav-move-velocity">
+    <label for="node-input-climb">Climb (m/s)</label>
+    <input type="number" step="any" id="node-input-climb" placeholder="up-positive (mapped to -vz)">
+  </div>
+
+  <div class="form-row mav-move-yaw">
+    <label for="node-input-yaw">Yaw (°)</label>
+    <input type="number" step="any" id="node-input-yaw" placeholder="heading in degrees">
+  </div>
+  <div class="form-row mav-move-yawrate">
+    <label for="node-input-yawRate">Yaw rate (°/s)</label>
+    <input type="number" step="any" id="node-input-yawRate" placeholder="degrees per second">
+  </div>
+</script>
+
+<script type="text/html" data-help-name="mavlink-ai-move">
+  <p>Sends a position-target <b>setpoint</b> for guided / offboard control —
+  <code>SET_POSITION_TARGET_LOCAL_NED</code> or
+  <code>SET_POSITION_TARGET_GLOBAL_INT</code> — without the build node. It hides
+  the two things that are easy to get wrong by hand: the inverted
+  <code>type_mask</code> and NED's down-positive vertical axis.</p>
+  <h3>Sending</h3>
+  <p>With a <b>Connection</b> the node sends the setpoint directly (fire-and-forget — setpoints carry no ack). Without one it emits a <code>mavlink/send</code> message to wire into a <b>mavlink-ai-out</b> node. A <b>Profile</b> is always required for encoding.</p>
+  <h3>Setpoint presets</h3>
+  <p>The <b>Setpoint</b> selector builds the correct <code>type_mask</code> for you. Because a set mask bit means <i>ignore</i> that dimension, "Position" is encoded as "ignore everything except position". Pick <b>Custom</b> to enter a raw 0..65535 mask.</p>
+  <h3>Frames &amp; axes</h3>
+  <p>Vertical inputs are <b>up-positive</b>. For a <b>Local</b> coordinate the <code>Altitude</code> maps to a negative <code>z</code> and <code>Climb</code> to a negative <code>vz</code> (NED is down-positive). For a <b>Global</b> coordinate the altitude is up-positive metres and is sent as-is; latitude/longitude are entered in degrees and converted to <code>1e7</code> integers. Yaw and yaw-rate are entered in degrees and sent in radians.</p>
+  <h3>Modes</h3>
+  <p>The vehicle must already be in a mode that accepts external setpoints (ArduPilot <b>GUIDED</b>, PX4 <b>OFFBOARD</b>) — switch modes with the <b>mavlink-ai-command</b> node's <i>Set Mode</i>.</p>
+  <h3>Inputs</h3>
+  <p><code>msg.payload</code> may override any editor value: <code>coordinate</code>, <code>preset</code>, <code>frame</code>, <code>type_mask</code>, <code>north</code>, <code>east</code>, <code>altitude</code>, <code>lat</code>, <code>lon</code>, <code>velNorth</code>, <code>velEast</code>, <code>climb</code>, <code>yaw</code>, <code>yawRate</code>, <code>target_system</code>, <code>target_component</code>, and <code>time_boot_ms</code>.</p>
+  <h3>Output</h3>
+  <p>Without a connection, a <code>mavlink/send</code> message for <b>mavlink-ai-out</b>. Failures are emitted as a structured <code>mavlink/error</code> message on the same output.</p>
+</script>
