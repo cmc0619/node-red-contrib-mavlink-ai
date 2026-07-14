@@ -82,7 +82,7 @@ test('param node read emits param/value on output 1', async () => {
 });
 
 test('param node set uses payload value and reports applied', async () => {
-  const { conn, node } = setup({ action: 'set', paramId: 'RC1_MIN' });
+  const { conn, node } = setup({ action: 'set', paramId: 'RC1_MIN', paramType: 'MAV_PARAM_TYPE_REAL32' });
   const outputs = await run(node, { payload: { param_value: 1234 } }, () =>
     conn.deliver(paramValue({ value: 1234 }))
   );
@@ -95,7 +95,7 @@ test('param node set uses payload value and reports applied', async () => {
 });
 
 test('param node set uses the editor Value when the flow omits param_value', async () => {
-  const { conn, node } = setup({ action: 'set', paramId: 'RC1_MIN', paramValue: '1500' });
+  const { conn, node } = setup({ action: 'set', paramId: 'RC1_MIN', paramValue: '1500', paramType: 'MAV_PARAM_TYPE_REAL32' });
   const outputs = await run(node, { payload: {} }, () => conn.deliver(paramValue({ value: 1500 })));
   const set = conn.sent.find((m) => m.name === 'PARAM_SET');
   assert.ok(set);
@@ -106,7 +106,7 @@ test('param node set uses the editor Value when the flow omits param_value', asy
 });
 
 test('param node set lets the flow param_value override the editor Value', async () => {
-  const { conn, node } = setup({ action: 'set', paramId: 'RC1_MIN', paramValue: '1500' });
+  const { conn, node } = setup({ action: 'set', paramId: 'RC1_MIN', paramValue: '1500', paramType: 'MAV_PARAM_TYPE_REAL32' });
   await run(node, { payload: { param_value: 1234 } }, () => conn.deliver(paramValue({ value: 1234 })));
   const set = conn.sent.find((m) => m.name === 'PARAM_SET');
   assert.ok(set);
@@ -120,6 +120,40 @@ test('param node set with a blank editor Value and no flow value fails, not sets
   const error = outputs[0][2];
   assert.strictEqual(error.topic, 'mavlink/error');
   assert.strictEqual(error.payload.code, 'BAD_PARAM_SET');
+});
+
+test('param node read uses the configured Param index when Param ID is blank', async () => {
+  const { conn, node } = setup({ action: 'read', paramIndex: '5' });
+  const outputs = await run(node, { payload: {} }, () => conn.deliver(paramValue({ index: 5, count: 10, value: 42 })));
+  const req = conn.sent.find((m) => m.name === 'PARAM_REQUEST_READ');
+  assert.strictEqual(req.fields.param_index, 5);
+  const result = outputs.map((o) => o[0]).filter(Boolean).pop();
+  assert.strictEqual(result.payload.param_value, 42);
+});
+
+test('param node auto set reads the type from the vehicle, then sets with it', async () => {
+  const { conn, node } = setup({ action: 'set', paramId: 'RC1_MIN', paramValue: '3', paramType: 'auto' });
+  // Respond to the detour read with UINT8 (type 1), then echo the set.
+  conn.send = (m) => {
+    conn.sent.push(m);
+    queueMicrotask(() => {
+      if (m.name === 'PARAM_REQUEST_READ') {
+        conn.deliver(paramValue({ id: 'RC1_MIN', value: 9, type: 1 }));
+      } else if (m.name === 'PARAM_SET') {
+        conn.deliver(paramValue({ id: 'RC1_MIN', value: m.fields.param_value, type: m.fields.param_type }));
+      }
+    });
+    return Promise.resolve();
+  };
+  const outputs = await run(node, { payload: {} });
+  const names = conn.sent.map((m) => m.name);
+  assert.deepStrictEqual(names, ['PARAM_REQUEST_READ', 'PARAM_SET']);
+  const set = conn.sent.find((m) => m.name === 'PARAM_SET');
+  assert.strictEqual(set.fields.param_type, 1);
+  assert.strictEqual(set.fields.param_value, 3);
+  const result = outputs.map((o) => o[0]).filter(Boolean).pop();
+  assert.strictEqual(result.topic, 'param/set');
+  assert.strictEqual(result.payload.applied, true);
 });
 
 test('param node list assembles params and emits progress', async () => {

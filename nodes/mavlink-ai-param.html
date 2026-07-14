@@ -23,7 +23,20 @@
       profile: { value: '', type: 'mavlink-ai-profile', required: false },
       action: { value: 'read', required: true },
       paramId: { value: '' },
-      paramType: { value: 'MAV_PARAM_TYPE_REAL32' },
+      /** Optional read-by-index; used only for "Read one" when Param ID is blank. */
+      paramIndex: {
+        value: '',
+        validate: function (v) {
+          const s = String(v == null ? '' : v).trim();
+          if (s === '') {
+            return true;
+          }
+          const n = Number(s);
+          return Number.isInteger(n) && n >= 0;
+        }
+      },
+      /** 'auto' detects the wire type from the vehicle at runtime (read-before-set). */
+      paramType: { value: 'auto' },
       /**
        * Static value for "Set one". Blank means "take it from the flow"
        * (msg.payload.param_value), so pre-existing flows that source the value
@@ -112,6 +125,7 @@
       function refresh() {
         const action = $('#node-input-action').val();
         $('.mav-param-id').toggle(action === 'read' || action === 'set');
+        $('.mav-param-index').toggle(action === 'read');
         $('.mav-param-type').toggle(action === 'set');
         $('.mav-param-value').toggle(action === 'set');
         revalidateValue();
@@ -151,9 +165,14 @@
     <label for="node-input-paramId">Param ID</label>
     <input type="text" id="node-input-paramId" placeholder="e.g. RC1_MIN">
   </div>
+  <div class="form-row mav-param-index">
+    <label for="node-input-paramIndex">Param index</label>
+    <input type="number" id="node-input-paramIndex" min="0" step="1" placeholder="read by index when Param ID is blank">
+  </div>
   <div class="form-row mav-param-type">
     <label for="node-input-paramType">Param type</label>
     <select id="node-input-paramType">
+      <option value="auto">Auto (detect from vehicle)</option>
       <option value="MAV_PARAM_TYPE_REAL32">REAL32 (float)</option>
       <option value="MAV_PARAM_TYPE_UINT8">UINT8</option>
       <option value="MAV_PARAM_TYPE_INT8">INT8</option>
@@ -182,8 +201,8 @@
   <p>Runs the MAVLink <b>PARAM</b> protocol against the vehicle on a shared <b>MAVLink AI Connection</b>. Only one param workflow runs per connection/profile/target at a time (it is locked); a second concurrent request fails clearly.</p>
   <h3>Actions</h3>
   <ul>
-    <li><b>Read one</b> — read a single parameter by <code>Param ID</code> (or by <code>msg.payload.param_index</code>).</li>
-    <li><b>Set one</b> — set <code>Param ID</code> to the editor <code>Value</code> (or <code>msg.payload.param_value</code> when <code>Value</code> is left blank) with the chosen <code>Param type</code>, then confirm via the echoed <code>PARAM_VALUE</code>.</li>
+    <li><b>Read one</b> — read a single parameter by <code>Param ID</code>, or by <code>Param index</code> / <code>msg.payload.param_index</code> when Param ID is blank (Param ID takes precedence).</li>
+    <li><b>Set one</b> — set <code>Param ID</code> to the editor <code>Value</code> (or <code>msg.payload.param_value</code> when <code>Value</code> is left blank), then confirm via the echoed <code>PARAM_VALUE</code>. <code>Param type</code> defaults to <b>Auto</b>, which reads the parameter first to detect its wire type before setting — so you don't have to know whether it is INT8/UINT8/REAL32 (this matters on PX4). Pick an explicit type to skip the detour read.</li>
     <li><b>Request list</b> — request the full parameter list and assemble it; missing items are re-requested on a lossy link.</li>
   </ul>
   <h3>Profile</h3>
