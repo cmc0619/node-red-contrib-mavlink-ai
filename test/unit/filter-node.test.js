@@ -32,7 +32,7 @@ async function passes(RED, node, message) {
 test('message-name filter passes listed names and drops others', async () => {
   const { RED, node } = setup({ messageNames: 'HEARTBEAT, ATTITUDE' });
   assert.strictEqual(await passes(RED, node, msg('HEARTBEAT')), true);
-  assert.strictEqual(await passes(RED, node, msg('attitude')), true); // case-insensitive
+  assert.strictEqual(await passes(RED, node, msg('attitude')), true);
   assert.strictEqual(await passes(RED, node, msg('GLOBAL_POSITION_INT')), false);
 });
 
@@ -53,7 +53,7 @@ test('target filter drops mismatches but passes messages without the target fiel
   const { RED, node } = setup({ targetSystem: '5' });
   assert.strictEqual(await passes(RED, node, msg('COMMAND_LONG', { fields: { target_system: 5 } })), true);
   assert.strictEqual(await passes(RED, node, msg('COMMAND_LONG', { fields: { target_system: 6 } })), false);
-  // Broadcast/no-target messages are not dropped by a target filter.
+  /** Broadcast/no-target messages are not dropped by a target filter. */
   assert.strictEqual(await passes(RED, node, msg('HEARTBEAT', { fields: {} })), true);
 });
 
@@ -67,8 +67,9 @@ test('field-value filter matches on stringified equality; field-exists requires 
   assert.strictEqual(await passes(byExists.RED, byExists.node, msg('GPI', { fields: {} })), false);
 });
 
+/** 2 Hz is a 500 ms window, so two synchronous injects fall inside it and the second is dropped. */
 test('rate limit drops a burst within the window', async () => {
-  const { RED, node } = setup({ rateLimitHz: 2 }); // 500 ms window
+  const { RED, node } = setup({ rateLimitHz: 2 });
   assert.strictEqual(await passes(RED, node, msg('ATTITUDE')), true);
   assert.strictEqual(await passes(RED, node, msg('ATTITUDE')), false);
 });
@@ -78,7 +79,7 @@ test('changed-only drops repeats and passes a changed value; per sysid key', asy
   assert.strictEqual(await passes(RED, node, msg('ATTITUDE', { fields: { roll: 1 } })), true);
   assert.strictEqual(await passes(RED, node, msg('ATTITUDE', { fields: { roll: 1 } })), false);
   assert.strictEqual(await passes(RED, node, msg('ATTITUDE', { fields: { roll: 2 } })), true);
-  // A different sysid is tracked independently.
+  /** A different sysid is tracked independently. */
   assert.strictEqual(await passes(RED, node, msg('ATTITUDE', { sysid: 9, fields: { roll: 1 } })), true);
 });
 

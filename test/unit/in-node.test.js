@@ -85,5 +85,5 @@ test('mavlink-ai-in warns when declared outputs disagree with raw/error settings
   const conn = stubConnection(RED, 'c1');
   const node = RED.create('mavlink-ai-in', { id: 'in1', connection: 'c1', outputRaw: true, outputs: 1 });
   assert.ok(node.warnings.some((w) => /output count mismatch/.test(w)), 'expected an output-count warning');
-  assert.ok(conn); // stubConnection registered
+  assert.ok(conn, 'stubConnection registered');
 });
