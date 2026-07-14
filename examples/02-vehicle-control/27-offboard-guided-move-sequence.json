@@ -4,7 +4,7 @@
     "type": "tab",
     "label": "MAVLink AI - 27 Offboard Move Sequence",
     "disabled": false,
-    "info": "Guided/offboard control: switch the vehicle into a setpoint-accepting mode, then stream position/velocity setpoints with the mavlink-ai-move node.\n\nOrder matters. ArduPilot needs GUIDED (this flow) and PX4 needs OFFBOARD; PX4 additionally requires setpoints to already be streaming *before* it will enter OFFBOARD, so in a real PX4 flow you would start step 2/3 on a timer first, then send the mode change. Steps: 1) Set GUIDED, 2) go up 5 m and 10 m North (local position), 3) fly forward at 2 m/s in body frame, 4) stop by commanding zero velocity (hold). Altitude/climb are entered up-positive; the move node maps them to NED's negative z/vz for you. Debug-wired only — add a connection to the command/move nodes (or a mavlink-ai-out node) to actually fly."
+    "info": "Guided/offboard control: switch the vehicle into a setpoint-accepting mode, then send position/velocity setpoints with the mavlink-ai-move node.\n\nSteps: 1) Set GUIDED, 2) go up 5 m and 10 m North (a discrete GUIDED position target — ArduPilot flies there and holds), 3) stream forward at 2 m/s in body frame (inject 3 repeats every 0.5 s — velocity setpoints must be refreshed or the vehicle stops on failsafe), 4) stop by commanding zero velocity (disable inject 3 first). Altitude/climb are entered up-positive; the move node maps them to NED's negative z/vz for you.\n\nStreaming & modes: this flow targets ArduPilot GUIDED. PX4 OFFBOARD additionally requires setpoints to already be streaming *before* the mode switch, and continuous streaming in general is best driven by a repeating inject/timer (inject 3 shows this) — built-in rate streaming is tracked in roadmap #128.\n\nSending: debug-wired only. To fly, replace the Debug node with a mavlink-ai-out node that has a connection. The move nodes can alternatively send directly if you set their Connection; the command node sends directly only with Await ack enabled, so the out-node path is simplest and consistent."
   },
   {
     "id": "ai_profile_copter",
@@ -130,15 +130,19 @@
     "id": "n27_i3",
     "type": "inject",
     "z": "flow27",
-    "name": "3 · Forward 2 m/s (body)",
+    "name": "3 · Stream forward 2 m/s (0.5s)",
     "props": [
       {
         "p": "payload"
       }
     ],
+    "repeat": "0.5",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
     "payload": "{}",
     "payloadType": "json",
-    "x": 200,
+    "x": 230,
     "y": 220,
     "wires": [
       [
