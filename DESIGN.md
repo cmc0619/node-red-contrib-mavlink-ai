@@ -1529,6 +1529,8 @@ Do not keep everything in root-level node files forever. That is how v1 becomes 
 
 JSDoc is the project's comment format, used in lieu of any other type of comment. It is part of the code-quality standard expected for CodeRabbit review compliance. Every comment that explains code — whether it documents a declaration or a strictly local implementation detail inside a function body — is written as a JSDoc block (`/** ... */`). Ordinary `//` line comments and plain `/* ... */` block comments are not used for commentary.
 
+This standard was adopted mid-project and applies **going forward**: new code and modified code follow it, while pre-existing `//` commentary is grandfathered. Convert old comments opportunistically when editing the code around them; do not run bulk rewrite sweeps whose only change is comment style.
+
 The only non-JSDoc comments permitted are machine-read directives that tooling requires in a specific syntax and that carry no prose explanation of their own — for example `// eslint-disable-next-line ...`, `/* istanbul ignore next */` / coverage pragmas, and a `#!` shebang. If such a directive needs justification, put the justification in a JSDoc block; keep the directive line itself to the bare pragma.
 
 Prefer to capture rationale in the enclosing declaration's JSDoc. When a note is genuinely local to a spot inside a function body, still write it as a `/** ... */` block immediately above the statement it explains, not as a `//` line. Documentation must never be written as `//` on a function, class, method, module, typedef, field, or other declaration.

@@ -17,7 +17,10 @@ Follow `DESIGN.md` first. Do not recreate the old coupled architecture.
 9. Use JSDoc (`/** ... */`) in lieu of any other type of comment. Do not use `//`
    line comments or plain `/* ... */` block comments for commentary; the only
    non-JSDoc comments allowed are bare tooling directives (e.g.
-   `// eslint-disable-next-line`, coverage pragmas, shebangs). See DESIGN.md §27.1.
+   `// eslint-disable-next-line`, coverage pragmas, shebangs). This rule applies
+   to new and modified code going forward — it was adopted mid-project, so
+   pre-existing `//` comments are grandfathered; convert them when you touch the
+   surrounding code, not in bulk sweeps. See DESIGN.md §27.1.
 
 ## Architecture
 
