@@ -190,7 +190,23 @@ test('a slow send is not piled up — ticks are skipped while one is in flight (
   assert.strictEqual(sends, 1, 'no overlapping sends while one is in flight');
 });
 
-test('a config-only redeploy (flows:started) tears down a running stream (#128)', async (t) => {
+test('an unrelated deploy (flows:started, no dependency change) keeps a running stream alive (#128)', async (t) => {
+  const { RED, node } = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', stream: true, streamRateHz: 50 },
+    { withConnection: true }
+  );
+  t.after(() => RED.close(node));
+  await RED.inject(node, { payload: {} });
+  assert.ok(node._streamTimer, 'streaming');
+
+  /** Deploying an unrelated tab/node fires flows:started but changes neither this
+   * node's Profile nor its Connection — the stream must survive, or the vehicle
+   * would drop out of OFFBOARD on every unrelated deploy. */
+  RED.events.emit('flows:started');
+  assert.ok(node._streamTimer, 'unrelated deploy did not stop the stream');
+});
+
+test('redeploying the referenced profile (flows:started, new config node) tears down the stream (#128)', async (t) => {
   const { RED, node } = setup(
     { coordinate: 'local', preset: 'velocity', velNorth: '1', stream: true, streamRateHz: 50 },
     { withConnection: true }
@@ -199,11 +215,40 @@ test('a config-only redeploy (flows:started) tears down a running stream (#128)'
   await RED.inject(node, { payload: {} });
   assert.ok(node._streamTimer, 'streaming before redeploy');
 
-  /** Only a referenced config node changed, so `close` never fires — but
-   * `flows:started` does, and the stream must not keep flying the vehicle. */
+  /** Re-creating the profile with the same id replaces it with a new object —
+   * i.e. this node's referenced config was redeployed. `close` never fires, but
+   * the stream must not keep flying with the stale state. */
+  RED.create('mavlink-ai-profile', {
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
   RED.events.emit('flows:started');
-  assert.strictEqual(node._streamTimer, null, 'flows:started stopped the stream');
+  assert.strictEqual(node._streamTimer, null, 'dependency change stopped the stream');
   assert.strictEqual(node._streamState, null, 'streamed setpoint cleared');
+});
+
+test('a stream send that rejects after the stream is stopped emits no stale error (#128)', async (t) => {
+  const { RED, node, conn } = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', stream: true, streamRateHz: 50 },
+    { withConnection: true }
+  );
+  t.after(() => RED.close(node));
+
+  /** A send whose rejection we control lands *after* the stop below. */
+  let rejectSend;
+  conn.send = () => new Promise((_resolve, reject) => { rejectSend = reject; });
+
+  await RED.inject(node, { payload: {} });
+  assert.ok(node._streamTimer, 'streaming');
+
+  await RED.inject(node, { payload: { stream: false } });
+  assert.strictEqual(node._streamTimer, null, 'stream stopped');
+
+  /** The in-flight send now fails — but the stream is already stopped, so its
+   * settle is stale and must not emit a mavlink/error from the node. */
+  rejectSend(new Error('link down'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.strictEqual(node.sent.filter((m) => m && m.topic === 'mavlink/error').length, 0, 'no stale error emitted');
 });
 
 test('streaming without a connection is a structured error (#128)', async () => {

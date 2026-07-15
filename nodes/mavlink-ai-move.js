@@ -55,24 +55,46 @@ module.exports = function registerMavlinkAiMove(RED) {
     node._streamErrored = false;
     /** True while a streamed setpoint send is in flight, so ticks don't pile up. */
     node._streamSending = false;
+    /**
+     * Bumped by stopStream. A send captures the current generation and, on
+     * settle, ignores its result if the generation moved on — so a stop
+     * (stream:false / dep redeploy / close) that lands while a send is pending
+     * can't later flip the status to error or emit a stale `mavlink/error`
+     * (possibly from an already-closed node).
+     */
+    node._streamGen = 0;
 
     /**
-     * Stop-on-redeploy guard for the config-only case (#128): when only the
-     * referenced Profile/Connection config node is edited or deleted, Node-RED
-     * leaves this node in place and fires `flows:started` (which watchProfileBadge
-     * uses to re-resolve refs) — but never `close`. A running setpoint stream
-     * would otherwise keep commanding the vehicle with the old `_streamState`
-     * (and a possibly-destroyed connection) across that redeploy, contradicting
-     * the "torn down on redeploy" promise. Tear it down here too; the operator
-     * re-triggers to resume. The listener is removed on close.
+     * Stop-on-redeploy guard for the config-only case (#128): when the referenced
+     * Profile/Connection config node is edited or deleted, Node-RED leaves this
+     * node in place and fires `flows:started` (which watchProfileBadge uses to
+     * re-resolve refs) — but never `close`. A running setpoint stream would
+     * otherwise keep commanding the vehicle with the old `_streamState` and a
+     * possibly-destroyed connection.
+     *
+     * The stop is gated on one of *this* node's referenced config nodes actually
+     * changing identity — an unrelated deploy (another tab/node, no change to
+     * this node's Profile/Connection) must NOT stop an active stream, or the
+     * vehicle could drop out of OFFBOARD. The connection ref is refreshed here so
+     * a redeployed connection is picked up. The listener is removed on close.
      */
     if (RED.events && typeof RED.events.on === 'function') {
-      const stopOnRedeploy = function stopOnRedeploy() {
-        stopStream(node);
+      let lastProfile = node.profile;
+      let lastConnection = node.connection;
+      const stopStreamIfDepsChanged = function stopStreamIfDepsChanged() {
+        const curProfile = RED.nodes.getNode(config.profile);
+        const curConnection = config.connection ? RED.nodes.getNode(config.connection) : null;
+        const changed = curProfile !== lastProfile || curConnection !== lastConnection;
+        lastProfile = curProfile;
+        lastConnection = curConnection;
+        node.connection = curConnection;
+        if (changed) {
+          stopStream(node);
+        }
       };
-      RED.events.on('flows:started', stopOnRedeploy);
+      RED.events.on('flows:started', stopStreamIfDepsChanged);
       node.on('close', function removeRedeployGuard() {
-        RED.events.removeListener('flows:started', stopOnRedeploy);
+        RED.events.removeListener('flows:started', stopStreamIfDepsChanged);
       });
     }
 
@@ -275,15 +297,30 @@ function streamTick(node) {
     return;
   }
   node._streamSending = true;
-  node.connection
+  /**
+   * Capture the connection and stream generation at send time. If the stream is
+   * stopped (stream:false / dep redeploy / close all bump `_streamGen` via
+   * stopStream) while this send is pending, its settle is stale — skip the
+   * status/error update so a stop can't surface a false failure or emit from an
+   * already-torn-down node.
+   */
+  const connection = node.connection;
+  const gen = node._streamGen;
+  connection
     .send({ name: s.name, profile: s.profile, fields: s.fields }, {})
     .then(() => {
+      if (node._streamGen !== gen) {
+        return;
+      }
       if (node._streamErrored) {
         node._streamErrored = false;
         node.status({ fill: 'green', shape: 'dot', text: `streaming @ ${node.streamRateHz} Hz` });
       }
     })
     .catch((err) => {
+      if (node._streamGen !== gen) {
+        return;
+      }
       const e = toMavlinkError(err, 'SEND_FAILED');
       node.status({ fill: 'yellow', shape: 'ring', text: `stream: ${e.code}` });
       if (!node._streamErrored) {
@@ -292,7 +329,7 @@ function streamTick(node) {
           topic: 'mavlink/error',
           payload: errorPayload({
             node: 'mavlink-ai-move',
-            connection: node.connection.name,
+            connection: connection.name,
             code: e.code,
             message: e.message,
             context: e.context
@@ -301,7 +338,11 @@ function streamTick(node) {
       }
     })
     .finally(() => {
-      node._streamSending = false;
+      /** Only the current generation owns `_streamSending`; a stale send that
+       * outlived a stop must not clear a fresh stream's in-flight flag. */
+      if (node._streamGen === gen) {
+        node._streamSending = false;
+      }
     });
 }
 
@@ -340,6 +381,8 @@ function stopStream(node) {
   node._streamState = null;
   node._streamErrored = false;
   node._streamSending = false;
+  /** Invalidate any in-flight send's settle so it can't report after the stop. */
+  node._streamGen = (node._streamGen || 0) + 1;
 }
 
 /**
