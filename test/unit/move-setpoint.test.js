@@ -8,6 +8,7 @@ const {
   resolveTypeMask,
   resolveFrame,
   buildSetpoint,
+  setpointWarnings,
   DIM_BITS,
   FORCE_BIT
 } = require('../../lib/move/setpoint');
@@ -143,4 +144,67 @@ test('yaw and yaw-rate are converted from degrees to radians', () => {
   });
   assert.ok(Math.abs(fields.yaw - Math.PI / 2) < 1e-9);
   assert.ok(Math.abs(fields.yaw_rate - Math.PI) < 1e-9);
+});
+
+test('MAV_FRAME_BODY_NED (PX4 body frame) resolves via the fallback map and the dialect enum index (#128)', () => {
+  /** No enums: the FRAME_FALLBACK map. BODY_NED (8) — not BODY_FRD — is the
+   * body frame SET_POSITION_TARGET_LOCAL_NED accepts. */
+  assert.strictEqual(resolveFrame('MAV_FRAME_BODY_NED', null), 8);
+  /** With a real dialect index: the enum-lookup branch. */
+  const enums = loadDialect('ardupilotmega').enums;
+  assert.strictEqual(resolveFrame('MAV_FRAME_BODY_NED', enums), 8);
+  const { fields } = buildSetpoint({
+    coordinate: 'local',
+    preset: 'velocity',
+    frame: 'MAV_FRAME_BODY_NED',
+    enums,
+    velNorth: 2,
+    climb: 1
+  });
+  assert.strictEqual(fields.coordinate_frame, 8);
+  assert.strictEqual(fields.vz, -1, 'body NED z stays down-positive, so climb is negated');
+});
+
+test('setpointWarnings normalizes a mixed-case firmware value (#128)', () => {
+  const forceMask = resolveTypeMask('force');
+  const warnings = setpointWarnings({ firmware: 'ArduPilot', typeMask: forceMask, frameName: 'MAV_FRAME_LOCAL_NED' });
+  assert.strictEqual(warnings.length, 1, 'mixed-case firmware still warns');
+});
+
+test('setpointWarnings flags force setpoints on both known firmwares (#128)', () => {
+  const forceMask = resolveTypeMask('force');
+  for (const firmware of ['ardupilot', 'px4']) {
+    const warnings = setpointWarnings({ firmware, typeMask: forceMask, frameName: 'MAV_FRAME_LOCAL_NED' });
+    assert.strictEqual(warnings.length, 1, `${firmware} warns on FORCE`);
+    assert.match(warnings[0], /FORCE/);
+  }
+});
+
+test('setpointWarnings flags acceleration on ArduPilot only (#128)', () => {
+  const accelMask = resolveTypeMask('acceleration');
+  const ap = setpointWarnings({ firmware: 'ardupilot', typeMask: accelMask, frameName: 'MAV_FRAME_LOCAL_NED' });
+  assert.strictEqual(ap.length, 1);
+  assert.match(ap[0], /acceleration/i);
+  const px4 = setpointWarnings({ firmware: 'px4', typeMask: accelMask, frameName: 'MAV_FRAME_LOCAL_NED' });
+  assert.deepStrictEqual(px4, [], 'PX4 OFFBOARD supports acceleration setpoints');
+});
+
+test('setpointWarnings flags PX4-unsupported frames (#128)', () => {
+  const posMask = resolveTypeMask('position');
+  const terrain = setpointWarnings({ firmware: 'px4', typeMask: posMask, frameName: 'MAV_FRAME_GLOBAL_TERRAIN_ALT_INT' });
+  assert.strictEqual(terrain.length, 1);
+  assert.match(terrain[0], /terrain/i);
+  const offset = setpointWarnings({ firmware: 'px4', typeMask: posMask, frameName: 'MAV_FRAME_BODY_OFFSET_NED' });
+  assert.strictEqual(offset.length, 1);
+  assert.match(offset[0], /OFFSET/);
+  const bodyNed = setpointWarnings({ firmware: 'px4', typeMask: posMask, frameName: 'MAV_FRAME_BODY_NED' });
+  assert.deepStrictEqual(bodyNed, [], 'body NED is fine on PX4');
+  const apOffset = setpointWarnings({ firmware: 'ardupilot', typeMask: posMask, frameName: 'MAV_FRAME_BODY_OFFSET_NED' });
+  assert.deepStrictEqual(apOffset, [], 'body offset is ArduPilot-native');
+});
+
+test('setpointWarnings stays silent for unknown firmwares (#128)', () => {
+  const forceMask = resolveTypeMask('force');
+  assert.deepStrictEqual(setpointWarnings({ firmware: 'generic', typeMask: forceMask, frameName: 'MAV_FRAME_LOCAL_NED' }), []);
+  assert.deepStrictEqual(setpointWarnings({ typeMask: forceMask, frameName: 'MAV_FRAME_LOCAL_NED' }), []);
 });

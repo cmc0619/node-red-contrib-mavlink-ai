@@ -344,6 +344,33 @@ test('a plain input keeps a payload-started stream alive and refreshes it (not o
   assert.strictEqual(node._streamState.fields.z, -9, 'stream refreshed to the new setpoint');
 });
 
+test('a firmware-unsupported setpoint raises an advisory warning but still sends (#128)', async () => {
+  /** The ardupilotmega test profile reports no firmware field by default, so
+   * pass it explicitly: ArduPilot + force preset must warn. */
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-profile', {
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', firmware: 'ardupilot', mavlinkVersion: 'v2',
+    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  const node = RED.create('mavlink-ai-move', {
+    id: 'm1', profile: 'p1', connection: '', coordinate: 'local', preset: 'force', frame: 'MAV_FRAME_LOCAL_NED', accelNorth: '1'
+  });
+
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected[0].topic, 'mavlink/send', 'setpoint still sent');
+  assert.strictEqual(node.warnings.length, 1, 'one advisory warning');
+  assert.match(node.warnings[0], /FORCE/);
+
+  /** Same warning set again: deduplicated, no spam. */
+  await RED.inject(node, { payload: {} });
+  assert.strictEqual(node.warnings.length, 1, 'repeat input does not re-warn');
+
+  /** A clean setpoint clears the dedup key so a later bad one warns again. */
+  await RED.inject(node, { payload: { preset: 'velocity', velNorth: 1 } });
+  await RED.inject(node, { payload: {} });
+  assert.strictEqual(node.warnings.length, 2, 'warning returns after the set changes');
+});
+
 test('missing profile emits MISSING_PROFILE', async () => {
   const RED = new MockRED().loadNodes();
   const node = RED.create('mavlink-ai-move', { id: 'm2', preset: 'position' });

@@ -1,6 +1,6 @@
 'use strict';
 
-const { buildSetpoint } = require('../lib/move/setpoint');
+const { buildSetpoint, setpointWarnings } = require('../lib/move/setpoint');
 const { toNum, toBool, firstDefined } = require('../lib/util/validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
@@ -145,13 +145,14 @@ module.exports = function registerMavlinkAiMove(RED) {
         }));
       }
 
+      const frameName = firstDefined(payload.frame, node.frame);
       let built;
       try {
         built = buildSetpoint({
           coordinate: firstDefined(payload.coordinate, node.coordinate),
           preset: firstDefined(payload.preset, node.preset),
           typeMask: firstDefined(payload.type_mask, node.typeMask),
-          frame: firstDefined(payload.frame, node.frame),
+          frame: frameName,
           enums: bundle ? bundle.enums : null,
           north: toNum(firstDefined(payload.north, node.north), undefined),
           east: toNum(firstDefined(payload.east, node.east), undefined),
@@ -180,6 +181,25 @@ module.exports = function registerMavlinkAiMove(RED) {
           context: e.context
         }));
       }
+
+      /**
+       * Advisory per-firmware checks (#128): a mask/frame combination the
+       * profile's firmware won't honor fails silently on the vehicle, so surface
+       * it via node.warn. Deduplicated per warning-set so a fast refresh loop
+       * feeding a stream can't spam the log at its input rate.
+       */
+      const warnings = setpointWarnings({
+        firmware: defaults.firmware,
+        typeMask: built.fields.type_mask,
+        frameName
+      });
+      const warnKey = warnings.join('|');
+      if (warnKey && warnKey !== node._lastWarnKey) {
+        for (const warning of warnings) {
+          node.warn(warning);
+        }
+      }
+      node._lastWarnKey = warnKey;
 
       /**
        * Streaming mode (#128): resend this setpoint continuously at the node
