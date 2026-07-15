@@ -1280,6 +1280,11 @@ Future queue can support priority:
 
 Do not overbuild priority at first, but do not allow every node to independently write to the socket with no coordination.
 
+Strict priority alone is unsafe for the background band. Sustained priority ≤2 traffic at/above the drain rate would park priority-3 heartbeats indefinitely, and the 1 Hz heartbeat tick keeps enqueuing more — the vehicle's GCS-loss failsafe can trip while "normal" traffic flows (#150). Two fairness mechanisms guard band 3:
+
+- **Age promotion.** A queued item's *effective* priority improves by one band per `agePromotionMs` (default 2000) it has waited; effective-priority ties break in favor of the older item. A parked heartbeat therefore ages up to the flood's band, becomes the oldest item in it, and drains ahead — bounding its worst-case wait instead of allowing indefinite starvation.
+- **Drop-superseded coalescing.** Enqueuing with a `coalesceKey` drops any still-queued (not in-flight) item sharing that key, resolving it (the newer send carries the same intent). The heartbeat tick uses `coalesceKey: 'heartbeat'` so at most one heartbeat is ever queued behind a slow transport rather than a growing backlog of stale copies.
+
 ## 22. Heartbeat Design
 
 Heartbeat is both simple and surprisingly easy to place badly.

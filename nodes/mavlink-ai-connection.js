@@ -947,7 +947,9 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * default).
      *
      * @param {object} message  { name, fields, profile?, target_system?, target_component? }
-     * @param {object} [options]  { priority }
+     * @param {object} [options]  { priority, coalesceKey } — coalesceKey lets a
+     *   periodic sender (e.g. the heartbeat) supersede its own still-queued copy
+     *   rather than accumulate behind a slow transport.
      * @returns {Promise<void>}
      */
     /**
@@ -1042,7 +1044,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
       } catch (err) {
         return Promise.reject(toMavlinkError(err, 'ENCODE_FAILED'));
       }
-      return node._queue.enqueue(buffer, options.priority, { targetSystem: routingTargetSystem });
+      return node._queue.enqueue(
+        buffer,
+        options.priority,
+        { targetSystem: routingTargetSystem },
+        { coalesceKey: options.coalesceKey }
+      );
     };
 
     /**
@@ -1268,7 +1275,14 @@ module.exports = function registerMavlinkAiConnection(RED) {
       /** Send one heartbeat; surface failures through the error emitter. */
       const tick = () => {
         node
-          .send({ name: 'HEARTBEAT', fields: node.profile.getHeartbeatFields() }, { priority: 3 })
+          .send(
+            { name: 'HEARTBEAT', fields: node.profile.getHeartbeatFields() },
+            // Background priority, but coalesced: if a prior heartbeat is still
+            // queued behind slower-draining traffic, this tick supersedes it
+            // instead of stacking a second stale copy (#150). Age promotion in
+            // the queue keeps the surviving heartbeat from being starved.
+            { priority: 3, coalesceKey: 'heartbeat' }
+          )
           .catch((err) => {
             // "No peer yet" is a normal udp-peer startup state (nothing has
             // sent to us, so there is nowhere to reply); logging it once per

@@ -48,6 +48,168 @@ test('rejects enqueue when the queue is full (stalled transport)', async () => {
   await p1;
 });
 
+test('age promotion keeps a background item from being starved by sustained higher-priority traffic', async () => {
+  // Deterministic hand-advanced clock. A priority-2 item holds the in-flight
+  // slot; the heartbeat (priority 3) queues behind it at t=0, then a steady
+  // stream of fresh priority-2 traffic keeps arriving. Under strict priority the
+  // heartbeat never drains; with age promotion (agePromotionMs=1000 => one band
+  // per second) it must surface once it has aged.
+  let clock = 0;
+  const written = [];
+  // Only one write is ever in flight (the drain loop is serial), so a single
+  // live resolver is enough: each write blocks until release() lets it finish,
+  // giving the test control over drain cadence and flood injection.
+  let resolveWrite;
+  const release = () => resolveWrite();
+  const queue = new OutboundQueue(
+    (buf) => {
+      written.push(buf[0]);
+      return new Promise((r) => {
+        resolveWrite = r;
+      });
+    },
+    { agePromotionMs: 1000, now: () => clock }
+  );
+
+  queue.enqueue(Buffer.from([1]), 2).catch(() => {}); // in-flight, blocked
+  const hb = queue.enqueue(Buffer.from([99]), 3); // background heartbeat at t=0
+  queue.enqueue(Buffer.from([10]), 2).catch(() => {});
+  queue.enqueue(Buffer.from([11]), 2).catch(() => {});
+
+  // Finish the in-flight write, advance the clock, then top the flood back up.
+  const drainOne = async (advanceMs, floodByte) => {
+    clock += advanceMs;
+    release();
+    await new Promise((r) => setImmediate(r));
+    if (floodByte !== undefined) {
+      queue.enqueue(Buffer.from([floodByte]), 2).catch(() => {});
+    }
+  };
+
+  // Well under a full band: strict priority holds, the heartbeat stays parked
+  // behind the priority-2 flood no matter how many messages drain.
+  await drainOne(200, 12);
+  await drainOne(200, 13);
+  await drainOne(200, 14);
+  assert.ok(!written.includes(99), 'heartbeat must not drain before it has aged a full band');
+
+  // Push the wait past a promotion band and keep draining with the flood still
+  // running; the promoted heartbeat must surface within a bounded number of
+  // writes instead of waiting behind the never-ending priority-2 stream forever.
+  for (let i = 0; i < 6 && !written.includes(99); i += 1) {
+    await drainOne(1000, 20 + i);
+  }
+  assert.ok(written.includes(99), 'aged heartbeat should drain despite sustained priority-2 traffic');
+
+  // Drain the remainder so no promise dangles.
+  for (let i = 0; i < 12; i += 1) {
+    await drainOne(1000);
+  }
+  await hb;
+});
+
+test('coalesceKey drops a superseded queued item and resolves it', async () => {
+  const written = [];
+  let release;
+  const gate = new Promise((r) => (release = r));
+  let calls = 0;
+  const queue = new OutboundQueue((buf) => {
+    calls += 1;
+    written.push(buf[0]);
+    return calls === 1 ? gate : Promise.resolve();
+  });
+
+  const inflight = queue.enqueue(Buffer.from([1]), 2); // starts draining, blocks
+  const firstHb = queue.enqueue(Buffer.from([10]), 3, undefined, { coalesceKey: 'heartbeat' });
+  const secondHb = queue.enqueue(Buffer.from([11]), 3, undefined, { coalesceKey: 'heartbeat' });
+
+  // The first heartbeat is superseded by the second: only one heartbeat stays
+  // queued (plus the in-flight item), and the dropped one resolves rather than
+  // rejects (the newer send carries the same intent).
+  assert.strictEqual(queue.length, 1, 'only the newest heartbeat should remain queued');
+  await firstHb; // resolves, does not reject
+
+  release();
+  await Promise.all([inflight, secondHb]);
+  // In-flight [1] plus exactly one heartbeat — the newest ([11]); [10] never written.
+  assert.deepStrictEqual(written, [1, 11]);
+});
+
+test('coalescing preserves accumulated age so a re-sent heartbeat is not starved', async () => {
+  // The real heartbeat path re-sends every tick with the same coalesceKey. If
+  // each re-send reset the queued item's age, age promotion could never fire
+  // under a sustained flood. The replacement must inherit the superseded item's
+  // enqueue time so its wait keeps accumulating across ticks.
+  let clock = 0;
+  const written = [];
+  let resolveWrite;
+  const release = () => resolveWrite();
+  const queue = new OutboundQueue(
+    (buf) => {
+      written.push(buf[0]);
+      return new Promise((r) => {
+        resolveWrite = r;
+      });
+    },
+    { agePromotionMs: 1000, now: () => clock }
+  );
+
+  queue.enqueue(Buffer.from([1]), 2).catch(() => {}); // in-flight, blocked
+  // First heartbeat enqueued at t=0 with the coalesce key.
+  queue.enqueue(Buffer.from([99]), 3, undefined, { coalesceKey: 'heartbeat' }).catch(() => {});
+  queue.enqueue(Buffer.from([10]), 2).catch(() => {});
+
+  const drainOne = async (advanceMs, floodByte) => {
+    clock += advanceMs;
+    release();
+    await new Promise((r) => setImmediate(r));
+    if (floodByte !== undefined) {
+      queue.enqueue(Buffer.from([floodByte]), 2).catch(() => {});
+    }
+  };
+
+  // Every ~300ms the heartbeat "ticks" and coalesces itself, while a priority-2
+  // flood keeps draining. Despite the heartbeat being replaced repeatedly, its
+  // inherited age keeps climbing, so it must still promote and drain.
+  for (let i = 0; i < 12 && !written.includes(99); i += 1) {
+    await drainOne(300, 20 + i);
+    // Re-send the heartbeat with the same key (inherits the age of the copy it
+    // supersedes); the final one carries buffer 99 so we can see it drain.
+    queue.enqueue(Buffer.from([99]), 3, undefined, { coalesceKey: 'heartbeat' }).catch(() => {});
+  }
+  assert.ok(
+    written.includes(99),
+    'a repeatedly-coalesced heartbeat must still age in and drain, not reset to zero each tick'
+  );
+
+  for (let i = 0; i < 12; i += 1) {
+    await drainOne(300);
+  }
+});
+
+test('coalescing reclaims a full queue slot instead of rejecting', async () => {
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const queue = new OutboundQueue(() => gate, { maxLength: 2 });
+
+  const inflight = queue.enqueue(Buffer.from([1])); // in-flight, blocked
+  queue.enqueue(Buffer.from([10]), 3, undefined, { coalesceKey: 'heartbeat' }).catch(() => {}); // queued -> length 1
+  queue.enqueue(Buffer.from([2])).catch(() => {}); // queued -> length 2 (full)
+
+  // A fresh heartbeat would overflow a full queue, but it supersedes the queued
+  // heartbeat first, so it is accepted rather than rejected.
+  await assert.doesNotReject(() =>
+    Promise.race([
+      queue.enqueue(Buffer.from([11]), 3, undefined, { coalesceKey: 'heartbeat' }),
+      new Promise((r) => setTimeout(r, 10)) // it stays queued behind the block; just assert no rejection
+    ])
+  );
+  assert.strictEqual(queue.length, 2, 'coalesced heartbeat reused the slot; queue did not grow');
+
+  release();
+  await inflight;
+});
+
 test('clear rejects pending writes', async () => {
   const gate = new Promise(() => {}); // never resolves
   const queue = new OutboundQueue(() => gate);
