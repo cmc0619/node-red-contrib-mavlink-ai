@@ -222,6 +222,7 @@ test('a later GCS confirmation does not steal the fallback; untargeted sends sti
   await new Promise((r) => gcs.bind(0, '127.0.0.1', r));
 
   const gotVehicle = new Promise((resolve) => vehicle.on('message', resolve));
+  const gotGcs = new Promise((resolve) => gcs.on('message', resolve));
 
   const twoSeen = new Promise((resolve) => { let n = 0; transport.on('data', () => { if (++n === 2) resolve(); }); });
   /** Vehicle sysid 1 speaks first; a GCS at sysid 255 confirms later. */
@@ -234,14 +235,50 @@ test('a later GCS confirmation does not steal the fallback; untargeted sends sti
 
   assert.strictEqual(transport.learnedPeer.port, vehicle.address().port, 'GCS did not steal the fallback');
 
-  /** An untargeted send fans out to all peers, so the vehicle still gets it. */
+  /** An untargeted send fans out to *every* peer: both the vehicle and the GCS
+   * receive it, and the vehicle (the fallback owner) is not the only one. */
   await transport.send(Buffer.from([7]), {});
-  const m = await gotVehicle;
-  assert.deepStrictEqual([...m], [7]);
+  const [mVehicle, mGcs] = await Promise.all([gotVehicle, gotGcs]);
+  assert.deepStrictEqual([...mVehicle], [7]);
+  assert.deepStrictEqual([...mGcs], [7]);
 
   await transport.stop();
   await new Promise((r) => vehicle.close(r));
   await new Promise((r) => gcs.close(r));
+});
+
+test('broadcast fan-out de-duplicates peers that share one endpoint (#148)', () => {
+  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  /** Two sysids learned from the same socket resolve to a single endpoint;
+   * the fan-out must send one datagram, not two. */
+  transport.peersBySysid.set(1, { address: '127.0.0.1', port: 9999 });
+  transport.peersBySysid.set(3, { address: '127.0.0.1', port: 9999 });
+  assert.deepStrictEqual(transport._targets({ targetSystem: 0 }), [{ address: '127.0.0.1', port: 9999 }]);
+});
+
+test('a partial fan-out failure still resolves but emits sendPartialFailure (#148)', async () => {
+  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  await new Promise((resolve) => { transport.on('listening', resolve); transport.start(); });
+  const good = dgram.createSocket('udp4');
+  await new Promise((r) => good.bind(0, '127.0.0.1', r));
+
+  /** One healthy endpoint and one that fails validation (port 0). */
+  transport.peersBySysid.set(1, { address: '127.0.0.1', port: good.address().port });
+  transport.peersBySysid.set(2, { address: '127.0.0.1', port: 0 });
+
+  const gotGood = new Promise((resolve) => good.on('message', resolve));
+  const partial = new Promise((resolve) => transport.on('sendPartialFailure', resolve));
+
+  /** The broadcast still resolves — one datagram went out — while the dead peer
+   * is surfaced on the dedicated event rather than swallowed. */
+  await transport.send(Buffer.from([5]), { targetSystem: 0 });
+  const info = await partial;
+  assert.strictEqual(info.failed, 1);
+  assert.strictEqual(info.total, 2);
+  assert.deepStrictEqual([...(await gotGood)], [5]);
+
+  await transport.stop();
+  await new Promise((r) => good.close(r));
 });
 
 test('non-MAVLink datagrams never become peer candidates (#85)', async () => {
