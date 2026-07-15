@@ -253,6 +253,13 @@ test('await-ack without a connection is a structured NO_CONNECTION error, not fi
   assert.strictEqual(collected[0].payload.code, 'NO_CONNECTION');
 });
 
+test('await-ack on a broadcast (target_system 0) is a structured BROADCAST_NO_ACK error (#129)', async () => {
+  const { RED, node } = setup({ action: 'gripper', gripAction: 'grab', awaitAck: true }, { withConnection: true, ack: true });
+  const { collected } = await RED.inject(node, { payload: { target_system: 0 } });
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'BROADCAST_NO_ACK');
+});
+
 test('await-ack is skipped for a message verb (gimbal-manager stays fire-and-forget) (#129)', async () => {
   const { RED, node, conn } = setup(
     { action: 'gimbal_manager_aim', pitch: '-45', awaitAck: true },

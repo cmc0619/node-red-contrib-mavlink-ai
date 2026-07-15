@@ -172,6 +172,22 @@ module.exports = function registerMavlinkAiPayload(RED) {
       }
 
       /**
+       * Await-ack can't work on a broadcast (target_system 0): CommandSend
+       * matches the ACK on the target sysid, but responders reply from their own
+       * nonzero sysid, so the ack is never observed and the workflow just retries
+       * to a timeout. Reject loudly — mirroring the fan-out node — rather than
+       * report a false failure. (Broadcast is fine for fire-and-forget verbs.)
+       */
+      if (node.awaitAck && built.name === 'COMMAND_LONG' && Number(targetSystem) === 0) {
+        node.status({ fill: 'red', shape: 'ring', text: 'BROADCAST_NO_ACK' });
+        return finishError(node, send, done, errorPayload({
+          node: 'mavlink-ai-payload',
+          code: 'BROADCAST_NO_ACK',
+          message: 'Broadcast (target_system 0) cannot collect a COMMAND_ACK — address a specific system, or disable await-ack.'
+        }));
+      }
+
+      /**
        * With a connection the node sends the command directly; without one it
        * hands the built COMMAND_LONG to a downstream mavlink-ai-out node.
        */
