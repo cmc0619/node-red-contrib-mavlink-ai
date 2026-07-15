@@ -146,17 +146,28 @@ test('yaw and yaw-rate are converted from degrees to radians', () => {
   assert.ok(Math.abs(fields.yaw_rate - Math.PI) < 1e-9);
 });
 
-test('MAV_FRAME_BODY_FRD resolves with and without a dialect enum index (#128)', () => {
+test('MAV_FRAME_BODY_FRD resolves via the fallback map and the dialect enum index (#128)', () => {
+  /** No enums: the FRAME_FALLBACK map. */
   assert.strictEqual(resolveFrame('MAV_FRAME_BODY_FRD', null), 12);
+  /** With a real dialect index: the enum-lookup branch. */
+  const enums = loadDialect('ardupilotmega').enums;
+  assert.strictEqual(resolveFrame('MAV_FRAME_BODY_FRD', enums), 12);
   const { fields } = buildSetpoint({
     coordinate: 'local',
     preset: 'velocity',
     frame: 'MAV_FRAME_BODY_FRD',
+    enums,
     velNorth: 2,
     climb: 1
   });
   assert.strictEqual(fields.coordinate_frame, 12);
   assert.strictEqual(fields.vz, -1, 'body FRD z stays down-positive, so climb is negated');
+});
+
+test('setpointWarnings normalizes a mixed-case firmware value (#128)', () => {
+  const forceMask = resolveTypeMask('force');
+  const warnings = setpointWarnings({ firmware: 'ArduPilot', typeMask: forceMask, frameName: 'MAV_FRAME_LOCAL_NED' });
+  assert.strictEqual(warnings.length, 1, 'mixed-case firmware still warns');
 });
 
 test('setpointWarnings flags force setpoints on both known firmwares (#128)', () => {
