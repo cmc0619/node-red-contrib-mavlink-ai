@@ -296,3 +296,30 @@ test('udp bind failure is not terminal: it retries and binds once the port frees
   const addr = await new Promise((resolve) => transport.on('listening', resolve));
   assert.strictEqual(addr.port, port);
 });
+
+test('tcp-server listen failure is not terminal: it retries and listens once the port frees (#149)', async (t) => {
+  /** Occupy a fixed port so the transport's first listen hits EADDRINUSE. */
+  const blocker = net.createServer();
+  const port = await new Promise((resolve) => blocker.listen(0, '127.0.0.1', () => resolve(blocker.address().port)));
+
+  const transport = new TcpTransport({ mode: 'tcp-server', host: '127.0.0.1', port, reconnectDelayMs: 15 });
+  /** The reconnect timer is unref'd; keep the test's loop alive so it can fire. */
+  const keepAlive = setInterval(() => {}, 5);
+  t.after(() => {
+    clearInterval(keepAlive);
+    return transport.stop();
+  });
+  const errors = [];
+  transport.on('error', (e) => errors.push(e));
+
+  /** First listen fails → a retry is scheduled (server mode was previously terminal). */
+  const reconnecting = new Promise((resolve) => transport.once('reconnecting', resolve));
+  transport.start();
+  await reconnecting;
+  assert.ok(errors.some((e) => e.code === 'TCP_ERROR'), 'the listen failure was surfaced');
+
+  /** Free the port; a subsequent retry must succeed and listen. */
+  await new Promise((resolve) => blocker.close(resolve));
+  const addr = await new Promise((resolve) => transport.on('listening', resolve));
+  assert.strictEqual(addr.port, port);
+});
