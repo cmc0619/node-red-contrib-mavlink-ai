@@ -4,8 +4,22 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { MavLinkPacketSignature } = require('node-mavlink');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
-const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
+const { MavlinkCodec, verifyInboundPacket } = require('../../lib/protocol/mavlink-codec');
+const { LinkState } = require('../../lib/protocol/link-state');
 const { MockRED } = require('../helpers/mock-red');
+const { makeIdentity } = require('../helpers/v3-config');
+
+/**
+ * MAVLink 2 signing in v3 (#15, #192, #228). Signing state is split by owner:
+ *
+ *  - the Local Identity owns the credential + sign/verify/require policy
+ *    (getSigningPolicy() returns the derived key and flags);
+ *  - the Connection owns the signing link id and the LinkState (monotonic
+ *    timestamps, per-key replay memory);
+ *  - the codec is dialect-scoped and stateless — encode() takes the signing
+ *    context per call, and verifyInboundPacket() is a pure (packet, policy)
+ *    function.
+ */
 
 const bundle = loadDialect('ardupilotmega');
 
@@ -17,11 +31,28 @@ const HEARTBEAT = {
   system_status: 'MAV_STATE_ACTIVE'
 };
 
+const codec = new MavlinkCodec({ bundle, version: 'v2' });
+
+/** Sign a HEARTBEAT as (sysid/compid) with a passphrase + link id. */
+function signHeartbeat({ sysid = 2, compid = 1, passphrase, linkId = 0, link = new LinkState() }) {
+  return codec.encode('HEARTBEAT', HEARTBEAT, {
+    sysid,
+    compid,
+    link,
+    signing: { key: MavLinkPacketSignature.key(passphrase), linkId }
+  });
+}
+
+/** Encode an unsigned HEARTBEAT. */
+function unsignedHeartbeat({ sysid = 2, compid = 1 } = {}) {
+  return codec.encode('HEARTBEAT', HEARTBEAT, { sysid, compid, link: new LinkState() });
+}
+
 /**
- * Decode a single wire buffer through a codec's streaming decoder and resolve
- * with the parsed packet (which carries `.signature` for signed frames).
+ * Decode a single wire buffer through a streaming decoder and resolve with the
+ * parsed packet (which carries `.signature` for signed frames).
  */
-function decodeOne(codec, buffer) {
+function decodeOne(buffer) {
   return new Promise((resolve, reject) => {
     const decoder = codec.createDecoder(
       (packet) => {
@@ -38,25 +69,25 @@ function decodeOne(codec, buffer) {
   });
 }
 
-test('signing off: encode produces an unsigned frame (unchanged behavior) (#15)', async () => {
-  const codec = new MavlinkCodec({ bundle, version: 'v2', sysid: 1, compid: 1 });
-  assert.strictEqual(codec.signsOutbound(), false);
-  const buf = codec.encode('HEARTBEAT', HEARTBEAT);
-  const packet = await decodeOne(codec, buf);
+/** Build an inbound-verification policy from a passphrase + flags. */
+function policy({ passphrase, verifyInbound = true, requireSignature = false, link = new LinkState() }) {
+  const key = passphrase ? MavLinkPacketSignature.key(passphrase) : null;
+  return {
+    verifyInbound,
+    requireSignature,
+    key,
+    replay: key ? link.replayTrackerFor(key) : null
+  };
+}
+
+test('signing off: encode produces an unsigned frame (#15)', async () => {
+  const packet = await decodeOne(unsignedHeartbeat());
   assert.strictEqual(packet.signature, null); // no signature block
 });
 
 test('sign outbound: encode appends a valid signature block (#15)', async () => {
-  const codec = new MavlinkCodec({
-    bundle,
-    version: 'v2',
-    sysid: 1,
-    compid: 1,
-    signing: { passphrase: 'swarmsecret', linkId: 7, signOutbound: true }
-  });
-  assert.strictEqual(codec.signsOutbound(), true);
-  const buf = codec.encode('HEARTBEAT', HEARTBEAT);
-  const packet = await decodeOne(codec, buf);
+  const buf = signHeartbeat({ sysid: 1, compid: 1, passphrase: 'swarmsecret', linkId: 7 });
+  const packet = await decodeOne(buf);
   assert.ok(packet.signature, 'frame carries a signature');
   assert.strictEqual(packet.signature.linkId, 7);
   const key = MavLinkPacketSignature.key('swarmsecret');
@@ -66,268 +97,137 @@ test('sign outbound: encode appends a valid signature block (#15)', async () => 
 
 test('signing forces MAVLink 2 even when the version is v1 (#15)', async () => {
   // Signed frames are v2-only; a v1 profile setting must not drop signing.
-  const codec = new MavlinkCodec({
-    bundle,
-    version: 'v1',
+  const v1 = new MavlinkCodec({ bundle, version: 'v1' });
+  const buf = v1.encode('HEARTBEAT', HEARTBEAT, {
     sysid: 1,
     compid: 1,
-    signing: { passphrase: 'k', linkId: 0, signOutbound: true }
+    link: new LinkState(),
+    signing: { key: MavLinkPacketSignature.key('k'), linkId: 0 }
   });
-  const buf = codec.encode('HEARTBEAT', HEARTBEAT);
   assert.strictEqual(buf[0], 0xfd); // v2 magic, not 0xfe
-  const packet = await decodeOne(codec, buf);
+  const packet = await decodeOne(buf);
   assert.ok(packet.signature);
 });
 
 test('verify disabled: verifyInboundPacket returns null (pass-through) (#15)', () => {
-  const codec = new MavlinkCodec({ bundle, sysid: 1, compid: 1, signing: { passphrase: 'k', signOutbound: true } });
-  assert.strictEqual(codec.verifyInboundPacket({ signature: null }), null);
+  assert.strictEqual(verifyInboundPacket({ signature: null }, null), null);
+  assert.strictEqual(verifyInboundPacket({ signature: null }, { verifyInbound: false }), null);
 });
 
 test('verify inbound decision matrix (#15)', async () => {
-  const signer = new MavlinkCodec({
-    bundle,
-    sysid: 2,
-    compid: 1,
-    signing: { passphrase: 'linkkey', linkId: 3, signOutbound: true }
-  });
-  const signedBuf = signer.encode('HEARTBEAT', HEARTBEAT);
-  const unsignedBuf = new MavlinkCodec({ bundle, version: 'v2', sysid: 2, compid: 1 }).encode('HEARTBEAT', HEARTBEAT);
-
-  const verifier = new MavlinkCodec({
-    bundle,
-    sysid: 1,
-    compid: 1,
-    signing: { passphrase: 'linkkey', verifyInbound: true, requireSignature: false }
-  });
-  const requirer = new MavlinkCodec({
-    bundle,
-    sysid: 1,
-    compid: 1,
-    signing: { passphrase: 'linkkey', verifyInbound: true, requireSignature: true }
-  });
-  const wrongKey = new MavlinkCodec({
-    bundle,
-    sysid: 1,
-    compid: 1,
-    signing: { passphrase: 'different', verifyInbound: true }
-  });
-
-  const signedPkt = await decodeOne(verifier, signedBuf);
-  const unsignedPkt = await decodeOne(verifier, unsignedBuf);
+  const signedPkt = await decodeOne(signHeartbeat({ passphrase: 'linkkey', linkId: 3 }));
+  const unsignedPkt = await decodeOne(unsignedHeartbeat());
 
   // Good signature + right key -> accepted.
-  assert.deepStrictEqual(verifier.verifyInboundPacket(signedPkt), {
+  assert.deepStrictEqual(verifyInboundPacket(signedPkt, policy({ passphrase: 'linkkey' })), {
     accepted: true,
     reason: 'signature-valid',
     signed: true
   });
   // Unsigned, not required -> accepted.
-  assert.deepStrictEqual(verifier.verifyInboundPacket(unsignedPkt), {
+  assert.deepStrictEqual(verifyInboundPacket(unsignedPkt, policy({ passphrase: 'linkkey' })), {
     accepted: true,
     reason: 'unsigned-allowed',
     signed: false
   });
   // Unsigned, required -> rejected.
-  assert.deepStrictEqual(requirer.verifyInboundPacket(unsignedPkt), {
-    accepted: false,
-    reason: 'signature-required',
-    signed: false
-  });
+  assert.deepStrictEqual(
+    verifyInboundPacket(unsignedPkt, policy({ passphrase: 'linkkey', requireSignature: true })),
+    { accepted: false, reason: 'signature-required', signed: false }
+  );
   // Signed but the verifier holds the wrong key -> rejected.
-  assert.strictEqual(wrongKey.verifyInboundPacket(signedPkt).accepted, false);
-  assert.strictEqual(wrongKey.verifyInboundPacket(signedPkt).reason, 'signature-invalid');
+  const wrong = verifyInboundPacket(signedPkt, policy({ passphrase: 'different' }));
+  assert.strictEqual(wrong.accepted, false);
+  assert.strictEqual(wrong.reason, 'signature-invalid');
 });
 
-test('verify requested with no passphrase fails closed on signed frames (#15)', async () => {
-  const signer = new MavlinkCodec({
-    bundle,
-    sysid: 2,
-    compid: 1,
-    signing: { passphrase: 'linkkey', signOutbound: true }
-  });
-  const signedPkt = await decodeOne(signer, signer.encode('HEARTBEAT', HEARTBEAT));
-  // verifyInbound + requireSignature but no passphrase configured.
-  const keyless = new MavlinkCodec({
-    bundle,
-    sysid: 1,
-    compid: 1,
-    signing: { verifyInbound: true, requireSignature: true }
-  });
-  const decision = keyless.verifyInboundPacket(signedPkt);
+test('verify requested with no key fails closed on signed frames (#15)', async () => {
+  const signedPkt = await decodeOne(signHeartbeat({ passphrase: 'linkkey' }));
+  const decision = verifyInboundPacket(signedPkt, policy({ passphrase: '', requireSignature: true }));
   assert.strictEqual(decision.accepted, false);
   assert.strictEqual(decision.reason, 'signature-no-key');
 });
 
-test('empty signing config is treated as no signing (#15)', () => {
-  const codec = new MavlinkCodec({ bundle, sysid: 1, compid: 1, signing: {} });
-  assert.strictEqual(codec.signing, null);
-  assert.strictEqual(codec.signsOutbound(), false);
-  assert.strictEqual(codec.verifyInboundPacket({ signature: null }), null);
-});
-
-test('requireSignature implies inbound verification (#70)', () => {
-  // 'Require signature' is fail-closed and is meaningless without verification,
-  // so it must reject unsigned frames even when verifyInbound is not also set.
-  const codec = new MavlinkCodec({
-    bundle,
-    sysid: 1,
-    compid: 1,
-    signing: { passphrase: 'k', requireSignature: true } // verifyInbound omitted
-  });
-  assert.strictEqual(codec.signing.verifyInbound, true);
-  const decision = codec.verifyInboundPacket({ signature: null });
-  assert.strictEqual(decision.accepted, false);
-  assert.strictEqual(decision.reason, 'signature-required');
-});
-
-test('sign-outbound with no passphrase fails closed (#91)', () => {
-  // 'Sign outbound' without a key cannot do what it promises; the codec (and
-  // therefore the connection) must refuse to start, never send unsigned.
-  assert.throws(
-    () =>
-      new MavlinkCodec({
-        bundle,
-        sysid: 1,
-        compid: 1,
-        signing: { signOutbound: true } // enabled, but no passphrase
-      }),
-    (err) => err.code === 'SIGNING_NO_KEY'
-  );
-});
-
-test('sign-outbound with a passphrase still builds and signs (#91)', async () => {
-  const codec = new MavlinkCodec({
-    bundle,
-    sysid: 1,
-    compid: 1,
-    signing: { passphrase: 'k', signOutbound: true }
-  });
-  assert.strictEqual(codec.signsOutbound(), true);
-  const pkt = await decodeOne(codec, codec.encode('HEARTBEAT', HEARTBEAT));
-  assert.ok(pkt.signature, 'outbound frame is signed');
-});
-
-test('out-of-range linkId is rejected, not wrapped modulo 256 (#90)', () => {
-  for (const linkId of [259, -1, 256, 1.5, 'abc']) {
-    assert.throws(
-      () =>
-        new MavlinkCodec({
-          bundle,
-          sysid: 1,
-          compid: 1,
-          signing: { passphrase: 'k', linkId, signOutbound: true }
-        }),
-      (err) => err.code === 'SIGNING_BAD_LINK_ID',
-      `linkId ${JSON.stringify(linkId)} should be rejected`
-    );
-  }
-  // Boundary values stay valid; blank defaults to 0.
-  for (const linkId of [0, 255]) {
-    const codec = new MavlinkCodec({
-      bundle,
-      sysid: 1,
-      compid: 1,
-      signing: { passphrase: 'k', linkId, signOutbound: true }
-    });
-    assert.strictEqual(codec.signing.linkId, linkId);
-  }
-  const blank = new MavlinkCodec({ bundle, sysid: 1, compid: 1, signing: { passphrase: 'k', signOutbound: true } });
-  assert.strictEqual(blank.signing.linkId, 0);
-});
-
-// --- profile threading (#15) -------------------------------------------------
-
-function makeProfile(config) {
-  const RED = new MockRED().loadNodes();
-  return RED.create(
-    'mavlink-ai-profile',
-    Object.assign(
-      {
-        id: 'p1',
-        name: 'P',
-        dialect: 'ardupilotmega',
-        mavlinkVersion: 'auto',
-        sourceSystemId: 255,
-        sourceComponentId: 190
-      },
-      config
-    )
-  );
-}
-
-test('profile exposes null signing when nothing is configured (#15)', () => {
-  const profile = makeProfile({});
-  assert.strictEqual(profile.getSigningOptions(), null);
-  assert.strictEqual(profile.getProtocolOptions().signing, null);
-});
-
-test('profile reads the passphrase from credentials, not plain config (#15)', () => {
-  const profile = makeProfile({
-    signOutbound: true,
-    verifyInbound: true,
-    requireSignature: true,
-    signingLinkId: 5,
-    credentials: { signingPassphrase: 'secret' }
-  });
-  const signing = profile.getSigningOptions();
-  assert.strictEqual(signing.passphrase, 'secret');
-  assert.strictEqual(signing.linkId, 5);
-  assert.strictEqual(signing.signOutbound, true);
-  assert.strictEqual(signing.verifyInbound, true);
-  assert.strictEqual(signing.requireSignature, true);
-  // A codec built from these options actually signs.
-  const codec = new MavlinkCodec(Object.assign({ bundle }, profile.getProtocolOptions()));
-  assert.strictEqual(codec.signsOutbound(), true);
-});
-
-test('profile with only verify flags (no passphrase) still returns signing (#15)', () => {
-  // So inbound verification can fail closed rather than silently pass.
-  const profile = makeProfile({ verifyInbound: true, requireSignature: true });
-  const signing = profile.getSigningOptions();
-  assert.ok(signing);
-  assert.strictEqual(signing.passphrase, '');
-  assert.strictEqual(signing.verifyInbound, true);
-});
-
 test('signing replay: an authentic frame is accepted once, its replay rejected (#100)', async () => {
-  const signer = new MavlinkCodec({
-    bundle,
-    sysid: 2,
-    compid: 1,
-    signing: { passphrase: 'replaykey', linkId: 4, signOutbound: true }
-  });
-  const pkt = await decodeOne(signer, signer.encode('HEARTBEAT', HEARTBEAT));
-  const verifier = new MavlinkCodec({
-    bundle,
-    sysid: 1,
-    compid: 1,
-    signing: { passphrase: 'replaykey', verifyInbound: true }
-  });
-  assert.strictEqual(verifier.verifyInboundPacket(pkt).reason, 'signature-valid');
-  const replay = verifier.verifyInboundPacket(pkt);
+  const pkt = await decodeOne(signHeartbeat({ passphrase: 'replaykey', linkId: 4 }));
+  const p = policy({ passphrase: 'replaykey' });
+  assert.strictEqual(verifyInboundPacket(pkt, p).reason, 'signature-valid');
+  const replay = verifyInboundPacket(pkt, p);
   assert.strictEqual(replay.accepted, false);
   assert.strictEqual(replay.reason, 'signature-replayed');
 });
 
-test('outbound signing timestamps are monotonic so same-ms bursts are not self-rejected', async () => {
-  const signer = new MavlinkCodec({
-    bundle,
-    sysid: 2,
-    compid: 1,
-    signing: { passphrase: 'burstkey', linkId: 3, signOutbound: true }
-  });
-  /** Two frames encoded back-to-back land in the same millisecond. */
-  const p1 = await decodeOne(signer, signer.encode('HEARTBEAT', HEARTBEAT));
-  const p2 = await decodeOne(signer, signer.encode('HEARTBEAT', HEARTBEAT));
+test('replay memory survives a rebuilt policy under the same key (#192)', async () => {
+  // The Connection keys its ReplayTracker by the derived key on a persistent
+  // LinkState, so a fresh policy built from the same LinkState + key keeps the
+  // replay memory a codec/profile rebuild used to reset.
+  const link = new LinkState();
+  const pkt = await decodeOne(signHeartbeat({ passphrase: 'persist', linkId: 2 }));
+  assert.strictEqual(verifyInboundPacket(pkt, policy({ passphrase: 'persist', link })).reason, 'signature-valid');
+  // Rebuild the policy object (as a profile edit would) from the same link:
+  const rebuilt = policy({ passphrase: 'persist', link });
+  const replay = verifyInboundPacket(pkt, rebuilt);
+  assert.strictEqual(replay.accepted, false, 'the replay is still caught after the policy rebuild');
+});
+
+test('outbound signing timestamps are monotonic so same-ms bursts are not self-rejected (#192)', async () => {
+  // One shared LinkState advances the timestamp per (sysid, compid, linkId).
+  const link = new LinkState();
+  const p1 = await decodeOne(signHeartbeat({ passphrase: 'burstkey', linkId: 3, link }));
+  const p2 = await decodeOne(signHeartbeat({ passphrase: 'burstkey', linkId: 3, link }));
   assert.ok(p2.signature.timestamp > p1.signature.timestamp, 'second frame has a strictly greater timestamp');
 
-  const verifier = new MavlinkCodec({
-    bundle,
-    sysid: 1,
-    compid: 1,
-    signing: { passphrase: 'burstkey', verifyInbound: true }
+  const verifyLink = new LinkState();
+  const p = policy({ passphrase: 'burstkey', link: verifyLink });
+  assert.strictEqual(verifyInboundPacket(p1, p).reason, 'signature-valid');
+  assert.strictEqual(verifyInboundPacket(p2, p).reason, 'signature-valid');
+});
+
+// --- identity threading (#228) ----------------------------------------------
+
+test('identity exposes null signing policy when nothing is configured (#15)', () => {
+  const RED = new MockRED().loadNodes();
+  const id = makeIdentity(RED, {});
+  assert.strictEqual(id.getSigningPolicy(), null);
+});
+
+test('identity reads the passphrase from credentials, not plain config (#15)', () => {
+  const RED = new MockRED().loadNodes();
+  const id = makeIdentity(RED, {
+    signOutbound: true,
+    verifyInbound: true,
+    requireSignature: true,
+    credentials: { signingPassphrase: 'secret' }
   });
-  assert.strictEqual(verifier.verifyInboundPacket(p1).reason, 'signature-valid');
-  assert.strictEqual(verifier.verifyInboundPacket(p2).reason, 'signature-valid');
+  assert.strictEqual(id.isValid(), true);
+  const p = id.getSigningPolicy();
+  assert.ok(Buffer.isBuffer(p.key), 'key is derived from the passphrase');
+  assert.deepStrictEqual(p.key, MavLinkPacketSignature.key('secret'));
+  assert.strictEqual(p.signOutbound, true);
+  assert.strictEqual(p.verifyInbound, true);
+  assert.strictEqual(p.requireSignature, true);
+});
+
+test('identity requireSignature implies inbound verification (#70)', () => {
+  const RED = new MockRED().loadNodes();
+  const id = makeIdentity(RED, { requireSignature: true, credentials: { signingPassphrase: 'k' } });
+  const p = id.getSigningPolicy();
+  assert.strictEqual(p.verifyInbound, true);
+});
+
+test('identity with only verify flags (no passphrase) still returns a policy (#15)', () => {
+  // So inbound verification can fail closed rather than silently pass.
+  const RED = new MockRED().loadNodes();
+  const id = makeIdentity(RED, { verifyInbound: true, requireSignature: true });
+  const p = id.getSigningPolicy();
+  assert.ok(p);
+  assert.strictEqual(p.key, null);
+  assert.strictEqual(p.verifyInbound, true);
+});
+
+test('the connection owns the signing link id, not the identity (#192)', () => {
+  const RED = new MockRED().loadNodes();
+  const id = makeIdentity(RED, { credentials: { signingPassphrase: 'k' } });
+  const p = id.getSigningPolicy();
+  assert.strictEqual('linkId' in p, false, 'link id is channel state, owned by the Connection');
 });

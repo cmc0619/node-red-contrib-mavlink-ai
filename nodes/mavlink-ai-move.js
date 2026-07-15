@@ -218,7 +218,12 @@ module.exports = function registerMavlinkAiMove(RED) {
             message: 'Streaming requires a Connection to send setpoints continuously.'
           }));
         }
-        node._streamState = { name: built.name, profile: node.profile.id, fields: built.fields };
+        node._streamState = {
+          name: built.name,
+          vehicleProfile: node.profile.id,
+          localIdentity: payload.localIdentity,
+          fields: built.fields
+        };
         startStream(node);
         node.status({ fill: 'green', shape: 'dot', text: `streaming ${labelFor(built.name)} @ ${node.streamRateHz} Hz` });
         return done();
@@ -236,7 +241,15 @@ module.exports = function registerMavlinkAiMove(RED) {
       const connection = node.connection;
       if (connection) {
         try {
-          await connection.send({ name: built.name, profile: node.profile.id, fields: built.fields }, { msg });
+          await connection.send(
+            {
+              name: built.name,
+              vehicleProfile: node.profile.id,
+              localIdentity: payload.localIdentity,
+              fields: built.fields
+            },
+            { msg }
+          );
           node.status({ fill: 'green', shape: 'dot', text: `sent ${labelFor(built.name)}` });
           return done();
         } catch (err) {
@@ -255,12 +268,15 @@ module.exports = function registerMavlinkAiMove(RED) {
       msg.topic = 'mavlink/send';
       msg.payload = {
         name: built.name,
-        profile: node.profile.id,
-        profile_name: node.profile.name,
+        vehicleProfile: node.profile.id,
+        vehicleProfileName: node.profile.name,
         fields: built.fields,
         target_system: targetSystem,
         target_component: targetComponent
       };
+      if (payload.localIdentity !== undefined && payload.localIdentity !== null && payload.localIdentity !== '') {
+        msg.payload.localIdentity = payload.localIdentity;
+      }
       node.status({ fill: 'green', shape: 'dot', text: labelFor(built.name) });
       send(msg);
       done();
@@ -332,7 +348,7 @@ function streamTick(node) {
   const connection = node.connection;
   const gen = node._streamGen;
   connection
-    .send({ name: s.name, profile: s.profile, fields: s.fields }, {})
+    .send({ name: s.name, vehicleProfile: s.vehicleProfile, localIdentity: s.localIdentity, fields: s.fields }, {})
     .then(() => {
       if (node._streamGen !== gen) {
         return;

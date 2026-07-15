@@ -1,5 +1,5 @@
 <script type="text/javascript">
-  // MAVLink identity ids are uint8s on the wire (#90): accept only integers in
+  // MAVLink target ids are uint8s on the wire (#90): accept only integers in
   // [min, 255]. Blank is allowed (the runtime applies the documented default).
   function mavUint8Validator(min) {
     return function (v) {
@@ -18,7 +18,13 @@
     category: 'config',
     defaults: {
       name: { value: '' },
-      profileType: { value: 'gcs', required: true },
+      // Target vehicle family, used for mode tables and parameter metadata.
+      // This is about the vehicle being addressed — the local identity lives
+      // on the mavlink-ai-local-identity config node (#228).
+      vehicleFamily: { value: 'generic', required: true },
+      // Legacy pre-v3 combined role/vehicle field, kept so the editor can
+      // migrate it into vehicleFamily on open; cleared on save.
+      profileType: { value: '' },
       firmware: { value: 'generic', required: true },
       dialect: { value: 'ardupilotmega', required: true },
       dialectSource: { value: 'bundled' },
@@ -35,29 +41,14 @@
         }
       },
       mavlinkVersion: { value: 'auto', required: true },
-      // MAVLink identity fields are wire uint8s (#90): require integers in
-      // range, not just "a number". Source sysid 0 (unknown/broadcast) is not
-      // a valid sender id, so its minimum is 1.
-      sourceSystemId: { value: 255, required: true, validate: mavUint8Validator(1) },
-      sourceComponentId: { value: 190, required: true, validate: mavUint8Validator(0) },
       defaultTargetSystem: { value: 1, required: true, validate: mavUint8Validator(0) },
       defaultTargetComponent: { value: 1, required: true, validate: mavUint8Validator(0) },
       preferredMissionItemType: { value: 'MISSION_ITEM_INT', required: true },
       defaultMissionType: { value: 'mission', required: true },
-      heartbeatType: { value: '' },
-      heartbeatAutopilot: { value: 'MAV_AUTOPILOT_INVALID' },
-      debugProtocol: { value: false },
-      // MAVLink 2 signing (issue #15). The passphrase is a credential (below).
-      signOutbound: { value: false },
-      verifyInbound: { value: false },
-      requireSignature: { value: false },
-      signingLinkId: { value: 0, validate: mavUint8Validator(0) }
-    },
-    credentials: {
-      signingPassphrase: { type: 'password' }
+      debugProtocol: { value: false }
     },
     label: function () {
-      return this.name || 'MAVLink AI Profile';
+      return this.name || 'MAVLink Vehicle Profile';
     },
     oneditprepare: function () {
       const node = this;
@@ -66,6 +57,21 @@
       const $dialect = $('#node-config-input-dialect'); // hidden, persisted value
       const $path = $('#node-config-input-customDialectPath');
       const FALLBACK = ['ardupilotmega', 'common', 'minimal'];
+
+      // Deterministic legacy migration (#228): pre-v3 profiles stored a
+      // combined `profileType` (role + vehicle). Vehicle-shaped values keep
+      // their family; the role values (gcs / companion-computer / generic)
+      // carried no target-vehicle information and map to 'generic'. Applied
+      // only when vehicleFamily is not yet set; saving persists the family and
+      // clears the legacy field.
+      const LEGACY_FAMILY = {
+        copter: 'copter', plane: 'plane', rover: 'rover', boat: 'boat',
+        sub: 'sub', 'antenna-tracker': 'antenna-tracker'
+      };
+      const $family = $('#node-config-input-vehicleFamily');
+      if (!node.vehicleFamily && node.profileType) {
+        $family.val(LEGACY_FAMILY[node.profileType] || 'generic');
+      }
 
       // Keep the persisted `dialect` in sync with the visible controls: a bundled
       // source stores the chosen dialect name; a path source stores 'custom' and
@@ -220,53 +226,6 @@
       });
 
       loadCatalog();
-
-      // MAVLink 2 signing (issue #15): the detail rows (passphrase, link id,
-      // require-signature) are only meaningful once signing or verification is
-      // enabled, so show them together.
-      function toggleSigningRows() {
-        const on = $('#node-config-input-signOutbound').is(':checked') ||
-          $('#node-config-input-verifyInbound').is(':checked');
-        $('.mav-signing-detail').toggle(on);
-        // require-signature only applies while verifying inbound.
-        $('.mav-signing-require').toggle($('#node-config-input-verifyInbound').is(':checked'));
-      }
-      $('#node-config-input-signOutbound').on('change', toggleSigningRows);
-      $('#node-config-input-verifyInbound').on('change', toggleSigningRows);
-      toggleSigningRows();
-
-      // Suggested Source CompID per profile role (issue #106). A companion
-      // computer normally identifies as MAV_COMP_ID_ONBOARD_COMPUTER (191);
-      // every other role keeps 190. When the user switches roles we only
-      // migrate the CompID if it is blank or still equals the previous role's
-      // suggested value — an explicitly customized CompID is never rewritten.
-      const GENERIC_SOURCE_COMPID = 190;
-      const SOURCE_COMPID_BY_PROFILE = { 'companion-computer': 191 };
-      function suggestedCompid(type) {
-        return SOURCE_COMPID_BY_PROFILE[type] || GENERIC_SOURCE_COMPID;
-      }
-      const $profileType = $('#node-config-input-profileType');
-      const $compid = $('#node-config-input-sourceComponentId');
-      let prevProfileType = $profileType.val();
-      // Apply the suggestion once on open too: an existing companion-computer
-      // profile (e.g. imported, or created from a template) would otherwise show
-      // the static 190 default from the defaults block, and saving without
-      // touching the field would persist 190 as an explicit value — bypassing
-      // the role's 191 default. A customized CompID (anything but blank/190) is
-      // left as-is.
-      (function suggestOnOpen() {
-        const cur = String($compid.val()).trim();
-        if (cur === '' || Number(cur) === GENERIC_SOURCE_COMPID) {
-          $compid.val(suggestedCompid(prevProfileType));
-        }
-      })();
-      $profileType.on('change', function () {
-        const cur = String($compid.val()).trim();
-        if (cur === '' || Number(cur) === suggestedCompid(prevProfileType)) {
-          $compid.val(suggestedCompid($profileType.val()));
-        }
-        prevProfileType = $profileType.val();
-      });
     },
     oneditsave: function () {
       // Re-derive the persisted dialect at save time so it is always correct
@@ -278,6 +237,9 @@
         $('#mav-bundled-dialect').val() ||
         (this.dialect && this.dialect !== 'custom' ? this.dialect : 'ardupilotmega');
       $('#node-config-input-dialect').val(source === 'bundled' ? picked : 'custom');
+      // Saving persists vehicleFamily; the legacy combined field is cleared so
+      // the one-time conversion is complete for this profile.
+      this.profileType = '';
     }
   });
 </script>
@@ -285,14 +247,18 @@
 <script type="text/html" data-template-name="mavlink-ai-profile">
   <div class="form-row">
     <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
-    <input type="text" id="node-config-input-name" placeholder="Copter Profile">
+    <input type="text" id="node-config-input-name" placeholder="SITL Copter">
+  </div>
+  <div class="form-tips" style="margin-bottom: 8px;">
+    A <b>Vehicle Profile</b> describes the vehicle being addressed: dialect, firmware, target ids,
+    and vehicle family for modes/parameters. Who <em>this Node-RED runtime</em> is on the wire —
+    source SysID/CompID, heartbeat identity, signing — is a
+    <b>Local Identity</b> config node, selected on the Connection.
   </div>
   <div class="form-row">
-    <label for="node-config-input-profileType">Profile</label>
-    <select id="node-config-input-profileType">
-      <option value="gcs">GCS</option>
-      <option value="generic">Generic</option>
-      <option value="companion-computer">Companion Computer / Onboard Controller</option>
+    <label for="node-config-input-vehicleFamily">Vehicle</label>
+    <select id="node-config-input-vehicleFamily">
+      <option value="generic">Generic / unknown</option>
       <option value="copter">Copter</option>
       <option value="plane">Plane</option>
       <option value="rover">Rover</option>
@@ -301,6 +267,7 @@
       <option value="antenna-tracker">Antenna Tracker</option>
     </select>
   </div>
+  <input type="hidden" id="node-config-input-profileType">
   <div class="form-row">
     <label for="node-config-input-firmware">Firmware</label>
     <select id="node-config-input-firmware">
@@ -350,14 +317,6 @@
     </select>
   </div>
   <div class="form-row">
-    <label for="node-config-input-sourceSystemId">Source SysID</label>
-    <input type="number" id="node-config-input-sourceSystemId">
-  </div>
-  <div class="form-row">
-    <label for="node-config-input-sourceComponentId">Source CompID</label>
-    <input type="number" id="node-config-input-sourceComponentId">
-  </div>
-  <div class="form-row">
     <label for="node-config-input-defaultTargetSystem">Target SysID</label>
     <input type="number" id="node-config-input-defaultTargetSystem">
   </div>
@@ -382,71 +341,32 @@
     </select>
   </div>
   <div class="form-row">
-    <label for="node-config-input-heartbeatType">HB Type</label>
-    <input type="text" id="node-config-input-heartbeatType" placeholder="auto from profile (e.g. MAV_TYPE_GCS)">
-  </div>
-  <div class="form-row">
-    <label for="node-config-input-heartbeatAutopilot">HB Autopilot</label>
-    <input type="text" id="node-config-input-heartbeatAutopilot" placeholder="MAV_AUTOPILOT_INVALID">
-  </div>
-  <div class="form-row">
     <label for="node-config-input-debugProtocol">Debug</label>
     <input type="checkbox" id="node-config-input-debugProtocol" style="display: inline-block; width: auto; vertical-align: top;">
-  </div>
-
-  <hr>
-  <h4 style="margin:6px 0;">MAVLink 2 Signing</h4>
-  <div class="form-row">
-    <label for="node-config-input-signOutbound" title="Sign packets we send (forces MAVLink 2)">Sign outbound</label>
-    <input type="checkbox" id="node-config-input-signOutbound" title="Sign packets we send (forces MAVLink 2)" style="display: inline-block; width: auto; vertical-align: top;">
-  </div>
-  <div class="form-row">
-    <label for="node-config-input-verifyInbound" title="Check signatures on packets we receive">Verify inbound</label>
-    <input type="checkbox" id="node-config-input-verifyInbound" title="Check signatures on packets we receive" style="display: inline-block; width: auto; vertical-align: top;">
-  </div>
-  <div class="form-tips mav-signing-detail" style="margin: -4px 0 8px 105px; width: 70%;">
-    Verifying also enforces the signing spec's <b>anti-replay</b> rules — a signed frame is dropped if its timestamp is older than the last on its <code>(sysid, compid, link&nbsp;id)</code> stream, or more than a minute behind the receiver's clock (rejected as <code>signature-replayed</code>). In-memory; the freshness window covers restarts. No separate switch.
-  </div>
-  <div class="form-row mav-signing-require">
-    <label for="node-config-input-requireSignature" title="Reject unsigned inbound packets">Require signature</label>
-    <input type="checkbox" id="node-config-input-requireSignature" title="Reject unsigned inbound packets" style="display: inline-block; width: auto; vertical-align: top;">
-  </div>
-  <div class="form-row mav-signing-detail">
-    <label for="node-config-input-signingPassphrase">Passphrase</label>
-    <input type="password" id="node-config-input-signingPassphrase" placeholder="shared secret (stored as a credential)">
-  </div>
-  <div class="form-row mav-signing-detail">
-    <label for="node-config-input-signingLinkId">Link ID</label>
-    <input type="number" id="node-config-input-signingLinkId" min="0" max="255" placeholder="0">
-  </div>
-  <div class="form-tips mav-signing-detail">
-    The passphrase is the shared signing key (SHA-256 derived, matching Mission Planner / QGroundControl). It is stored as an encrypted Node-RED credential, not in exported flow JSON. Signing applies to encoded messages; raw <code>sendRaw</code> buffers pass through unsigned.
   </div>
 </script>
 
 <script type="text/html" data-help-name="mavlink-ai-profile">
-  <p>Shared MAVLink vehicle/protocol profile. This owns dialect, MAVLink identity defaults, and vehicle-type defaults. It does not own a transport.</p>
-  <h3>Profile role</h3>
-  <p>The profile role sets this node's own MAVLink identity (its default heartbeat <code>MAV_TYPE</code>). This is independent of the target flight controller's vehicle type, firmware, and dialect — the same profile works with any of them.</p>
-  <ul>
-    <li><b>GCS</b> — ground control station (<code>MAV_TYPE_GCS</code>).</li>
-    <li><b>Companion Computer / Onboard Controller</b> — an onboard companion (e.g. a Raspberry Pi) riding on the vehicle. Its default heartbeat type is <code>MAV_TYPE_ONBOARD_CONTROLLER</code> and its suggested <b>Source CompID</b> is <code>191</code> (<code>MAV_COMP_ID_ONBOARD_COMPUTER</code>). A companion normally uses the <b>same Source SysID as its vehicle</b> (commonly <code>1</code>) while keeping its own distinct CompID, so it appears as a component of that vehicle rather than a separate system. Use it with copters, planes, rovers, boats, or subs on ArduPilot, PX4, or a custom stack — it does not imply a target vehicle type. The suggested CompID is only pre-filled when the field is blank; an explicitly set CompID is never overwritten.</li>
-    <li><b>Copter / Plane / Rover / Boat / Sub / Antenna Tracker</b> — the node identifies as that vehicle type.</li>
-    <li><b>Generic</b> — <code>MAV_TYPE_GENERIC</code> with no role-specific defaults.</li>
-  </ul>
-  <p>The <b>Target SysID/CompID</b> (commonly <code>1</code>/<code>1</code> for the autopilot) are the vehicle you send to, and stay independent of the role above.</p>
+  <p>Shared MAVLink <b>Vehicle Profile</b>: the target-facing half of the configuration. It owns the
+  dialect, firmware, MAVLink version preference, default target ids, vehicle family (for mode tables
+  and parameter metadata), and mission preferences. It does not own a transport.</p>
+  <p>It deliberately owns <b>nothing about the local side</b>: no source SysID/CompID, no local
+  heartbeat identity, no signing. Those belong to the <b>Local Identity</b> config node
+  (<code>mavlink-ai-local-identity</code>), which the Connection references — so selecting a Vehicle
+  Profile can never change who this Node-RED runtime is on the wire. A GCS talking to a Copter gets
+  Copter modes and parameters <em>and</em> a truthful <code>MAV_TYPE_GCS</code> heartbeat.</p>
+  <h3>Vehicle family</h3>
+  <p><b>Copter / Plane / Rover / Boat / Sub / Antenna Tracker</b> select the ArduPilot mode tables and
+  parameter metadata for that vehicle; <b>Generic</b> applies no vehicle-specific metadata. The
+  <b>Target SysID/CompID</b> (commonly <code>1</code>/<code>1</code> for the autopilot) are the
+  vehicle you send to.</p>
+  <p>Profiles saved before v3 stored a combined role/vehicle <code>profileType</code>; opening and
+  saving the profile converts it (vehicle types keep their family; <code>gcs</code>,
+  <code>companion-computer</code>, and <code>generic</code> become <b>Generic</b> — create a Local
+  Identity for the role half).</p>
   <h3>Dialect source</h3>
   <ul>
     <li><b>Bundled</b> — pick from the dialects the loader can serve (discovered dynamically, not hard-coded).</li>
     <li><b>Custom</b> — a single <b>XML path</b> to a MAVLink dialect file the Node-RED process can read (local or mounted; they are not separate modes). Its <code>&lt;include&gt;</code> graph is resolved and the dialect is compiled at runtime. Invalid XML or a missing/circular include fails loudly (the profile marks itself invalid) rather than falling back.</li>
   </ul>
-  <h3>MAVLink 2 signing</h3>
-  <p>Minimal support built on the protocol library's signing primitives. A shared <b>passphrase</b> is the signing key (SHA-256 derived, the same as Mission Planner / QGroundControl); it is stored as an encrypted credential, never in exported flows.</p>
-  <ul>
-    <li><b>Sign outbound</b> — append a valid signature to every encoded packet. This forces MAVLink 2 framing (signed frames are v2-only), even if the version is set to auto/v1. A <b>passphrase is required</b>: enabling this without one is invalid configuration — the profile's connections refuse to start rather than silently sending unsigned packets.</li>
-    <li><b>Verify inbound</b> — check the signature on received signed packets; a bad signature is rejected (surfaced on the In node's errors output as <code>mavlink/rejected</code> with reason <code>signature-invalid</code>).</li>
-    <li><b>Require signature</b> — with verify on, also reject <em>unsigned</em> inbound packets (reason <code>signature-required</code>).</li>
-    <li><b>Link ID</b> — the link id (0–255) written into outbound signatures.</li>
-  </ul>
-  <p>The signature timestamp uses the protocol library's default (wall clock, in the MAVLink 10-µs-since-2015 units). Raw <code>sendRaw</code> buffers are sent as-is and are not signed.</p>
 </script>

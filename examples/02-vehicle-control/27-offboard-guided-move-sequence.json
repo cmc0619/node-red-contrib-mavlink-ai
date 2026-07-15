@@ -10,20 +10,29 @@
     "id": "ai_profile_copter",
     "type": "mavlink-ai-profile",
     "name": "AI Profile - Copter",
-    "profileType": "copter",
     "firmware": "ardupilot",
     "dialect": "ardupilotmega",
     "customDialectPath": "",
     "mavlinkVersion": "auto",
-    "sourceSystemId": 255,
-    "sourceComponentId": 190,
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
     "defaultMissionType": "mission",
+    "debugProtocol": false,
+    "vehicleFamily": "copter"
+  },
+  {
+    "id": "ai_profile_copter__identity",
+    "type": "mavlink-ai-local-identity",
+    "name": "AI Profile - Copter Identity",
+    "role": "custom",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
     "heartbeatType": "",
     "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
-    "debugProtocol": false
+    "signOutbound": false,
+    "verifyInbound": false,
+    "requireSignature": false
   },
   {
     "id": "ai_conn_offboard",
@@ -45,7 +54,11 @@
     "acceptedCompids": "",
     "unmatchedPolicy": "default",
     "routeTable": "",
-    "outboundQueue": true
+    "outboundQueue": true,
+    "localIdentity": "ai_profile_copter__identity",
+    "allowMultipleIdentities": false,
+    "additionalIdentities": "",
+    "signingLinkId": 0
   },
   {
     "id": "n27_note",
@@ -61,7 +74,7 @@
     "id": "n27_i1",
     "type": "inject",
     "z": "flow27",
-    "name": "1 · Start stream (hold 0 m/s)",
+    "name": "1 \u00b7 Start stream (hold 0 m/s)",
     "props": [
       {
         "p": "payload"
@@ -115,7 +128,7 @@
     "id": "n27_i2",
     "type": "inject",
     "z": "flow27",
-    "name": "2 · Set mode GUIDED (PX4: OFFBOARD)",
+    "name": "2 \u00b7 Set mode GUIDED (PX4: OFFBOARD)",
     "props": [
       {
         "p": "payload"
@@ -157,7 +170,7 @@
     "id": "n27_i3",
     "type": "inject",
     "z": "flow27",
-    "name": "3 · One-shot: N10 / Alt5",
+    "name": "3 \u00b7 One-shot: N10 / Alt5",
     "props": [
       {
         "p": "payload"
@@ -211,7 +224,7 @@
     "id": "n27_i4",
     "type": "inject",
     "z": "flow27",
-    "name": "4 · Refresh stream: forward 2 m/s",
+    "name": "4 \u00b7 Refresh stream: forward 2 m/s",
     "props": [
       {
         "p": "payload"
@@ -231,7 +244,7 @@
     "id": "n27_i5",
     "type": "inject",
     "z": "flow27",
-    "name": "5 · Stop stream",
+    "name": "5 \u00b7 Stop stream",
     "props": [
       {
         "p": "payload"

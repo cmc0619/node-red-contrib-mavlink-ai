@@ -5,39 +5,41 @@ const assert = require('node:assert');
 const { MockRED } = require('../helpers/mock-red');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
+const { makeIdentity, enc } = require('../helpers/v3-config');
 const { MavLinkPacketSplitter, MavLinkPacketParser } = require('node-mavlink');
 
-function makeProfile(config = {}) {
-  const RED = new MockRED().loadNodes();
-  return RED.create(
-    'mavlink-ai-profile',
-    Object.assign({ id: 'p1', name: 'P', dialect: 'ardupilotmega', profileType: 'gcs' }, config)
-  );
-}
+/**
+ * HEARTBEAT identity now lives on the Local Identity config node (#195, #228):
+ * a GCS or companion advertises its own MAV_TYPE, never the target vehicle's.
+ */
 
 test('heartbeat fields advertise mavlink_version 3 (#66)', () => {
-  const profile = makeProfile();
-  assert.strictEqual(profile.getHeartbeatFields().mavlink_version, 3);
+  const RED = new MockRED().loadNodes();
+  const id = makeIdentity(RED, { role: 'gcs' });
+  assert.strictEqual(id.getHeartbeatFields().mavlink_version, 3);
 });
 
-test('companion-computer profile heartbeat identifies as onboard controller (#106)', () => {
-  const profile = makeProfile({ profileType: 'companion-computer' });
-  const hb = profile.getHeartbeatFields();
+test('companion identity heartbeat identifies as onboard controller (#106, #195)', () => {
+  const RED = new MockRED().loadNodes();
+  const id = makeIdentity(RED, { role: 'companion' });
+  const hb = id.getHeartbeatFields();
   assert.strictEqual(hb.type, 'MAV_TYPE_ONBOARD_CONTROLLER');
   // The onboard-controller identity must not imply an autopilot (#106).
   assert.strictEqual(hb.autopilot, 'MAV_AUTOPILOT_INVALID');
 });
 
-test('an explicit heartbeat type overrides the companion-computer default (#106)', () => {
-  const profile = makeProfile({ profileType: 'companion-computer', heartbeatType: 'MAV_TYPE_GIMBAL' });
-  assert.strictEqual(profile.getHeartbeatFields().type, 'MAV_TYPE_GIMBAL');
+test('an explicit heartbeat type overrides the role default (#106)', () => {
+  const RED = new MockRED().loadNodes();
+  const id = makeIdentity(RED, { role: 'companion', heartbeatType: 'MAV_TYPE_GIMBAL' });
+  assert.strictEqual(id.getHeartbeatFields().type, 'MAV_TYPE_GIMBAL');
 });
 
-test('companion-computer HEARTBEAT encodes to MAV_TYPE_ONBOARD_CONTROLLER (18) (#106)', { timeout: 2000 }, (t, done) => {
+test('companion HEARTBEAT encodes to MAV_TYPE_ONBOARD_CONTROLLER (18) (#106)', { timeout: 2000 }, (t, done) => {
+  const RED = new MockRED().loadNodes();
   const bundle = loadDialect('ardupilotmega');
-  const profile = makeProfile({ profileType: 'companion-computer' });
-  const codec = new MavlinkCodec({ bundle, version: 'v2', sysid: 1, compid: 191 });
-  const buf = codec.encode('HEARTBEAT', profile.getHeartbeatFields());
+  const id = makeIdentity(RED, { role: 'companion' });
+  const codec = new MavlinkCodec({ bundle, version: 'v2' });
+  const buf = enc(codec, 'HEARTBEAT', id.getHeartbeatFields(), { sysid: 1, compid: 191 });
 
   const splitter = new MavLinkPacketSplitter({}, { magicNumbers: bundle.magicNumbers });
   const parser = new MavLinkPacketParser();
@@ -53,10 +55,11 @@ test('companion-computer HEARTBEAT encodes to MAV_TYPE_ONBOARD_CONTROLLER (18) (
 });
 
 test('encoded HEARTBEAT round-trips mavlink_version = 3 (#66)', { timeout: 2000 }, (t, done) => {
+  const RED = new MockRED().loadNodes();
   const bundle = loadDialect('ardupilotmega');
-  const profile = makeProfile();
-  const codec = new MavlinkCodec({ bundle, version: 'v2', sysid: 1, compid: 1 });
-  const buf = codec.encode('HEARTBEAT', profile.getHeartbeatFields());
+  const id = makeIdentity(RED, { role: 'gcs' });
+  const codec = new MavlinkCodec({ bundle, version: 'v2' });
+  const buf = enc(codec, 'HEARTBEAT', id.getHeartbeatFields(), { sysid: 1, compid: 1 });
 
   const splitter = new MavLinkPacketSplitter({}, { magicNumbers: bundle.magicNumbers });
   const parser = new MavLinkPacketParser();

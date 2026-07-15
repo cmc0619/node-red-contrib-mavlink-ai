@@ -451,7 +451,7 @@ test('mission workflow sends carry the profile reference end-to-end', async () =
   assert.strictEqual(res.payload.acked, true);
   assert.strictEqual(conn.sent[0].name, 'MISSION_CLEAR_ALL');
   for (const m of conn.sent) {
-    assert.strictEqual(m.profile, 'p_routed');
+    assert.strictEqual(m.vehicleProfile, 'p_routed', 'legacy profile alias maps to vehicleProfile');
   }
 });
 

@@ -6,6 +6,7 @@ const { MockRED } = require('../helpers/mock-red');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { buildPayload } = require('../../lib/payload/payload');
 const { LockManager } = require('../../lib/runtime/lock-manager');
+const { fakeIdentity } = require('../helpers/v3-config');
 
 const enums = loadDialect('ardupilotmega').enums;
 
@@ -16,6 +17,7 @@ function fakeConnection() {
     conn.sent.push(m);
     return Promise.resolve();
   };
+  conn.resolveOutboundIdentity = () => fakeIdentity();
   return conn;
 }
 
@@ -43,6 +45,7 @@ function ackConnection() {
       cb({ topic: 'mavlink/COMMAND_ACK', payload: { name: 'COMMAND_ACK', sysid, compid: 1, fields } });
     }
   };
+  conn.resolveOutboundIdentity = () => fakeIdentity();
   return conn;
 }
 
@@ -53,8 +56,6 @@ function setup(payloadConfig, { withConnection = false, ack = false } = {}) {
     name: 'Copter',
     dialect: 'ardupilotmega',
     mavlinkVersion: 'v2',
-    sourceSystemId: 255,
-    sourceComponentId: 190,
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   });

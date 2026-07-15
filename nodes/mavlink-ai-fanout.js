@@ -123,14 +123,20 @@ module.exports = function registerMavlinkAiFanout(RED) {
         const e = toMavlinkError(err, 'FANOUT_FAILED');
         return sendError(msg, send, done, e.code, e.message, e.context);
       }
-      // `profile` carries the config-node id — the canonical reference the
-      // connection resolves a codec by. The name is display-only.
-      const decorated = messages.map((m) =>
-        Object.assign(
-          { profile: node.profile && node.profile.id, profile_name: node.profile && node.profile.name },
+      // `vehicleProfile` carries the config-node id — the canonical reference
+      // the connection resolves a codec by. The name is display-only. An
+      // explicit localIdentity request rides along untouched; it is never
+      // derived from the Vehicle Profile (#228).
+      const decorated = messages.map((m) => {
+        const out = Object.assign(
+          { vehicleProfile: node.profile && node.profile.id, vehicleProfileName: node.profile && node.profile.name },
           m
-        )
-      );
+        );
+        if (incoming.localIdentity !== undefined && incoming.localIdentity !== null && incoming.localIdentity !== '') {
+          out.localIdentity = incoming.localIdentity;
+        }
+        return out;
+      });
 
       // Dry-run: show exactly what would be sent (per issue #46, formation and
       // frame mistakes should be visible before anything reaches a vehicle).
@@ -153,6 +159,16 @@ module.exports = function registerMavlinkAiFanout(RED) {
             'Broadcast (target_system 0) cannot collect per-vehicle ACKs — use fan-out mode, or disable await acks.');
         }
         const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
+        // The Local Identity these workflows transmit as (#228): the explicit
+        // payload request when present, else the connection default. Its
+        // source ids gate per-vehicle ACK matching (#99).
+        let source;
+        try {
+          source = node.connection.resolveOutboundIdentity(incoming.localIdentity).getIdentity();
+        } catch (err) {
+          const e = toMavlinkError(err, 'LOCAL_IDENTITY_UNRESOLVED');
+          return sendError(msg, send, done, e.code, e.message, e.context);
+        }
         const results = {};
         const accepted = [];
         const failed = [];
@@ -180,13 +196,15 @@ module.exports = function registerMavlinkAiFanout(RED) {
           try {
             workflow = new CommandSend({
               connection: node.connection,
-              /** The connection must encode these sends with this node's profile, not its own default. */
-              profile: node.profile.id,
+              /** The connection must encode these sends with this node's Vehicle Profile, not its own default. */
+              vehicleProfile: node.profile.id,
+              /** Explicit identity request passes through; blank means the connection default. */
+              localIdentity: incoming.localIdentity,
               targetSystem: sysid,
               targetComponent: m.target_component,
               /** Our own identity, so an ACK addressed to another GCS sharing this link doesn't settle the workflow (#99). */
-              sourceSystem: defaults.sourceSystemId,
-              sourceComponent: defaults.sourceComponentId,
+              sourceSystem: source.sysid,
+              sourceComponent: source.compid,
               command: m.fields.command,
               fields: m.fields,
               useInt,

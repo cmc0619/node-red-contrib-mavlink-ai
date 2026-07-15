@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { MockRED } = require('../helpers/mock-red');
+const { fakeIdentity } = require('../helpers/v3-config');
 const { LockManager } = require('../../lib/runtime/lock-manager');
 
 /**
@@ -93,6 +94,7 @@ function setupWithSends({ profile, config } = {}) {
     sent: [],
     lockNames: [],
     resolveProfile: (ref) => (profile && ref === profile.id ? profile : { name: ref }),
+    resolveOutboundIdentity: () => fakeIdentity(),
     acquireLock(name) {
       conn.lockNames.push(name);
       return { release: () => {} };
@@ -116,7 +118,7 @@ test('mission node explicit profile drives defaults, lock key, and sends', async
   await RED.inject(node, { payload: { action: 'clear' } });
   const sent = conn.sent[0];
   assert.strictEqual(sent.name, 'MISSION_CLEAR_ALL');
-  assert.strictEqual(sent.profile, 'p2');
+  assert.strictEqual(sent.vehicleProfile, 'p2');
   assert.strictEqual(sent.fields.target_system, 9);
   assert.strictEqual(sent.fields.mission_type, 1); // fence, from the override's defaults
   assert.match(conn.lockNames[0], /:p2:/);
@@ -137,7 +139,7 @@ test('mission node route-resolves the target profile when no override is set', a
   conn.getProfileForPacket = ({ sysid }) => (sysid === 2 ? routed : conn.profile);
   await RED.inject(node, { payload: { action: 'clear', target_system: 2 } });
   const sent = conn.sent[0];
-  assert.strictEqual(sent.profile, 'p_routed');
+  assert.strictEqual(sent.vehicleProfile, 'p_routed');
   assert.strictEqual(sent.fields.target_system, 2);
   assert.strictEqual(sent.fields.mission_type, 2); // rally, from the routed profile's defaults
   assert.match(conn.lockNames[0], /:p_routed:/);
@@ -154,6 +156,7 @@ test('the mission lock is released exactly once when the success-path send throw
     profile: defaultProfile,
     sent: [],
     resolveProfile: (ref) => (ref === 'p1' ? defaultProfile : { name: ref }),
+    resolveOutboundIdentity: () => fakeIdentity(),
     acquireLock(key) {
       const handle = locks.acquire(key, 'm2');
       return {

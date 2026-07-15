@@ -21,8 +21,6 @@ function setup(moveConfig, { withConnection = false } = {}) {
     name: 'Copter',
     dialect: 'ardupilotmega',
     mavlinkVersion: 'v2',
-    sourceSystemId: 255,
-    sourceComponentId: 190,
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   });
@@ -47,7 +45,7 @@ test('local position build-only emits mavlink/send with negated z', async () => 
   assert.strictEqual(out.fields.x, 5);
   assert.strictEqual(out.fields.z, -10);
   assert.strictEqual(out.fields.type_mask, 3576);
-  assert.strictEqual(out.profile, 'p1');
+  assert.strictEqual(out.vehicleProfile, 'p1');
   assert.strictEqual(out.target_system, 1);
 });
 
@@ -98,7 +96,7 @@ test('with a connection the node sends directly and emits nothing', async () => 
   assert.strictEqual(collected.length, 0);
   assert.strictEqual(conn.sent.length, 1);
   assert.strictEqual(conn.sent[0].name, 'SET_POSITION_TARGET_LOCAL_NED');
-  assert.strictEqual(conn.sent[0].profile, 'p1');
+  assert.strictEqual(conn.sent[0].vehicleProfile, 'p1');
   assert.strictEqual(conn.sent[0].fields.vx, 1);
   assert.strictEqual(conn.sent[0].fields.vz, -0.5);
 });

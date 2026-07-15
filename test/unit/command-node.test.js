@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { MockRED } = require('../helpers/mock-red');
+const { fakeIdentity } = require('../helpers/v3-config');
 
 function setup(commandConfig) {
   const RED = new MockRED().loadNodes();
@@ -11,8 +12,6 @@ function setup(commandConfig) {
     name: 'Copter',
     dialect: 'ardupilotmega',
     mavlinkVersion: 'v2',
-    sourceSystemId: 255,
-    sourceComponentId: 190,
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   });
@@ -34,8 +33,8 @@ test('build-only output references the profile by config-node id, name for displ
   const { RED, node } = setup({ command: 'arm' });
   const { collected } = await RED.inject(node, { payload: {} });
   const out = collected[0].payload;
-  assert.strictEqual(out.profile, 'p1');
-  assert.strictEqual(out.profile_name, 'Copter');
+  assert.strictEqual(out.vehicleProfile, 'p1');
+  assert.strictEqual(out.vehicleProfileName, 'Copter');
 });
 
 test('preset param1 override is ignored (safety-critical)', async () => {
@@ -86,8 +85,6 @@ function setupWithFirmware(commandConfig, profileExtra) {
     name: 'Copter',
     dialect: 'ardupilotmega',
     mavlinkVersion: 'v2',
-    sourceSystemId: 255,
-    sourceComponentId: 190,
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   }, profileExtra));
@@ -519,7 +516,7 @@ test('build-only payload carries the canonical profile config-node id', async ()
   assert.strictEqual(collected[0].topic, 'mavlink/send');
   // The id (not the display name) resolves unambiguously on the sending
   // connection, even with duplicate profile names.
-  assert.strictEqual(collected[0].payload.profile, 'p1');
+  assert.strictEqual(collected[0].payload.vehicleProfile, 'p1');
 });
 
 test('await-ack workflow sends carry the node profile id', async () => {
@@ -541,6 +538,7 @@ test('await-ack workflow sends carry the node profile id', async () => {
       return 1;
     };
     this.unsubscribe = () => true;
+    this.resolveOutboundIdentity = () => fakeIdentity();
     this.send = (m) => {
       sent.push(m);
       queueMicrotask(() =>
@@ -563,7 +561,7 @@ test('await-ack workflow sends carry the node profile id', async () => {
   const { collected } = await RED.inject(node, { payload: {} });
   assert.strictEqual(collected[0].topic, 'command/ack');
   assert.strictEqual(sent[0].name, 'COMMAND_LONG');
-  assert.strictEqual(sent[0].profile, 'p1');
+  assert.strictEqual(sent[0].vehicleProfile, 'p1');
 });
 
 /**

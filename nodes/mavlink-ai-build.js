@@ -65,7 +65,14 @@ module.exports = function registerMavlinkAiBuild(RED) {
         if (msg.payload.fields && typeof msg.payload.fields === 'object') {
           payloadFields = msg.payload.fields;
         } else {
-          const { name: _ignoredName, fields: _ignoredFields, ...rest } = msg.payload;
+          const {
+            name: _ignoredName,
+            fields: _ignoredFields,
+            vehicleProfile: _ignoredVehicleProfile,
+            localIdentity: _ignoredLocalIdentity,
+            profile: _ignoredProfile,
+            ...rest
+          } = msg.payload;
           payloadFields = rest;
         }
       }
@@ -86,14 +93,20 @@ module.exports = function registerMavlinkAiBuild(RED) {
       }
       const defaults = node.profile.getDefaults();
 
-      // `profile` carries the config-node id — the canonical reference the
-      // connection resolves a codec by. The name is display-only.
+      // `vehicleProfile` carries the config-node id — the canonical reference
+      // the connection resolves a codec by. The name is display-only. An
+      // explicit localIdentity request on the incoming payload rides along
+      // untouched; it is never derived from the Vehicle Profile (#228).
       const out = {
         name: clazz.MSG_NAME,
-        profile: node.profile.id,
-        profile_name: node.profile.name,
+        vehicleProfile: node.profile.id,
+        vehicleProfileName: node.profile.name,
         fields
       };
+      const requestedIdentity = msg.payload && typeof msg.payload === 'object' ? msg.payload.localIdentity : undefined;
+      if (requestedIdentity !== undefined && requestedIdentity !== null && requestedIdentity !== '') {
+        out.localIdentity = requestedIdentity;
+      }
       if (node.applyDefaults) {
         out.target_system = firstDefined(merged.target_system, defaults.defaultTargetSystem, 1);
         out.target_component = firstDefined(merged.target_component, defaults.defaultTargetComponent, 1);
