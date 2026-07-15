@@ -1272,15 +1272,17 @@ module.exports = function registerMavlinkAiConnection(RED) {
         );
         return;
       }
-      /** Send one heartbeat; surface failures through the error emitter. */
+      /**
+       * Send one heartbeat; surface failures through the error emitter. Sent at
+       * background priority (3) but coalesced: if a prior heartbeat is still
+       * queued behind slower-draining traffic, this tick supersedes it instead
+       * of stacking a second stale copy, and age promotion in the outbound queue
+       * keeps the surviving heartbeat from being starved by that traffic (#150).
+       */
       const tick = () => {
         node
           .send(
             { name: 'HEARTBEAT', fields: node.profile.getHeartbeatFields() },
-            // Background priority, but coalesced: if a prior heartbeat is still
-            // queued behind slower-draining traffic, this tick supersedes it
-            // instead of stacking a second stale copy (#150). Age promotion in
-            // the queue keeps the surviving heartbeat from being starved.
             { priority: 3, coalesceKey: 'heartbeat' }
           )
           .catch((err) => {
