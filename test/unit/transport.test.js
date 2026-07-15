@@ -26,7 +26,12 @@ test('factory maps transport types (no serialport required for udp/tcp)', () => 
   assert.ok(createTransport({ transport: 'serial' }) instanceof SerialTransport);
 });
 
-test('factory forwards reconnect:false to the UDP transport so retries can be disabled (#149)', () => {
+test('factory forwards the reconnect flag to the UDP transport (#149)', () => {
+  /**
+   * Bind recovery itself is not gated on this flag (the editor hides Reconnect
+   * for udp), but the factory still forwards it for API consistency with the
+   * connection-oriented transports.
+   */
   assert.strictEqual(createTransport({ transport: 'udp-in', reconnect: false }).reconnect, false);
   assert.strictEqual(createTransport({ transport: 'udp-in' }).reconnect, true);
 });
@@ -275,7 +280,11 @@ test('udp bind failure is not terminal: it retries and binds once the port frees
   const blocker = dgram.createSocket({ type: 'udp4' });
   const port = await new Promise((resolve) => blocker.bind(0, '127.0.0.1', () => resolve(blocker.address().port)));
 
-  const transport = new UdpTransport({ mode: 'udp-in', bindAddress: '127.0.0.1', bindPort: port, reconnectDelayMs: 15 });
+  /**
+   * reconnect:false on purpose — the editor hides the Reconnect control for all
+   * udp modes, so bind recovery must not be gated on that hidden flag (#149).
+   */
+  const transport = new UdpTransport({ mode: 'udp-in', bindAddress: '127.0.0.1', bindPort: port, reconnect: false, reconnectDelayMs: 15 });
   /** The reconnect timer is unref'd (must not hold the process open); keep the test's loop alive so it can fire. */
   const keepAlive = setInterval(() => {}, 5);
   t.after(() => {
@@ -292,6 +301,37 @@ test('udp bind failure is not terminal: it retries and binds once the port frees
   assert.ok(errors.some((e) => e.code === 'UDP_ERROR'), 'the bind failure was surfaced');
 
   /** Free the port; a subsequent retry must succeed and bind. */
+  await new Promise((resolve) => blocker.close(resolve));
+  const addr = await new Promise((resolve) => transport.on('listening', resolve));
+  assert.strictEqual(addr.port, port);
+});
+
+test('tcp-server listen failure is not terminal: it retries and listens once the port frees (#149)', async (t) => {
+  /** Occupy a fixed port so the transport's first listen hits EADDRINUSE. */
+  const blocker = net.createServer();
+  const port = await new Promise((resolve) => blocker.listen(0, '127.0.0.1', () => resolve(blocker.address().port)));
+
+  /**
+   * reconnect:false on purpose — the editor hides the Reconnect control for
+   * tcp-server, so bind recovery must not be gated on that hidden flag (#149).
+   */
+  const transport = new TcpTransport({ mode: 'tcp-server', host: '127.0.0.1', port, reconnect: false, reconnectDelayMs: 15 });
+  /** The reconnect timer is unref'd; keep the test's loop alive so it can fire. */
+  const keepAlive = setInterval(() => {}, 5);
+  t.after(() => {
+    clearInterval(keepAlive);
+    return transport.stop();
+  });
+  const errors = [];
+  transport.on('error', (e) => errors.push(e));
+
+  /** First listen fails → a retry is scheduled (server mode was previously terminal). */
+  const reconnecting = new Promise((resolve) => transport.once('reconnecting', resolve));
+  transport.start();
+  await reconnecting;
+  assert.ok(errors.some((e) => e.code === 'TCP_ERROR'), 'the listen failure was surfaced');
+
+  /** Free the port; a subsequent retry must succeed and listen. */
   await new Promise((resolve) => blocker.close(resolve));
   const addr = await new Promise((resolve) => transport.on('listening', resolve));
   assert.strictEqual(addr.port, port);
