@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const { MockRED } = require('../helpers/mock-red');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { buildPayload } = require('../../lib/payload/payload');
+const { LockManager } = require('../../lib/runtime/lock-manager');
 
 const enums = loadDialect('ardupilotmega').enums;
 
@@ -18,7 +19,34 @@ function fakeConnection() {
   return conn;
 }
 
-function setup(payloadConfig, { withConnection = false } = {}) {
+/**
+ * A fuller connection stand-in for the await-ack path (#129): it exposes the
+ * lock/subscribe/unsubscribe surface CommandSend needs and can deliver a
+ * COMMAND_ACK to the workflow's subscription.
+ */
+function ackConnection() {
+  const conn = { id: 'conn1', name: 'Conn', sent: [], _subs: new Map(), _id: 1, locks: new LockManager() };
+  conn.acquireLock = (key, owner) => conn.locks.acquire(key, owner);
+  conn.releaseLock = (key, owner) => conn.locks.release(key, owner);
+  conn.subscribe = (filter, cb) => {
+    const id = conn._id++;
+    conn._subs.set(id, cb);
+    return id;
+  };
+  conn.unsubscribe = (id) => conn._subs.delete(id);
+  conn.send = (m) => {
+    conn.sent.push(m);
+    return Promise.resolve();
+  };
+  conn.deliverAck = (fields, sysid = 1) => {
+    for (const cb of conn._subs.values()) {
+      cb({ topic: 'mavlink/COMMAND_ACK', payload: { name: 'COMMAND_ACK', sysid, compid: 1, fields } });
+    }
+  };
+  return conn;
+}
+
+function setup(payloadConfig, { withConnection = false, ack = false } = {}) {
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-profile', {
     id: 'p1',
@@ -32,7 +60,7 @@ function setup(payloadConfig, { withConnection = false } = {}) {
   });
   let conn = null;
   if (withConnection) {
-    conn = fakeConnection();
+    conn = ack ? ackConnection() : fakeConnection();
     RED._nodes.set('conn1', conn);
   }
   const node = RED.create(
@@ -127,6 +155,99 @@ test('cam_trigger_distance sets the distance and rejects a negative value', asyn
   const bad = await RED2.inject(n2, { payload: { distance: -5 } });
   assert.strictEqual(bad.collected[0].topic, 'mavlink/error');
   assert.strictEqual(bad.collected[0].payload.code, 'BAD_TRIGGER_DISTANCE');
+});
+
+test('gimbal_manager_attitude builds a quaternion GIMBAL_MANAGER_SET_ATTITUDE with NaN rates (#129)', () => {
+  const att = buildPayload('gimbal_manager_attitude', {
+    enums, roll: 0, pitch: -90, yaw: 0, yawLock: true, targetSystem: 1, targetComponent: 1
+  });
+  assert.strictEqual(att.name, 'GIMBAL_MANAGER_SET_ATTITUDE');
+  assert.strictEqual(att.fields.flags, 16);
+  assert.strictEqual(att.fields.q.length, 4);
+  /** -90° pitch (ZYX) → q = [cos45, 0, -sin45, 0]. */
+  const h = Math.SQRT1_2;
+  assert.ok(Math.abs(att.fields.q[0] - h) < 1e-9, 'w');
+  assert.ok(Math.abs(att.fields.q[1] - 0) < 1e-9, 'x');
+  assert.ok(Math.abs(att.fields.q[2] - -h) < 1e-9, 'y');
+  assert.ok(Math.abs(att.fields.q[3] - 0) < 1e-9, 'z');
+  assert.ok(Number.isNaN(att.fields.angular_velocity_x), 'unused rate is NaN (ignore), not 0');
+  assert.ok(Number.isNaN(att.fields.angular_velocity_y));
+  assert.ok(Number.isNaN(att.fields.angular_velocity_z));
+});
+
+test('camera_zoom / camera_focus map friendly types and reject unknown ones (#129)', () => {
+  const zoom = buildPayload('camera_zoom', { enums, zoomType: 'range', zoomValue: 60, targetSystem: 1, targetComponent: 1 });
+  assert.strictEqual(zoom.name, 'COMMAND_LONG');
+  assert.strictEqual(zoom.fields.param1, 2, 'ZOOM_TYPE_RANGE');
+  assert.strictEqual(zoom.fields.param2, 60);
+  const focus = buildPayload('camera_focus', { enums, focusType: 'auto', targetSystem: 1, targetComponent: 1 });
+  assert.strictEqual(focus.fields.param1, 4, 'FOCUS_TYPE_AUTO');
+  assert.throws(() => buildPayload('camera_zoom', { enums, zoomType: 'bogus' }), (e) => e.code === 'BAD_ZOOM_TYPE');
+  assert.throws(() => buildPayload('camera_focus', { enums, focusType: 'bogus' }), (e) => e.code === 'BAD_FOCUS_TYPE');
+});
+
+test('winch / parachute map friendly actions and reject unknown ones (#129)', () => {
+  const winch = buildPayload('winch', { enums, instance: 1, winchAction: 'length', length: 3, rate: 0.5, targetSystem: 1, targetComponent: 1 });
+  assert.strictEqual(winch.name, 'COMMAND_LONG');
+  assert.strictEqual(winch.fields.param2, 1, 'WINCH_RELATIVE_LENGTH_CONTROL');
+  assert.strictEqual(winch.fields.param3, 3);
+  assert.strictEqual(winch.fields.param4, 0.5);
+  const chute = buildPayload('parachute', { enums, parachuteAction: 'release', targetSystem: 1, targetComponent: 1 });
+  assert.strictEqual(chute.fields.param1, 2, 'PARACHUTE_RELEASE');
+  assert.throws(() => buildPayload('winch', { enums, winchAction: 'bogus' }), (e) => e.code === 'BAD_WINCH_ACTION');
+  assert.throws(() => buildPayload('parachute', { enums, parachuteAction: 'bogus' }), (e) => e.code === 'BAD_PARACHUTE_ACTION');
+});
+
+test('repeat_servo pulses count/period and rejects a missing PWM; repeat_relay omits PWM (#129)', () => {
+  const servo = buildPayload('repeat_servo', { enums, instance: 2, pwm: 1800, count: 4, period: 2, targetSystem: 1, targetComponent: 1 });
+  assert.strictEqual(servo.fields.param1, 2);
+  assert.strictEqual(servo.fields.param2, 1800);
+  assert.strictEqual(servo.fields.param3, 4);
+  assert.strictEqual(servo.fields.param4, 2);
+  assert.throws(() => buildPayload('repeat_servo', { enums, instance: 1 }), (e) => e.code === 'BAD_SERVO');
+  const relay = buildPayload('repeat_relay', { enums, instance: 0, count: 3, period: 1, targetSystem: 1, targetComponent: 1 });
+  assert.strictEqual(relay.fields.param1, 0);
+  assert.strictEqual(relay.fields.param2, 3);
+  assert.strictEqual(relay.fields.param3, 1);
+});
+
+test('await-ack resolves the COMMAND_ACK onto the output for a command verb (#129)', async () => {
+  const { RED, node, conn } = setup(
+    { action: 'gripper', instance: '1', gripAction: 'grab', awaitAck: true, timeoutMs: '50', maxRetries: '1' },
+    { withConnection: true, ack: true }
+  );
+  const injected = RED.inject(node, { payload: {} });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.strictEqual(conn.sent.length, 1, 'command sent once');
+  assert.strictEqual(conn.sent[0].name, 'COMMAND_LONG');
+  conn.deliverAck({ command: conn.sent[0].fields.command, result: 0 });
+  const { collected } = await injected;
+  assert.strictEqual(collected[0].topic, 'command/ack');
+  assert.strictEqual(collected[0].payload.result, 0);
+});
+
+test('await-ack surfaces a rejected command as a structured error (#129)', async () => {
+  const { RED, node, conn } = setup(
+    { action: 'gripper', gripAction: 'grab', awaitAck: true, timeoutMs: '50', maxRetries: '0' },
+    { withConnection: true, ack: true }
+  );
+  const injected = RED.inject(node, { payload: {} });
+  await new Promise((r) => setTimeout(r, 0));
+  /** MAV_RESULT_DENIED = 3. */
+  conn.deliverAck({ command: conn.sent[0].fields.command, result: 3 });
+  const { collected } = await injected;
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'COMMAND_REJECTED');
+});
+
+test('await-ack is skipped for a message verb (gimbal-manager stays fire-and-forget) (#129)', async () => {
+  const { RED, node, conn } = setup(
+    { action: 'gimbal_manager_aim', pitch: '-45', awaitAck: true },
+    { withConnection: true, ack: true }
+  );
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected.length, 0, 'no ack awaited for a non-COMMAND_LONG verb');
+  assert.strictEqual(conn.sent[0].name, 'GIMBAL_MANAGER_SET_PITCHYAW');
 });
 
 test('missing profile emits MISSING_PROFILE', async () => {
