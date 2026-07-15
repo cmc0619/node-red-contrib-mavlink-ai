@@ -231,7 +231,8 @@ test('agePromotionMs Infinity disables aging (strict priority)', async () => {
   queue.enqueue(Buffer.from([10]), 2).catch(() => {});
 
   for (let i = 0; i < 8; i += 1) {
-    clock += 100000; // huge jumps: aging would fire long ago if it were enabled
+    /** Huge clock jumps: aging would have fired long ago if it were enabled. */
+    clock += 100000;
     release();
     await new Promise((r) => setImmediate(r));
     queue.enqueue(Buffer.from([20 + i]), 2).catch(() => {});
