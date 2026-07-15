@@ -176,3 +176,31 @@ test('send does not mutate the caller message fields (#84)', async (t) => {
   await conn.send({ name: 'COMMAND_LONG', target_system: 2, fields });
   assert.strictEqual(fields.target_system, '2', 'caller fields object left untouched');
 });
+
+test('a broadcast message (HEARTBEAT) carries no routing target, so udp-peer fans it out (#148)', async (t) => {
+  const { RED, conn, sent } = setup();
+  t.after(() => RED.close(conn));
+
+  /** HEARTBEAT has no target_system field. Despite the profile's
+   * defaultTargetSystem (7), the transport routing metadata must be undefined
+   * so a udp-peer transport broadcasts to every learned peer instead of
+   * unicasting to sysid 7's endpoint (or the last-sender fallback). */
+  await conn.send({
+    name: 'HEARTBEAT',
+    fields: { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 }
+  });
+  assert.strictEqual(sent.length, 1);
+  assert.strictEqual(sent[0].meta.targetSystem, undefined, 'untargeted broadcast carries no routing target');
+});
+
+test('an addressed message still routes to its target via the profile default (#148 regression)', async (t) => {
+  const { RED, conn, sent } = setup();
+  t.after(() => RED.close(conn));
+
+  /** COMMAND_LONG has a target_system field, so with neither a top-level nor a
+   * field-level target the profile default (7) fills in and rides as routing
+   * metadata — the broadcast carve-out must not disturb addressed messages. */
+  await conn.send({ name: 'COMMAND_LONG', fields: { ...COMMAND_FIELDS } });
+  assert.strictEqual(sent.length, 1);
+  assert.strictEqual(sent[0].meta.targetSystem, 7, 'addressed message keeps its routing target');
+});

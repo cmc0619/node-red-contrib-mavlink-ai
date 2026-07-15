@@ -1026,9 +1026,16 @@ module.exports = function registerMavlinkAiConnection(RED) {
       } catch (err) {
         return Promise.reject(toMavlinkError(err, 'ENCODE_FAILED'));
       }
-      // The addressed sysid rides along so a udp-peer transport can route the
-      // packet to that vehicle's endpoint instead of the last sender (#21).
-      return node._queue.enqueue(buffer, options.priority, { targetSystem });
+      /**
+       * The addressed sysid rides along so a udp-peer transport can route the
+       * packet to that vehicle's endpoint instead of the last sender (#21).
+       * Only messages that actually carry a target_system field are addressed;
+       * a broadcast message (HEARTBEAT, ...) must not inherit the profile's
+       * default target as routing metadata, or a udp-peer transport would
+       * unicast it to that one vehicle instead of fanning it out to all (#148).
+       */
+      const routingTargetSystem = codec.addressesTarget(message.name) ? targetSystem : undefined;
+      return node._queue.enqueue(buffer, options.priority, { targetSystem: routingTargetSystem });
     };
 
     /**
