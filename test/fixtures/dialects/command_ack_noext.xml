@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<!--
+  COMMAND_ACK with the same six fields as common_replica.xml but WITHOUT the
+  <extensions/> marker, so the trailing fields are ordinary base fields. Used to
+  prove the compiler excludes extension fields from CRC_EXTRA and preserves their
+  source order: dropping the marker size-sorts the fields and changes the magic
+  number even though the field set is identical (#152 item 3).
+-->
+<mavlink>
+  <version>3</version>
+  <messages>
+    <message id="77" name="COMMAND_ACK">
+      <description>Report status of a command (no extensions).</description>
+      <field type="uint16_t" name="command">Command ID.</field>
+      <field type="uint8_t" name="result">Result of command.</field>
+      <field type="uint8_t" name="progress">Progress (0..100).</field>
+      <field type="int32_t" name="result_param2">Additional result information.</field>
+      <field type="uint8_t" name="target_system">System which requested the command.</field>
+      <field type="uint8_t" name="target_component">Component which requested the command.</field>
+    </message>
+  </messages>
+</mavlink>
