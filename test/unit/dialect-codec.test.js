@@ -164,6 +164,29 @@ test('encode rejects unresolvable enum-name strings with the field named (#36)',
   assert.ok(Buffer.isBuffer(statustext));
 });
 
+test('encode accepts a decimal string on a float field but rejects it on an integer field (#153)', async () => {
+  const b = loadDialect('ardupilotmega');
+  const codec = new MavlinkCodec({ bundle: b, version: 'v2', sysid: 255, compid: 190 });
+  /** param1 is a float field: "1.5" (as from an MQTT/CSV source) must encode as 1.5. */
+  const decoded = await roundTrip(codec, 'COMMAND_LONG', {
+    command: 'MAV_CMD_COMPONENT_ARM_DISARM',
+    target_system: 1,
+    target_component: 1,
+    param1: '1.5'
+  });
+  assert.strictEqual(decoded.fields.param1, 1.5);
+  /** target_system is an integer field: a fractional string is still a typo. */
+  assert.throws(
+    () => codec.encode('COMMAND_LONG', { command: 'MAV_CMD_COMPONENT_ARM_DISARM', target_system: '1.5', target_component: 1 }),
+    (e) => e.code === 'UNRESOLVED_FIELD_VALUE'
+  );
+  /** "NaN"/"Infinity" strings are not finite values and stay rejected on floats. */
+  assert.throws(
+    () => codec.encode('COMMAND_LONG', { command: 'MAV_CMD_COMPONENT_ARM_DISARM', target_system: 1, target_component: 1, param1: 'NaN' }),
+    (e) => e.code === 'UNRESOLVED_FIELD_VALUE'
+  );
+});
+
 /**
  * Round-trip a message through encode + the streaming decoder.
  *
