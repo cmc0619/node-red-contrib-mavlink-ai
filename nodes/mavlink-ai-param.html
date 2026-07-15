@@ -112,6 +112,29 @@
     },
     oneditprepare: function () {
       /**
+       * Resolve the firmware/vehicle that decide which parameter-definition
+       * catalog applies (issue #125): the node's own Profile override if set,
+       * otherwise the profile the selected Connection carries. Returns empty
+       * strings when neither is resolvable, which the catalog treats as
+       * "no source" and the editor keeps its free-text/numeric behavior.
+       *
+       * @returns {{firmware: string, vehicleType: string}}
+       */
+      function paramContext() {
+        let profileId = $('#node-input-profile').val();
+        if (!profileId) {
+          const conn = $('#node-input-connection').val();
+          const connNode = conn ? RED.nodes.node(conn) : null;
+          profileId = connNode ? connNode.profile : '';
+        }
+        const profileNode = profileId ? RED.nodes.node(profileId) : null;
+        return {
+          firmware: profileNode && profileNode.firmware ? profileNode.firmware : '',
+          vehicleType: profileNode && profileNode.profileType ? profileNode.profileType : ''
+        };
+      }
+
+      /**
        * Re-run the Value field's validator so its range check reflects the
        * current Action / Param type, which those cross-field validators read
        * from the live form controls.
@@ -119,6 +142,283 @@
       function revalidateValue() {
         $('#node-input-paramValue').trigger('change');
       }
+
+      /** Monotonic guard so a superseded param-detail response can't overwrite a newer one. */
+      let detailRequestId = 0;
+      /**
+       * Generation bumped on every Connection/Profile/Action change. The catalog
+       * status and download callbacks capture it and ignore their response if the
+       * context has moved on, so a delayed reply can't restore a stale source's
+       * URL row or status for a profile the user already switched away from.
+       */
+      let ctxRequestId = 0;
+
+      /**
+       * Render the value control for one parameter definition. Enumerated
+       * `values` become a pulldown; a `bitmask` becomes a checklist that ORs the
+       * checked bits; both keep a "Custom value…" escape hatch. Anything else
+       * (or no catalog) leaves the plain numeric input. Every control writes into
+       * the persisted #node-input-paramValue, so imported flows and unlisted
+       * params keep working unchanged.
+       *
+       * @param {?object} def  the ParamDef, or null for the plain numeric fallback
+       * @returns {void}
+       */
+      function renderValueControl(def) {
+        const $choices = $('#mav-param-value-choices').empty();
+        const $value = $('#node-input-paramValue');
+        const current = String($value.val() == null ? '' : $value.val()).trim();
+
+        /** Show the raw numeric input and stop (the default / fallback path). */
+        function useNumeric() {
+          $value.show();
+        }
+
+        if (!def || (def.values.length === 0 && def.bitmask.length === 0)) {
+          useNumeric();
+          return;
+        }
+
+        if (def.values.length > 0) {
+          const $sel = $('<select class="mav-pv-select" style="width:70%;"></select>');
+          def.values.forEach(function (choice) {
+            $('<option>')
+              .val(String(choice.value))
+              .text(choice.label ? choice.label + ' (' + choice.value + ')' : String(choice.value))
+              .appendTo($sel);
+          });
+          $('<option>').val('__custom__').text('Custom value…').appendTo($sel);
+          const known = def.values.some((c) => String(c.value) === current);
+          $sel.val(known ? current : '__custom__');
+          $choices.append($sel);
+
+          function syncSelect() {
+            if ($sel.val() === '__custom__') {
+              $value.show().focus();
+            } else {
+              $value.val($sel.val()).hide();
+            }
+            revalidateValue();
+          }
+          $sel.on('change', syncSelect);
+          if (known) {
+            $value.hide();
+          } else {
+            $value.show();
+          }
+          revalidateValue();
+          return;
+        }
+
+        /**
+         * Bitmask: a checklist that sums the selected bits, with a custom escape
+         * for unknown bits. Uses 2**bit arithmetic, not signed 32-bit bitwise
+         * shifts — `1 << 31` would go negative, so bit 31 (and a full UINT32
+         * mask up to 4294967295) must round-trip through plain arithmetic.
+         */
+        const numeric = current === '' ? NaN : Number(current);
+        const knownBits = new Set(def.bitmask.map((b) => b.bit));
+        const bitIsSet = (value, bit) => Math.floor(value / Math.pow(2, bit)) % 2 === 1;
+        let representable = Number.isInteger(numeric) && numeric >= 0 && numeric <= 4294967295;
+        if (representable) {
+          for (let bit = 0; bit <= 31; bit += 1) {
+            if (bitIsSet(numeric, bit) && !knownBits.has(bit)) {
+              representable = false;
+              break;
+            }
+          }
+        }
+        const $box = $('<div class="mav-pv-bitmask"></div>');
+        def.bitmask.forEach(function (flag) {
+          const $lbl = $('<label style="display:block; font-weight:normal; margin:0;"></label>');
+          $('<input type="checkbox" style="width:auto; margin-right:6px;">')
+            .attr('data-bit', flag.bit)
+            .prop('checked', representable && bitIsSet(numeric, flag.bit))
+            .appendTo($lbl);
+          $lbl.append(document.createTextNode(flag.label ? flag.label + ' (bit ' + flag.bit + ')' : 'bit ' + flag.bit));
+          $box.append($lbl);
+        });
+        const $custom = $('<label style="display:block; font-weight:normal; margin:4px 0 0 0;"></label>');
+        /**
+         * Custom mode whenever the current value isn't a clean combination of
+         * known bits — including a blank value. A blank must land in custom mode
+         * (visible, empty input) rather than an all-unchecked checklist that
+         * looks like 0 but persists blank: blank means "defer to
+         * msg.payload.param_value", and an unchecked checklist hiding a blank
+         * input would silently drop that intent.
+         */
+        const $customCb = $('<input type="checkbox" style="width:auto; margin-right:6px;">').prop('checked', !representable);
+        $custom.append($customCb).append(document.createTextNode('Custom value…'));
+        $box.append($custom);
+        $choices.append($box);
+
+        function syncBitmask() {
+          if ($customCb.is(':checked')) {
+            $box.find('input[data-bit]').prop('disabled', true);
+            $value.show().focus();
+          } else {
+            $box.find('input[data-bit]').prop('disabled', false);
+            let mask = 0;
+            $box.find('input[data-bit]:checked').each(function () {
+              mask += Math.pow(2, Number($(this).attr('data-bit')));
+            });
+            $value.val(String(mask)).hide();
+          }
+          revalidateValue();
+        }
+        $box.find('input[data-bit]').on('change', syncBitmask);
+        $customCb.on('change', syncBitmask);
+        if (!representable) {
+          $box.find('input[data-bit]').prop('disabled', true);
+          $value.show();
+        } else {
+          $value.hide();
+        }
+        revalidateValue();
+      }
+
+      /**
+       * Fetch the selected parameter's choice metadata and render its value
+       * control. No-op for actions other than "set". Falls back to numeric on
+       * any error or when the param isn't in the cached catalog.
+       *
+       * @returns {void}
+       */
+      function loadParamDetail() {
+        /** Invalidate any in-flight detail request first, before the early
+         * returns, so clearing the Param ID or leaving the Set action can't be
+         * overwritten by an older response arriving late. */
+        const rid = ++detailRequestId;
+        if ($('#node-input-action').val() !== 'set') {
+          return;
+        }
+        const paramId = String($('#node-input-paramId').val() || '').trim();
+        if (paramId === '') {
+          renderValueControl(null);
+          return;
+        }
+        const ctx = paramContext();
+        $.getJSON('mavlink-ai/param-catalog/param', { firmware: ctx.firmware, vehicleType: ctx.vehicleType, paramId: paramId })
+          .done(function (resp) {
+            if (rid !== detailRequestId) {
+              return;
+            }
+            renderValueControl(resp && resp.found ? resp.param : null);
+          })
+          .fail(function () {
+            if (rid !== detailRequestId) {
+              return;
+            }
+            renderValueControl(null);
+          });
+      }
+
+      /** Monotonic guard for the param-list (picker) population. */
+      let listRequestId = 0;
+
+      /**
+       * Populate the Param ID datalist from the cached catalog for the current
+       * firmware/vehicle, giving the free-text field a searchable dropdown. Stays
+       * empty (plain free text) when nothing is cached.
+       *
+       * @returns {void}
+       */
+      function loadParamList() {
+        const ctx = paramContext();
+        const $list = $('#node-input-paramId-list').empty();
+        const rid = ++listRequestId;
+        $.getJSON('mavlink-ai/param-catalog/params', { firmware: ctx.firmware, vehicleType: ctx.vehicleType })
+          .done(function (resp) {
+            if (rid !== listRequestId || !resp || !Array.isArray(resp.params)) {
+              return;
+            }
+            resp.params.forEach(function (p) {
+              $('<option>').val(p.paramId).text(p.description || '').appendTo($list);
+            });
+          });
+      }
+
+      /**
+       * Refresh the catalog-source status line and the "Load parameters" button
+       * visibility for the current firmware/vehicle.
+       *
+       * @returns {void}
+       */
+      function loadCatalogStatus() {
+        const ctx = paramContext();
+        const gen = ctxRequestId;
+        const $status = $('#mav-param-catalog-status');
+        const $btn = $('#mav-param-catalog-load');
+        const $urlRow = $('#mav-param-catalog-url-row');
+        $.getJSON('mavlink-ai/param-catalog', { firmware: ctx.firmware, vehicleType: ctx.vehicleType })
+          .done(function (resp) {
+            if (gen !== ctxRequestId) {
+              return;
+            }
+            if (!resp || !resp.source) {
+              $status.text('No parameter catalog for this profile — enter the Param ID by hand.');
+              $btn.hide();
+              $urlRow.hide();
+              return;
+            }
+            $btn.show();
+            $urlRow.toggle(!!resp.source.urlRequired);
+            /** Clear a URL carried over from a previous (PX4) source so it can't
+             * silently override a source that supplies its own default URL. */
+            if (!resp.source.urlRequired) {
+              $('#mav-param-catalog-url').val('');
+            }
+            if (resp.cached) {
+              $status.text('Catalog: ' + resp.cached.count + ' parameters cached (' + resp.source.sourceKey + ').');
+            } else {
+              $status.text('No catalog cached yet for ' + resp.source.sourceKey + ' — click Load parameters.');
+            }
+          })
+          .fail(function () {
+            if (gen !== ctxRequestId) {
+              return;
+            }
+            $status.text('');
+            $btn.hide();
+            $urlRow.hide();
+          });
+      }
+
+      /** Download/refresh the catalog for the current firmware/vehicle. */
+      function loadCatalog() {
+        const ctx = paramContext();
+        const gen = ctxRequestId;
+        /** Only forward the URL when its row is active (PX4). A source with its
+         * own default URL (ArduPilot) must not be overridden by a value left in
+         * the hidden field from an earlier PX4 selection. */
+        const url = $('#mav-param-catalog-url-row').is(':visible')
+          ? String($('#mav-param-catalog-url').val() || '').trim()
+          : '';
+        const $status = $('#mav-param-catalog-status');
+        $status.text('Downloading parameter catalog…');
+        $.ajax({
+          url: 'mavlink-ai/param-catalog/update',
+          method: 'POST',
+          contentType: 'application/json',
+          data: JSON.stringify({ firmware: ctx.firmware, vehicleType: ctx.vehicleType, url: url || undefined })
+        })
+          .done(function (resp) {
+            if (gen !== ctxRequestId) {
+              return;
+            }
+            $status.text('Loaded ' + resp.count + ' parameters (' + resp.sourceKey + ').');
+            loadParamList();
+            loadParamDetail();
+          })
+          .fail(function (xhr) {
+            if (gen !== ctxRequestId) {
+              return;
+            }
+            const err = xhr && xhr.responseJSON ? xhr.responseJSON.error : 'download failed';
+            $status.text('Catalog download failed: ' + err);
+          });
+      }
+
       /**
        * Show the param id / type / value rows only for the actions that use
        * them (list needs neither; read needs no value/type).
@@ -129,10 +429,38 @@
         $('.mav-param-index').toggle(action === 'read');
         $('.mav-param-type').toggle(action === 'set');
         $('.mav-param-value').toggle(action === 'set');
+        $('.mav-param-catalog').toggle(action === 'read' || action === 'set');
+        if (action === 'set') {
+          loadParamDetail();
+        }
         revalidateValue();
       }
-      $('#node-input-action').on('change', refresh);
+
+      $('#node-input-action').on('change', function () {
+        ctxRequestId += 1;
+        refresh();
+      });
       $('#node-input-paramType').on('change', revalidateValue);
+      $('#node-input-paramId').on('change', loadParamDetail);
+      /**
+       * A Connection/Profile change moves the whole context to a new
+       * firmware/vehicle: refresh the status, the picker list, and — via
+       * loadParamDetail (which also bumps detailRequestId, dropping any in-flight
+       * response) — the value control, so a stale enum/bitmask from the old
+       * firmware can't keep writing into paramValue for the new profile.
+       */
+      function onContextChange() {
+        ctxRequestId += 1;
+        loadCatalogStatus();
+        loadParamList();
+        loadParamDetail();
+      }
+      $('#node-input-connection').on('change', onContextChange);
+      $('#node-input-profile').on('change', onContextChange);
+      $('#mav-param-catalog-load').on('click', loadCatalog);
+
+      loadCatalogStatus();
+      loadParamList();
       refresh();
     }
   });
@@ -164,7 +492,8 @@
   </div>
   <div class="form-row mav-param-id">
     <label for="node-input-paramId">Param ID</label>
-    <input type="text" id="node-input-paramId" placeholder="e.g. RC1_MIN">
+    <input type="text" id="node-input-paramId" list="node-input-paramId-list" placeholder="e.g. RC1_MIN">
+    <datalist id="node-input-paramId-list"></datalist>
   </div>
   <div class="form-row mav-param-index">
     <label for="node-input-paramIndex">Param index</label>
@@ -187,6 +516,16 @@
   <div class="form-row mav-param-value">
     <label for="node-input-paramValue">Value</label>
     <input type="text" id="node-input-paramValue" placeholder="e.g. 1100 — leave blank to use msg.payload.param_value">
+    <div id="mav-param-value-choices" style="margin-top: 6px;"></div>
+  </div>
+  <div class="form-row mav-param-catalog">
+    <label>&nbsp;</label>
+    <a id="mav-param-catalog-load" class="editor-button" style="display:none;"><i class="fa fa-download"></i> Load parameters</a>
+    <span id="mav-param-catalog-status" style="margin-left: 8px; color: #888;"></span>
+  </div>
+  <div class="form-row mav-param-catalog" id="mav-param-catalog-url-row" style="display:none;">
+    <label for="mav-param-catalog-url">Catalog URL</label>
+    <input type="text" id="mav-param-catalog-url" placeholder="PX4 parameters.json URL (release asset or self-hosted)">
   </div>
   <div class="form-row">
     <label for="node-input-timeoutMs">Timeout ms</label>
@@ -206,6 +545,8 @@
     <li><b>Set one</b> — set <code>Param ID</code> to the editor <code>Value</code> (or <code>msg.payload.param_value</code> when <code>Value</code> is left blank), then confirm via the echoed <code>PARAM_VALUE</code>. <code>Param type</code> defaults to <b>Auto</b>, which reads the parameter first to detect its wire type before setting — so you don't have to know whether it is INT8/UINT8/REAL32 (this matters on PX4). Pick an explicit type to skip the detour read.</li>
     <li><b>Request list</b> — request the full parameter list and assemble it; missing items are re-requested on a lossy link.</li>
   </ul>
+  <h3>Parameter catalog</h3>
+  <p>When the effective profile's firmware publishes machine-readable parameter metadata (ArduPilot per vehicle; PX4 via a supplied <code>parameters.json</code> URL), click <b>Load parameters</b> to cache it. The <code>Param ID</code> field then offers a searchable list, and for parameters that define named choices the <code>Value</code> field becomes a pulldown (enumerations) or a bit checklist (bitmasks), each with a <b>Custom value…</b> escape hatch. Everything stays optional: free-text Param IDs and raw numeric values always work, so offline flow-building and unlisted parameters are unaffected. Generic/custom firmwares have no catalog and keep the plain inputs.</p>
   <h3>Profile</h3>
   <p><b>Profile</b> (optional) pins the workflow to a specific profile: its dialect, firmware behavior, source identity, signing, and target defaults are used, and every outbound message is encoded with it. Left empty, the target system/component is resolved through the connection's route table (the same resolution inbound packets get) and falls back to the connection's default profile. <code>msg.payload.profile</code> overrides per message. On routed connections with component-specific routes, set an explicit profile — target defaults can make route resolution ambiguous.</p>
   <h3>Inputs</h3>

@@ -254,3 +254,75 @@ test('xml-catalog endpoints: update (fetch-stubbed), list, and compare (#61)', a
     global.fetch = origFetch;
   }
 });
+
+test('param-catalog endpoints: source discovery, update (fetch-stubbed), params, and param (#125)', async () => {
+  const os = require('os');
+  const fs = require('fs');
+  const path = require('path');
+  const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mav-red-params-'));
+
+  const captured = {};
+  const RED3 = {
+    settings: { userDir },
+    auth: { needsPermission: () => (req, res, next) => next() },
+    httpAdmin: {
+      get(p, ...h) {
+        captured['GET ' + p] = h[h.length - 1];
+      },
+      post(p, ...h) {
+        captured['POST ' + p] = h[h.length - 1];
+      }
+    }
+  };
+  registerEditorApi(RED3);
+
+  /** Generic firmware has no source — the editor keeps free-text/numeric. */
+  const generic = await invoke(captured['GET /mavlink-ai/param-catalog'], { firmware: 'generic' });
+  assert.strictEqual(generic.body.ok, true);
+  assert.strictEqual(generic.body.source, null);
+
+  /** ArduPilot copter resolves a source but nothing is cached yet. */
+  const before = await invoke(captured['GET /mavlink-ai/param-catalog'], { firmware: 'ardupilot', vehicleType: 'copter' });
+  assert.strictEqual(before.body.source.sourceKey, 'ardupilot-copter');
+  assert.strictEqual(before.body.cached, null);
+
+  const apmPdef = JSON.stringify({
+    ArduCopter: {
+      FLTMODE: { FLTMODE1: { Description: 'Flight mode', Values: { 0: 'Stabilize', 2: 'AltHold' } } },
+      RC: { RC1_MIN: { Description: 'RC min', Units: 'PWM' } }
+    }
+  });
+  const origFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, status: 200, statusText: 'OK', text: async () => apmPdef });
+  try {
+    const upd = await invoke(captured['POST /mavlink-ai/param-catalog/update'], {}, { firmware: 'ardupilot', vehicleType: 'copter' });
+    assert.strictEqual(upd.status, 200);
+    assert.strictEqual(upd.body.count, 2);
+
+    const list = await invoke(captured['GET /mavlink-ai/param-catalog/params'], { firmware: 'ardupilot', vehicleType: 'copter' });
+    assert.strictEqual(list.body.cached, true);
+    const fltmode = list.body.params.find((p) => p.paramId === 'FLTMODE1');
+    assert.strictEqual(fltmode.hasValues, true);
+    assert.strictEqual(list.body.params.find((p) => p.paramId === 'RC1_MIN').hasValues, false);
+
+    const detail = await invoke(captured['GET /mavlink-ai/param-catalog/param'], {
+      firmware: 'ardupilot',
+      vehicleType: 'copter',
+      paramId: 'fltmode1'
+    });
+    assert.strictEqual(detail.body.found, true);
+    assert.deepStrictEqual(detail.body.param.values, [
+      { value: 0, label: 'Stabilize' },
+      { value: 2, label: 'AltHold' }
+    ]);
+
+    const miss = await invoke(captured['GET /mavlink-ai/param-catalog/param'], {
+      firmware: 'ardupilot',
+      vehicleType: 'copter',
+      paramId: 'NO_SUCH'
+    });
+    assert.strictEqual(miss.body.found, false);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
