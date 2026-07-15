@@ -103,6 +103,30 @@ test('with a connection the node sends directly and emits nothing', async () => 
   assert.strictEqual(conn.sent[0].fields.vz, -0.5);
 });
 
+test('a one-shot send that fails after a connection redeploy still emits the structured error (#128)', async () => {
+  const { RED, node, conn } = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1' },
+    { withConnection: true }
+  );
+
+  /** A send whose rejection we control lands after the redeploy nulls the ref. */
+  let rejectSend;
+  conn.send = () => new Promise((_resolve, reject) => { rejectSend = reject; });
+
+  const injected = RED.inject(node, { payload: {} });
+  await new Promise((r) => setTimeout(r, 0));
+
+  /** The flows:started guard can null/replace node.connection mid-await; the
+   * catch must use the captured connection, not throw and leave done() uncalled. */
+  node.connection = null;
+  rejectSend(new Error('link down'));
+
+  const { collected } = await injected;
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'SEND_FAILED');
+  assert.strictEqual(collected[0].payload.connection, 'Conn', 'names the connection it sent on');
+});
+
 test('msg.payload overrides editor values', async () => {
   const { RED, node } = setup({ coordinate: 'local', preset: 'position', altitude: '1' });
   const { collected } = await RED.inject(node, { payload: { altitude: 20, north: 3 } });

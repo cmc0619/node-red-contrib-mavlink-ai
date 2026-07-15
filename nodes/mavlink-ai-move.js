@@ -207,11 +207,16 @@ module.exports = function registerMavlinkAiMove(RED) {
       /**
        * One-shot: with a connection the node is the sender (setpoints are
        * fire-and-forget, so there is no ack to await); without one it hands the
-       * built message to a downstream mavlink-ai-out node.
+       * built message to a downstream mavlink-ai-out node. The connection is
+       * captured before the await — the flows:started redeploy guard can null or
+       * replace `node.connection` while the send is in flight, and the catch
+       * path must still name the connection it actually sent on rather than
+       * throw a TypeError that leaves done() uncalled.
        */
-      if (node.connection) {
+      const connection = node.connection;
+      if (connection) {
         try {
-          await node.connection.send({ name: built.name, profile: node.profile.id, fields: built.fields }, { msg });
+          await connection.send({ name: built.name, profile: node.profile.id, fields: built.fields }, { msg });
           node.status({ fill: 'green', shape: 'dot', text: `sent ${labelFor(built.name)}` });
           return done();
         } catch (err) {
@@ -219,7 +224,7 @@ module.exports = function registerMavlinkAiMove(RED) {
           node.status({ fill: 'red', shape: 'ring', text: e.code });
           return finishError(node, send, done, errorPayload({
             node: 'mavlink-ai-move',
-            connection: node.connection.name,
+            connection: connection.name,
             code: e.code,
             message: e.message,
             context: e.context
