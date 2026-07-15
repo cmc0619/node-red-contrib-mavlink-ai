@@ -49,6 +49,7 @@
     "coverage": "node --test --experimental-test-coverage test/unit/*.test.js"
   },
   "node-red": {
+    "version": ">=4.0.0",
     "nodes": {
       "mavlink-ai-profile": "nodes/mavlink-ai-profile.js",
       "mavlink-ai-connection": "nodes/mavlink-ai-connection.js",
