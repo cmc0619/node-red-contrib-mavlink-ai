@@ -26,6 +26,11 @@ test('factory maps transport types (no serialport required for udp/tcp)', () => 
   assert.ok(createTransport({ transport: 'serial' }) instanceof SerialTransport);
 });
 
+test('factory forwards reconnect:false to the UDP transport so retries can be disabled (#149)', () => {
+  assert.strictEqual(createTransport({ transport: 'udp-in', reconnect: false }).reconnect, false);
+  assert.strictEqual(createTransport({ transport: 'udp-in' }).reconnect, true);
+});
+
 test('udp-peer learns peer and round-trips bytes', async () => {
   const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
   const addr = await new Promise((resolve) => {
@@ -263,4 +268,31 @@ test('tcp stop() keeps an error handler so a late server error does not crash (#
   });
   await transport.stop();
   assert.doesNotThrow(() => server.emit('error', new Error('late close error')));
+});
+
+test('udp bind failure is not terminal: it retries and binds once the port frees (#149)', async (t) => {
+  /** Occupy a fixed port so the transport's first bind hits EADDRINUSE. */
+  const blocker = dgram.createSocket({ type: 'udp4' });
+  const port = await new Promise((resolve) => blocker.bind(0, '127.0.0.1', () => resolve(blocker.address().port)));
+
+  const transport = new UdpTransport({ mode: 'udp-in', bindAddress: '127.0.0.1', bindPort: port, reconnectDelayMs: 15 });
+  /** The reconnect timer is unref'd (must not hold the process open); keep the test's loop alive so it can fire. */
+  const keepAlive = setInterval(() => {}, 5);
+  t.after(() => {
+    clearInterval(keepAlive);
+    return transport.stop();
+  });
+  const errors = [];
+  transport.on('error', (e) => errors.push(e));
+
+  /** First bind fails → a retry is scheduled (not terminal). */
+  const reconnecting = new Promise((resolve) => transport.once('reconnecting', resolve));
+  transport.start();
+  await reconnecting;
+  assert.ok(errors.some((e) => e.code === 'UDP_ERROR'), 'the bind failure was surfaced');
+
+  /** Free the port; a subsequent retry must succeed and bind. */
+  await new Promise((resolve) => blocker.close(resolve));
+  const addr = await new Promise((resolve) => transport.on('listening', resolve));
+  assert.strictEqual(addr.port, port);
 });
