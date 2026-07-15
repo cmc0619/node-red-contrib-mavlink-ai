@@ -70,6 +70,8 @@ module.exports = function registerMavlinkAiPayload(RED) {
     node.maxRetries = config.maxRetries;
     /** In-flight await-ack workflows, aborted on close so a redeploy can't leak them. */
     node._active = new Set();
+    /** Set once the node is closing, so an aborted await-ack emits no obsolete output. */
+    node._closed = false;
 
     node.on('input', async (msg, send, done) => {
       const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
@@ -209,15 +211,15 @@ module.exports = function registerMavlinkAiPayload(RED) {
 
     /**
      * Abort any in-flight await-ack workflows on redeploy/close so their
-     * subscriptions and timers don't leak past the node's lifetime.
+     * subscriptions and timers don't leak past the node's lifetime. `_closed`
+     * gates their catch/resolve so the abort rejection can't emit an obsolete
+     * COMMAND_ABORTED error after this handler has returned. abort() is
+     * settle-once and never throws, so no per-workflow guard is needed.
      */
     node.on('close', function closePayload(cb) {
+      node._closed = true;
       for (const workflow of node._active) {
-        try {
-          workflow.abort('node closed');
-        } catch (e) {
-          /* best-effort teardown */
-        }
+        workflow.abort('mavlink-ai-payload node closed');
       }
       node._active.clear();
       cb();
@@ -240,28 +242,55 @@ module.exports = function registerMavlinkAiPayload(RED) {
  * @returns {Promise<void>}
  */
 async function runWithAck(node, msg, send, done, ctx) {
-  const workflow = new CommandSend({
-    connection: node.connection,
-    profile: node.profile.id,
-    targetSystem: ctx.targetSystem,
-    targetComponent: ctx.targetComponent,
-    sourceSystem: ctx.defaults.sourceSystemId,
-    sourceComponent: ctx.defaults.sourceComponentId,
-    command: ctx.built.fields.command,
-    fields: ctx.built.fields,
-    enums: ctx.enums,
-    timeoutMs: toNum(firstDefined(ctx.payload.timeout_ms, node.timeoutMs), undefined),
-    maxRetries: toNum(firstDefined(ctx.payload.max_retries, node.maxRetries), undefined)
-  });
+  /**
+   * Construct the workflow inside the try: `new CommandSend` throws for an
+   * unresolvable command (a MAV_CMD_* name the selected/custom dialect doesn't
+   * know), and that must surface as a structured `mavlink/error` with a
+   * `done()` rather than an unhandled rejection from this async handler.
+   */
+  let workflow;
+  try {
+    workflow = new CommandSend({
+      connection: node.connection,
+      profile: node.profile.id,
+      targetSystem: ctx.targetSystem,
+      targetComponent: ctx.targetComponent,
+      sourceSystem: ctx.defaults.sourceSystemId,
+      sourceComponent: ctx.defaults.sourceComponentId,
+      command: ctx.built.fields.command,
+      fields: ctx.built.fields,
+      enums: ctx.enums,
+      timeoutMs: toNum(firstDefined(ctx.payload.timeout_ms, node.timeoutMs), undefined),
+      maxRetries: toNum(firstDefined(ctx.payload.max_retries, node.maxRetries), undefined)
+    });
+  } catch (err) {
+    const e = toMavlinkError(err, 'COMMAND_FAILED');
+    node.status({ fill: 'red', shape: 'ring', text: e.code });
+    return finishError(node, send, done, errorPayload({
+      node: 'mavlink-ai-payload',
+      connection: node.connection.name,
+      code: e.code,
+      message: e.message,
+      context: e.context
+    }));
+  }
+
   node._active.add(workflow);
   try {
     const result = await workflow.run();
+    /** Node closed mid-flight: the abort rejection/late resolve is obsolete. */
+    if (node._closed) {
+      return done();
+    }
     node.status({ fill: 'green', shape: 'dot', text: `ack ${ctx.action}` });
     msg.topic = result.topic;
     msg.payload = result.payload;
     send(msg);
     done();
   } catch (err) {
+    if (node._closed) {
+      return done();
+    }
     const e = toMavlinkError(err, 'COMMAND_FAILED');
     node.status({ fill: 'red', shape: 'ring', text: e.code });
     finishError(node, send, done, errorPayload({

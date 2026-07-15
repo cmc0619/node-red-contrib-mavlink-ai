@@ -250,6 +250,23 @@ test('await-ack is skipped for a message verb (gimbal-manager stays fire-and-for
   assert.strictEqual(conn.sent[0].name, 'GIMBAL_MANAGER_SET_PITCHYAW');
 });
 
+test('await-ack emits nothing and clears workflows when the node closes mid-flight (#129)', async () => {
+  const { RED, node } = setup(
+    { action: 'gripper', gripAction: 'grab', awaitAck: true, timeoutMs: '5000', maxRetries: '0' },
+    { withConnection: true, ack: true }
+  );
+  const injected = RED.inject(node, { payload: {} });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(node._active.size >= 1, 'a workflow is in flight before close');
+
+  /** Redeploy/delete mid-flight must abort the wait without emitting a stale
+   * COMMAND_ABORTED error from an obsolete node. */
+  await RED.close(node);
+  const { collected } = await injected;
+  assert.strictEqual(collected.length, 0, 'no obsolete output after close');
+  assert.strictEqual(node._active.size, 0, 'active workflows cleared on close');
+});
+
 test('missing profile emits MISSING_PROFILE', async () => {
   const RED = new MockRED().loadNodes();
   const node = RED.create('mavlink-ai-payload', { id: 'pl2', action: 'camera_photo' });
