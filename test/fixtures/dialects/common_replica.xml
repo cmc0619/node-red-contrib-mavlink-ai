@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<mavlink>
+  <version>3</version>
+  <messages>
+    <message id="0" name="HEARTBEAT">
+      <description>Heartbeat (minimal).</description>
+      <field type="uint8_t" name="type" enum="MAV_TYPE">Vehicle or component type.</field>
+      <field type="uint8_t" name="autopilot" enum="MAV_AUTOPILOT">Autopilot type / class.</field>
+      <field type="uint8_t" name="base_mode" enum="MAV_MODE_FLAG" display="bitmask">System mode bitmap.</field>
+      <field type="uint32_t" name="custom_mode">A bitfield for autopilot-specific flags.</field>
+      <field type="uint8_t" name="system_status" enum="MAV_STATE">System status flag.</field>
+      <field type="uint8_t_mavlink_version" name="mavlink_version">MAVLink version.</field>
+    </message>
+    <message id="22" name="PARAM_VALUE">
+      <description>Emit the value of a onboard parameter.</description>
+      <field type="char[16]" name="param_id">Onboard parameter id.</field>
+      <field type="float" name="param_value">Onboard parameter value.</field>
+      <field type="uint8_t" name="param_type" enum="MAV_PARAM_TYPE">Onboard parameter type.</field>
+      <field type="uint16_t" name="param_count">Total number of onboard parameters.</field>
+      <field type="uint16_t" name="param_index">Index of this onboard parameter.</field>
+    </message>
+    <message id="77" name="COMMAND_ACK">
+      <description>Report status of a command.</description>
+      <field type="uint16_t" name="command" enum="MAV_CMD">Command ID.</field>
+      <field type="uint8_t" name="result" enum="MAV_RESULT">Result of command.</field>
+      <extensions/>
+      <field type="uint8_t" name="progress">Progress (0..100), UINT8_MAX if not supported.</field>
+      <field type="int32_t" name="result_param2">Additional result information.</field>
+      <field type="uint8_t" name="target_system">System which requested the command.</field>
+      <field type="uint8_t" name="target_component">Component which requested the command.</field>
+    </message>
+  </messages>
+</mavlink>

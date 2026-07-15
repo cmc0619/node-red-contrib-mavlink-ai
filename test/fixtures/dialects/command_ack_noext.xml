@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<mavlink>
+  <version>3</version>
+  <messages>
+    <message id="77" name="COMMAND_ACK">
+      <description>Report status of a command (no extensions).</description>
+      <field type="uint16_t" name="command">Command ID.</field>
+      <field type="uint8_t" name="result">Result of command.</field>
+      <field type="uint8_t" name="progress">Progress (0..100).</field>
+      <field type="int32_t" name="result_param2">Additional result information.</field>
+      <field type="uint8_t" name="target_system">System which requested the command.</field>
+      <field type="uint8_t" name="target_component">Component which requested the command.</field>
+    </message>
+  </messages>
+</mavlink>
