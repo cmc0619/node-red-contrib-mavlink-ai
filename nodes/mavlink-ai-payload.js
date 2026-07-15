@@ -1,6 +1,7 @@
 'use strict';
 
 const { buildPayload } = require('../lib/payload/payload');
+const { DEFAULT_TARGET_COMPONENT } = require('../lib/payload/components');
 const { CommandSend } = require('../lib/command/command-workflow');
 const { toNum, toBool, firstDefined } = require('../lib/util/validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
@@ -90,13 +91,18 @@ module.exports = function registerMavlinkAiPayload(RED) {
       const targetSystem = firstDefined(payload.target_system, defaults.defaultTargetSystem, 1);
       /**
        * Payload devices are often a distinct component; the node's own default
-       * wins over the profile's autopilot component when set.
+       * wins over the profile's autopilot component when set. The final fallback
+       * is the autopilot component (MAV_COMP_ID_AUTOPILOT1) — a deliberate
+       * default, not an accident: ArduPilot's onboard camera/gimbal drivers
+       * answer there. A standalone MAVLink camera (component 100) or gimbal (154)
+       * must be addressed explicitly via this field or msg.target_component; the
+       * editor surfaces those ids with a verb-aware hint (#155).
        */
       const targetComponent = firstDefined(
         payload.target_component,
         toNum(node.targetComponent, undefined),
         defaults.defaultTargetComponent,
-        1
+        DEFAULT_TARGET_COMPONENT
       );
 
       try {
