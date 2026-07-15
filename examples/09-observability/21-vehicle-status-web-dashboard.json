@@ -81,7 +81,7 @@
     "type": "function",
     "z": "obs21_flow",
     "name": "Serve dashboard asset",
-    "func": "msg.filename = '/data/node_modules/node-red-contrib-mavlink-ai/examples/assets/vehicle-status-dashboard.html';\nreturn msg;",
+    "func": "msg.filename = '/data/node_modules/node-red-contrib-mavlink-ai/resources/assets/vehicle-status-dashboard.html';\nreturn msg;",
     "outputs": 1,
     "x": 390,
     "y": 260,

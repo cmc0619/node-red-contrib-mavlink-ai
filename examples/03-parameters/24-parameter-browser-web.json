@@ -34,7 +34,7 @@
     "type": "function",
     "z": "param24_flow",
     "name": "Serve parameter asset",
-    "func": "msg.filename = '/data/node_modules/node-red-contrib-mavlink-ai/examples/assets/parameter-browser.html';\nreturn msg;",
+    "func": "msg.filename = '/data/node_modules/node-red-contrib-mavlink-ai/resources/assets/parameter-browser.html';\nreturn msg;",
     "outputs": 1,
     "x": 390,
     "y": 110,

@@ -1,7 +1,11 @@
 {
   "name": "node-red-contrib-mavlink-ai",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "A v2-style Node-RED MAVLink module built around profiles, connections, routing, and reusable action nodes.",
+  "author": {
+    "name": "cmc0619",
+    "url": "https://github.com/cmc0619"
+  },
   "keywords": [
     "node-red",
     "mavlink",
@@ -21,13 +25,11 @@
   "files": [
     "nodes/",
     "lib/",
-    "examples/"
+    "examples/",
+    "resources/"
   ],
   "engines": {
-    "node": ">=22"
-  },
-  "peerDependencies": {
-    "node-red": ">=4.0.0"
+    "node": ">=20"
   },
   "dependencies": {
     "mavlink-mappings": "^1.0.21-20250824-1",

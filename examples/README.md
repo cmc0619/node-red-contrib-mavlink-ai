@@ -60,11 +60,11 @@ Import these flows from Node-RED using **Menu → Import → Examples → node-r
 - `25-record-and-replay-telemetry.json` — JSONL recorder and timing-preserving replay with a bundled synthetic fixture.
 - `26-geofence-monitor.json` — Local distance/altitude display fence; monitoring only, not autopilot enforcement.
 
-The web examples serve assets from `/data/node_modules/node-red-contrib-mavlink-ai/examples/assets/`, the standard Node-RED Docker user-volume layout. Open them with the Node-RED host's reachable address, such as `http://192.168.1.10:1880/mavlink-ai/status`, rather than `localhost` when browsing from another machine. If Node-RED uses a non-Docker or custom user directory, edit the asset path function in the imported flow.
+The web examples serve assets from `/data/node_modules/node-red-contrib-mavlink-ai/resources/assets/`, the standard Node-RED Docker user-volume layout. Open them with the Node-RED host's reachable address, such as `http://192.168.1.10:1880/mavlink-ai/status`, rather than `localhost` when browsing from another machine. If Node-RED uses a non-Docker or custom user directory, edit the asset path function in the imported flow.
 
 Protect all Node-RED HTTP nodes with `httpNodeAuth` before exposing them beyond a trusted development network. The status dashboard is read-only. The parameter page can change vehicle configuration and therefore requires the literal confirmation `SET`, but that confirmation is not a substitute for authentication.
 
-The synthetic replay fixture is `examples/fixtures/vehicle-status-demo.jsonl`. It is useful for UI development; it does not replace the recorded protocol fixtures still tracked in the roadmap.
+The synthetic replay fixture is `resources/fixtures/vehicle-status-demo.jsonl`. It is useful for UI development; it does not replace the recorded protocol fixtures still tracked in the roadmap.
 
 All UDP examples assume a MAVLink source such as SITL, a vehicle, or `mavlink-router` sending to UDP port `14550`.
 
