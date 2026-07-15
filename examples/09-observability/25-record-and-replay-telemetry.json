@@ -102,7 +102,7 @@
     "type": "inject",
     "z": "obs25_flow",
     "name": "Replay included fixture at 2x",
-    "props": [{"p":"payload","v":"{\"filename\":\"node_modules/node-red-contrib-mavlink-ai/examples/fixtures/vehicle-status-demo.jsonl\",\"speed\":2}","vt":"json"}],
+    "props": [{"p":"payload","v":"{\"filename\":\"node_modules/node-red-contrib-mavlink-ai/resources/fixtures/vehicle-status-demo.jsonl\",\"speed\":2}","vt":"json"}],
     "repeat": "",
     "once": false,
     "x": 190,

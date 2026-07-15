@@ -116,21 +116,25 @@ npm install serialport
 
 Supported runtime matrix:
 
-| Component | Supported |
-|-----------|-----------|
-| Node.js   | 22.x (LTS floor) and 24.x (current) |
-| Node-RED  | 4.x and 5.x |
+| Component | Install floor | CI-tested |
+|-----------|---------------|-----------|
+| Node.js   | 20+ (`engines.node` `>=20`) | 22.x and 24.x |
+| Node-RED  | 4.0+ (`node-red.version` `>=4.0.0`) | 4.x and 5.x |
 
-- **Node.js 22+** is the floor. The runtime uses global `fetch` (Node 18+) and
-  the optional `serialport@13` dependency requires Node 20+; 22 is chosen as the
-  active LTS. This is enforced by `engines.node` (`>=22`).
+- **Node.js 20+** is the install floor, enforced by `engines.node` (`>=20`).
+  The real constraints are global `fetch` (Node 18+) and the optional
+  `serialport@13` dependency (Node 20+), so 20 is the true minimum — this keeps
+  officially-supported Node-RED 4 hosts on Node 20 (Debian/Raspberry Pi)
+  installable. CI runs on the active LTS majors, 22.x and 24.x.
 - **Node-RED 4.x and 5.x** are the tested and supported majors, and CI loads
-  the nodes into a real Node-RED runtime for each. `peerDependencies.node-red`
-  is `>=4.0.0` (no upper bound) so a newer Node-RED can still install it; the
-  guaranteed-tested majors are the ones in the table.
-- **Node-RED 3.x and earlier are not supported.** The peer dependency excludes
-  them; while the generic Node-RED APIs the nodes use may happen to work on
-  older releases, that is unverified and intentionally not claimed.
+  the nodes into a real Node-RED runtime for each. The supported runtime range
+  is declared via the `node-red.version` packaging field (`>=4.0.0`, no upper
+  bound) so a newer Node-RED can still install it; the guaranteed-tested majors
+  are the ones in the table. (There is no `node-red` peer dependency — Node-RED
+  is the host runtime, not a package to install into the module tree.)
+- **Node-RED 3.x and earlier are not supported.** The `node-red.version` gate
+  excludes them; while the generic Node-RED APIs the nodes use may happen to
+  work on older releases, that is unverified and intentionally not claimed.
 - **Serial support** needs the optional `serialport` dependency and Node.js 20+.
   On an older runtime the serial transport fails with a clear
   `SERIALPORT_UNSUPPORTED_RUNTIME` error (and `SERIALPORT_MISSING` when the
