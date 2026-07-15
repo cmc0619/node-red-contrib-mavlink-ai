@@ -1,11 +1,4 @@
 <?xml version="1.0"?>
-<!--
-  COMMAND_ACK with the same six fields as common_replica.xml but WITHOUT the
-  <extensions/> marker, so the trailing fields are ordinary base fields. Used to
-  prove the compiler excludes extension fields from CRC_EXTRA and preserves their
-  source order: dropping the marker size-sorts the fields and changes the magic
-  number even though the field set is identical (#152 item 3).
--->
 <mavlink>
   <version>3</version>
   <messages>

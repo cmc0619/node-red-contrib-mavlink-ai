@@ -18,6 +18,13 @@ const { compileXmlDialect } = require('../../lib/dialects/xml-dialect-compiler')
  * the pre-generated mavlink-mappings ones. These tests pin that invariant against
  * three real messages that together exercise size-sorting, an array field, and the
  * extension boundary.
+ *
+ * Two fixtures back these tests. common_replica.xml holds faithful replicas of
+ * HEARTBEAT (0), PARAM_VALUE (22) and COMMAND_ACK (77) whose field types, names,
+ * ids and source order match the upstream dialect XML, so the compiled wire layout
+ * can be asserted equal to the generated classes. command_ack_noext.xml is the same
+ * COMMAND_ACK field set without the <extensions/> marker, isolating the extension
+ * region's effect on field order and CRC_EXTRA.
  */
 
 const DIR = path.join(__dirname, '..', 'fixtures', 'dialects');

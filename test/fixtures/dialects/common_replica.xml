@@ -1,12 +1,4 @@
 <?xml version="1.0"?>
-<!--
-  Faithful replicas of three real common/minimal MAVLink messages, used by the
-  compiled-vs-generated cross-check (#152 item 4) and the <extensions> compiler
-  coverage (#152 item 3). Field types, names, ids and source order match the
-  upstream dialect XML so the runtime compiler's wire layout (offsets, payload
-  length, CRC_EXTRA magic, extension handling) can be asserted equal to the
-  pre-generated mavlink-mappings classes.
--->
 <mavlink>
   <version>3</version>
   <messages>
