@@ -250,6 +250,77 @@ function stubAckConnection(RED, id, script) {
   return conn;
 }
 
+/**
+ * Connection stand-in that acks every send after `ackDelayMs`, and records the
+ * peak number of sends in flight at once — so a test can assert the fan-out
+ * dispatcher actually runs up to `concurrency` await-ack workflows in parallel
+ * (#155). Deterministic: with concurrency N and a delayed ack, the first N sends
+ * are all outstanding before any ack lands, so maxInFlight settles at
+ * min(N, targets).
+ */
+function probeAckConnection(RED, id, ackDelayMs) {
+  const subs = new Map();
+  let nextId = 1;
+  let inFlight = 0;
+  const conn = {
+    id,
+    name: 'probe',
+    emitter: new (require('events').EventEmitter)(),
+    statusState: 'connected',
+    sent: [],
+    maxInFlight: 0,
+    subscribe: (filter, cb) => {
+      const sid = nextId++;
+      subs.set(sid, cb);
+      return sid;
+    },
+    unsubscribe: (sid) => subs.delete(sid),
+    send: (message) => {
+      conn.sent.push(message);
+      inFlight += 1;
+      conn.maxInFlight = Math.max(conn.maxInFlight, inFlight);
+      const sysid = message.fields.target_system;
+      const command = message.fields.command;
+      setTimeout(() => {
+        inFlight -= 1;
+        for (const cb of subs.values()) {
+          cb({
+            topic: 'mavlink/COMMAND_ACK',
+            payload: { name: 'COMMAND_ACK', sysid, compid: 1, fields: { command, result: 0 } }
+          });
+        }
+      }, ackDelayMs);
+      return Promise.resolve();
+    }
+  };
+  RED._nodes.set(id, conn);
+  return conn;
+}
+
+/**
+ * Build a fan-out node wired to a probe connection (above).
+ *
+ * @param {object} extraConfig  fan-out node config overrides
+ * @param {number} ackDelayMs   how long the probe waits before acking each send
+ * @returns {{RED: MockRED, node: object, conn: object}}
+ */
+function setupProbe(extraConfig, ackDelayMs) {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-profile', {
+    id: 'p1',
+    name: 'Copter',
+    dialect: 'ardupilotmega',
+    mavlinkVersion: 'v2',
+    sourceSystemId: 255,
+    sourceComponentId: 190,
+    defaultTargetSystem: 1,
+    defaultTargetComponent: 1
+  });
+  const conn = probeAckConnection(RED, 'c1', ackDelayMs);
+  const node = RED.create('mavlink-ai-fanout', Object.assign({ id: 'f1', profile: 'p1', connection: 'c1' }, extraConfig));
+  return { RED, node, conn };
+}
+
 function setup(extraConfig, script) {
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-profile', {
@@ -355,6 +426,58 @@ test('broadcast with await-acks is rejected (BROADCAST_NO_ACK) (#46)', async () 
   const { collected } = await RED.inject(node, { payload: {} });
   assert.strictEqual(collected[0].topic, 'mavlink/error');
   assert.strictEqual(collected[0].payload.code, 'BROADCAST_NO_ACK');
+});
+
+test('await-acks defaults to sequential (concurrency 1): one workflow in flight (#155)', async () => {
+  const { RED, node, conn } = setupProbe(
+    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', awaitAck: true, timeoutMs: 2000, maxRetries: 0 },
+    15
+  );
+  const keepAlive = setInterval(() => {}, 10);
+  const { collected } = await RED.inject(node, { payload: { sysids: [1, 2, 3, 4] } });
+  clearInterval(keepAlive);
+  assert.strictEqual(collected[0].topic, 'swarm/ack');
+  assert.strictEqual(conn.maxInFlight, 1, 'the default runs strictly one target at a time');
+  assert.deepStrictEqual(collected[0].payload.accepted.slice().sort((a, b) => a - b), [1, 2, 3, 4]);
+});
+
+test('concurrency runs up to N await-ack workflows in parallel (#155)', async () => {
+  const { RED, node, conn } = setupProbe(
+    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', awaitAck: true, timeoutMs: 2000, maxRetries: 0, concurrency: 3 },
+    20
+  );
+  const keepAlive = setInterval(() => {}, 10);
+  const { collected } = await RED.inject(node, { payload: { sysids: [1, 2, 3, 4, 5] } });
+  clearInterval(keepAlive);
+  const out = collected[0].payload;
+  /** 5 targets, 3 slots: at least one moment has all 3 slots busy at once. */
+  assert.strictEqual(conn.maxInFlight, 3, 'up to three targets are commanded in parallel');
+  /** Every target is still acked and aggregated, regardless of completion order. */
+  assert.deepStrictEqual(out.accepted.slice().sort((a, b) => a - b), [1, 2, 3, 4, 5]);
+  assert.strictEqual(out.failed.length, 0);
+  assert.strictEqual(out.timedOut.length, 0);
+});
+
+test('a concurrency below the target count is clamped, above it is capped by targets (#155)', async () => {
+  /** concurrency 0/negative clamps to 1 (sequential). */
+  const seq = setupProbe(
+    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', awaitAck: true, timeoutMs: 2000, maxRetries: 0, concurrency: 0 },
+    15
+  );
+  let keepAlive = setInterval(() => {}, 10);
+  await seq.RED.inject(seq.node, { payload: { sysids: [1, 2, 3] } });
+  clearInterval(keepAlive);
+  assert.strictEqual(seq.conn.maxInFlight, 1, 'concurrency 0 clamps to 1');
+
+  /** A concurrency larger than the target list never exceeds the target count. */
+  const wide = setupProbe(
+    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', awaitAck: true, timeoutMs: 2000, maxRetries: 0, concurrency: 10 },
+    20
+  );
+  keepAlive = setInterval(() => {}, 10);
+  await wide.RED.inject(wide.node, { payload: { sysids: [1, 2] } });
+  clearInterval(keepAlive);
+  assert.strictEqual(wide.conn.maxInFlight, 2, 'only two targets exist, so at most two run at once');
 });
 
 test('broadcast build mode emits a single target_system-0 message (#46)', async () => {

@@ -24,6 +24,7 @@
       maxRetries: { value: 3, validate: RED.validators.number() },
       spacingMs: { value: 0, validate: RED.validators.number() },
       stopOnError: { value: false },
+      concurrency: { value: 1, validate: RED.validators.number() },
       dryRun: { value: false },
       fields: { value: '' }
     },
@@ -124,6 +125,13 @@
     <label for="node-input-stopOnError" title="Abort remaining vehicles after the first failure">Stop on error</label>
     <input type="checkbox" id="node-input-stopOnError" title="Abort remaining vehicles after the first failure" style="display: inline-block; width: auto; vertical-align: top;">
   </div>
+  <div class="form-row mav-fanout-ack">
+    <label for="node-input-concurrency" title="How many vehicles to await-ack in parallel">Concurrency</label>
+    <input type="number" id="node-input-concurrency" min="1" placeholder="1 = one vehicle at a time">
+  </div>
+  <div class="form-tips mav-fanout-ack" style="margin: -6px 0 8px 105px; width: 70%;">
+    <b>1</b> (default) commands vehicles one at a time. Raise it so a &#34;simultaneous&#34; formation command reaches several vehicles at once — a slow or timing-out straggler then can&#39;t delay the rest by timeout&times;retries. <b>Spacing ms</b> still paces successive launches.
+  </div>
 </script>
 
 <script type="text/html" data-help-name="mavlink-ai-fanout">
@@ -131,5 +139,6 @@
   <p><b>Targets</b> come from <code>msg.payload.targets</code> (sysid numbers and/or objects like <code>{"sysid": 2, "lat": 39.1, "lon": -75.1, "alt": 40}</code>), <code>msg.payload.sysids</code>, or a <b>MAVLink AI Swarm</b> registry output (<code>payload.vehicles</code>) wired straight in. Per-target objects may override <code>param1..7</code>, <code>lat/lon/alt</code>, raw <code>x/y/z</code>, <code>frame</code>, and <code>target_component</code>.</p>
   <p><b>Meter offsets</b>: give <code>msg.payload.origin</code> (<code>{lat, lon, alt}</code>) and per-target <code>north/east/up</code> (or <code>down</code>) in meters — the node converts to global lat/lon/alt (and degE7 for COMMAND_INT) so you never add meters to degrees by hand. Set <b>Dry-run</b> (or <code>msg.payload.dry_run</code>) to see exactly what would be sent (<code>swarm/dryrun</code>).</p>
   <p><b>Without Await acks</b> the node emits normalized <code>mavlink/send</code> messages for a downstream <b>MAVLink AI Out</b> node, optionally paced by <b>Spacing ms</b>. <b>With Await acks</b> it sends each command on the connection, runs the full COMMAND_ACK workflow per vehicle (retries, timeout), and outputs one <code>swarm/ack</code> aggregation: <code>{ accepted: [1,2], failed: [4], timedOut: [5], skipped: [], results: { "1": {...} } }</code>. Partial failure is normal in swarm operations and is reported, not hidden.</p>
+  <p><b>Concurrency</b> (await-acks only) sets how many vehicles are commanded in parallel. The default <code>1</code> is strictly sequential — each vehicle's ack (or timeout) is awaited before the next is sent — so one unresponsive vehicle delays the whole swarm by its full <code>timeout×retries</code>. Raise it for a genuinely simultaneous formation command; <b>Spacing ms</b> still paces successive launches, and <b>Stop on error</b> stops dispatching new vehicles after the first failure (vehicles already in flight finish, and undispatched ones are reported as <code>skipped</code>).</p>
   <p><b>Safety gates</b> belong upstream: filter the swarm registry output (e.g. <code>{"armed": true, "includeStale": false}</code> or a group) so only vehicles with a recent heartbeat and the expected state are targeted.</p>
 </script>
