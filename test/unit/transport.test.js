@@ -26,6 +26,11 @@ test('factory maps transport types (no serialport required for udp/tcp)', () => 
   assert.ok(createTransport({ transport: 'serial' }) instanceof SerialTransport);
 });
 
+test('factory forwards reconnect:false to the UDP transport so retries can be disabled (#149)', () => {
+  assert.strictEqual(createTransport({ transport: 'udp-in', reconnect: false }).reconnect, false);
+  assert.strictEqual(createTransport({ transport: 'udp-in' }).reconnect, true);
+});
+
 test('udp-peer learns peer and round-trips bytes', async () => {
   const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
   const addr = await new Promise((resolve) => {
