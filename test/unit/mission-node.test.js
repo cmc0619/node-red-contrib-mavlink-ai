@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { MockRED } = require('../helpers/mock-red');
+const { LockManager } = require('../../lib/runtime/lock-manager');
 
 /**
  * Build a mission node backed by a real profile and a lightweight stub
@@ -140,4 +141,52 @@ test('mission node route-resolves the target profile when no override is set', a
   assert.strictEqual(sent.fields.target_system, 2);
   assert.strictEqual(sent.fields.mission_type, 2); // rally, from the routed profile's defaults
   assert.match(conn.lockNames[0], /:p_routed:/);
+});
+
+test('the mission lock is released exactly once when the success-path send throws (#150)', async () => {
+  const RED = new MockRED().loadNodes();
+  const locks = new LockManager();
+  let releaseCount = 0;
+  const defaultProfile = profileStub('p1', 'Default', {});
+  const conn = {
+    id: 'conn1',
+    name: 'Conn',
+    profile: defaultProfile,
+    sent: [],
+    resolveProfile: (ref) => (ref === 'p1' ? defaultProfile : { name: ref }),
+    acquireLock(key) {
+      const handle = locks.acquire(key, 'm2');
+      return {
+        release: () => {
+          releaseCount += 1;
+          handle.release();
+        }
+      };
+    },
+    send(m) {
+      conn.sent.push(m);
+      return Promise.resolve();
+    }
+  };
+  RED._nodes.set('conn1', conn);
+  const node = RED.create('mavlink-ai-mission', { id: 'm2', connection: 'conn1', action: 'clear' });
+
+  /**
+   * The success-path output throws (a downstream node error). Before the fix
+   * the success branch had already released the lock, so the catch released it
+   * a second time — the finally now makes release exactly-once.
+   */
+  let sendCalls = 0;
+  await new Promise((resolve) => {
+    const throwingSend = () => {
+      sendCalls += 1;
+      if (sendCalls === 1) {
+        throw new Error('downstream boom');
+      }
+    };
+    node._ee.emit('input', { payload: { action: 'clear' } }, throwingSend, resolve);
+  });
+
+  assert.strictEqual(releaseCount, 1, 'lock released exactly once despite the throwing send');
+  assert.strictEqual(locks.isHeld('mission:conn1:p1:0'), false, 'the lock is free afterwards');
 });

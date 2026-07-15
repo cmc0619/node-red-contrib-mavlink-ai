@@ -189,17 +189,17 @@ module.exports = function registerMavlinkAiParam(RED) {
       activeWorkflows.add(workflow);
       try {
         const result = await workflow.run();
-        lock.release();
         if (closed) {
-          return done(); // aborted by close: no output from an obsolete node
+          /** Aborted by close: no output from an obsolete node. */
+          return done();
         }
         node.status({ fill: 'green', shape: 'dot', text: `${action} ok` });
         send([result, null, null]);
         done();
       } catch (err) {
-        lock.release();
         if (closed) {
-          return done(); // aborted by close: no output from an obsolete node
+          /** Aborted by close: no output from an obsolete node. */
+          return done();
         }
         const e = toMavlinkError(err, 'PARAM_FAILED');
         node.status({ fill: 'red', shape: 'ring', text: e.code });
@@ -211,6 +211,13 @@ module.exports = function registerMavlinkAiParam(RED) {
           context: e.context
         }));
       } finally {
+        /**
+         * Exactly-once release on every path (#150). The old success/catch pair
+         * both released, so a throw after the first release would release twice
+         * — and since the owner is the node id, that could free a lock a later
+         * same-node message had just re-acquired, running two workflows at once.
+         */
+        lock.release();
         activeWorkflows.delete(workflow);
       }
     });
