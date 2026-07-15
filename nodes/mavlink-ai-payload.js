@@ -1,6 +1,7 @@
 'use strict';
 
 const { buildPayload } = require('../lib/payload/payload');
+const { CommandSend } = require('../lib/command/command-workflow');
 const { toNum, toBool, firstDefined } = require('../lib/util/validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
@@ -54,6 +55,23 @@ module.exports = function registerMavlinkAiPayload(RED) {
     node.cameraMode = config.cameraMode;
     node.distance = config.distance;
     node.triggerNow = config.triggerNow;
+    node.zoomType = config.zoomType;
+    node.zoomValue = config.zoomValue;
+    node.focusType = config.focusType;
+    node.focusValue = config.focusValue;
+    node.winchAction = config.winchAction;
+    node.length = config.length;
+    node.rate = config.rate;
+    node.parachuteAction = config.parachuteAction;
+    node.period = config.period;
+    /** Optional COMMAND_ACK wait for the command-type verbs (#129). */
+    node.awaitAck = toBool(config.awaitAck, false);
+    node.timeoutMs = config.timeoutMs;
+    node.maxRetries = config.maxRetries;
+    /** In-flight await-ack workflows, aborted on close so a redeploy can't leak them. */
+    node._active = new Set();
+    /** Set once the node is closing, so an aborted await-ack emits no obsolete output. */
+    node._closed = false;
 
     node.on('input', async (msg, send, done) => {
       const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
@@ -116,7 +134,16 @@ module.exports = function registerMavlinkAiPayload(RED) {
           yawLock: toBool(firstDefined(payload.yaw_lock, node.yawLock), false),
           cameraMode: firstDefined(payload.camera_mode, node.cameraMode),
           distance: toNum(firstDefined(payload.distance, node.distance), undefined),
-          triggerNow: toBool(firstDefined(payload.trigger_now, node.triggerNow), false)
+          triggerNow: toBool(firstDefined(payload.trigger_now, node.triggerNow), false),
+          zoomType: firstDefined(payload.zoom_type, node.zoomType),
+          zoomValue: toNum(firstDefined(payload.zoom_value, node.zoomValue), undefined),
+          focusType: firstDefined(payload.focus_type, node.focusType),
+          focusValue: toNum(firstDefined(payload.focus_value, node.focusValue), undefined),
+          winchAction: firstDefined(payload.winch_action, node.winchAction),
+          length: toNum(firstDefined(payload.length, node.length), undefined),
+          rate: toNum(firstDefined(payload.rate, node.rate), undefined),
+          parachuteAction: firstDefined(payload.parachute_action, node.parachuteAction),
+          period: toNum(firstDefined(payload.period, node.period), undefined)
         });
       } catch (err) {
         const e = toMavlinkError(err, 'BAD_PAYLOAD');
@@ -130,10 +157,58 @@ module.exports = function registerMavlinkAiPayload(RED) {
       }
 
       /**
+       * Await-ack needs a Connection to receive the COMMAND_ACK. Without one the
+       * request would silently fall through to the fire-and-forget `mavlink/send`
+       * path below, giving the operator no ack and no error — so reject loudly
+       * instead (only for the COMMAND_LONG verbs that can be acked).
+       */
+      if (node.awaitAck && built.name === 'COMMAND_LONG' && !node.connection) {
+        node.status({ fill: 'red', shape: 'ring', text: 'NO_CONNECTION' });
+        return finishError(node, send, done, errorPayload({
+          node: 'mavlink-ai-payload',
+          code: 'NO_CONNECTION',
+          message: 'Await-ack requires a Connection to receive the COMMAND_ACK.'
+        }));
+      }
+
+      /**
+       * Await-ack can't work on a broadcast (target_system 0): CommandSend
+       * matches the ACK on the target sysid, but responders reply from their own
+       * nonzero sysid, so the ack is never observed and the workflow just retries
+       * to a timeout. Reject loudly — mirroring the fan-out node — rather than
+       * report a false failure. (Broadcast is fine for fire-and-forget verbs.)
+       */
+      if (node.awaitAck && built.name === 'COMMAND_LONG' && Number(targetSystem) === 0) {
+        node.status({ fill: 'red', shape: 'ring', text: 'BROADCAST_NO_ACK' });
+        return finishError(node, send, done, errorPayload({
+          node: 'mavlink-ai-payload',
+          code: 'BROADCAST_NO_ACK',
+          message: 'Broadcast (target_system 0) cannot collect a COMMAND_ACK — address a specific system, or disable await-ack.'
+        }));
+      }
+
+      /**
        * With a connection the node sends the command directly; without one it
        * hands the built COMMAND_LONG to a downstream mavlink-ai-out node.
        */
       if (node.connection) {
+        /**
+         * Optional await-ack (#129): confirm the device accepted a command
+         * instead of fire-and-forget. Only COMMAND_LONG verbs get a COMMAND_ACK
+         * — the gimbal-manager messages don't — so message verbs stay
+         * fire-and-forget even when await-ack is on.
+         */
+        if (node.awaitAck && built.name === 'COMMAND_LONG') {
+          return runWithAck(node, msg, send, done, {
+            built,
+            action,
+            targetSystem,
+            targetComponent,
+            enums: bundle ? bundle.enums : null,
+            defaults,
+            payload
+          });
+        }
         try {
           await node.connection.send({ name: built.name, profile: node.profile.id, fields: built.fields }, { msg });
           node.status({ fill: 'green', shape: 'dot', text: `sent ${action}` });
@@ -164,10 +239,102 @@ module.exports = function registerMavlinkAiPayload(RED) {
       send(msg);
       done();
     });
+
+    /**
+     * Abort any in-flight await-ack workflows on redeploy/close so their
+     * subscriptions and timers don't leak past the node's lifetime. `_closed`
+     * gates their catch/resolve so the abort rejection can't emit an obsolete
+     * COMMAND_ABORTED error after this handler has returned. abort() is
+     * settle-once and never throws, so no per-workflow guard is needed.
+     */
+    node.on('close', function closePayload(cb) {
+      node._closed = true;
+      for (const workflow of node._active) {
+        workflow.abort('mavlink-ai-payload node closed');
+      }
+      node._active.clear();
+      cb();
+    });
   }
 
   RED.nodes.registerType('mavlink-ai-payload', MavlinkAiPayloadNode);
 };
+
+/**
+ * Send a COMMAND_LONG payload verb and wait for its COMMAND_ACK, reusing the
+ * command node's CommandSend workflow (#129). Resolves the ack onto the output,
+ * or emits a structured error on rejection/timeout.
+ *
+ * @param {object} node
+ * @param {object} msg
+ * @param {function} send
+ * @param {function} done
+ * @param {object} ctx  { built, action, targetSystem, targetComponent, enums, defaults, payload }
+ * @returns {Promise<void>}
+ */
+async function runWithAck(node, msg, send, done, ctx) {
+  /**
+   * Construct the workflow inside the try: `new CommandSend` throws for an
+   * unresolvable command (a MAV_CMD_* name the selected/custom dialect doesn't
+   * know), and that must surface as a structured `mavlink/error` with a
+   * `done()` rather than an unhandled rejection from this async handler.
+   */
+  let workflow;
+  try {
+    workflow = new CommandSend({
+      connection: node.connection,
+      profile: node.profile.id,
+      targetSystem: ctx.targetSystem,
+      targetComponent: ctx.targetComponent,
+      sourceSystem: ctx.defaults.sourceSystemId,
+      sourceComponent: ctx.defaults.sourceComponentId,
+      command: ctx.built.fields.command,
+      fields: ctx.built.fields,
+      enums: ctx.enums,
+      timeoutMs: toNum(firstDefined(ctx.payload.timeout_ms, node.timeoutMs), undefined),
+      maxRetries: toNum(firstDefined(ctx.payload.max_retries, node.maxRetries), undefined)
+    });
+  } catch (err) {
+    const e = toMavlinkError(err, 'COMMAND_FAILED');
+    node.status({ fill: 'red', shape: 'ring', text: e.code });
+    return finishError(node, send, done, errorPayload({
+      node: 'mavlink-ai-payload',
+      connection: node.connection.name,
+      code: e.code,
+      message: e.message,
+      context: e.context
+    }));
+  }
+
+  node._active.add(workflow);
+  try {
+    const result = await workflow.run();
+    /** Node closed mid-flight: the abort rejection/late resolve is obsolete. */
+    if (node._closed) {
+      return done();
+    }
+    node.status({ fill: 'green', shape: 'dot', text: `ack ${ctx.action}` });
+    msg.topic = result.topic;
+    msg.payload = result.payload;
+    send(msg);
+    done();
+  } catch (err) {
+    if (node._closed) {
+      return done();
+    }
+    const e = toMavlinkError(err, 'COMMAND_FAILED');
+    node.status({ fill: 'red', shape: 'ring', text: e.code });
+    finishError(node, send, done, errorPayload({
+      node: 'mavlink-ai-payload',
+      connection: node.connection.name,
+      code: e.code,
+      message: e.message,
+      context: e.context
+    }));
+  } finally {
+    node._active.delete(workflow);
+  }
+}
 
 /**
  * Emit a structured error on the single output and finish. Like the build node,

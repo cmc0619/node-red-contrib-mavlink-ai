@@ -8,13 +8,26 @@
     camera_video_start: ['streamId', 'statusFrequency'],
     camera_video_stop: ['streamId'],
     camera_mode: ['cameraMode'],
+    camera_zoom: ['zoomType', 'zoomValue'],
+    camera_focus: ['focusType', 'focusValue'],
     cam_trigger_distance: ['distance', 'triggerNow'],
     gimbal_aim: ['pitch', 'roll', 'yaw'],
     gimbal_manager_aim: ['pitch', 'yaw', 'gimbalDeviceId', 'yawLock'],
+    gimbal_manager_attitude: ['pitch', 'roll', 'yaw', 'gimbalDeviceId', 'yawLock'],
     servo: ['instance', 'pwm'],
     relay: ['instance', 'on'],
+    repeat_servo: ['instance', 'pwm', 'count', 'period'],
+    repeat_relay: ['instance', 'count', 'period'],
+    winch: ['instance', 'winchAction', 'length', 'rate'],
+    parachute: ['parachuteAction'],
     gripper: ['instance', 'gripAction']
   };
+
+  /**
+   * Verbs sent as a dedicated MAVLink **message** rather than a `COMMAND_LONG`.
+   * These carry no `COMMAND_ACK`, so the await-ack controls don't apply to them.
+   */
+  const MAV_PAYLOAD_MESSAGE_VERBS = ['gimbal_manager_aim', 'gimbal_manager_attitude'];
 
   RED.nodes.registerType('mavlink-ai-payload', {
     category: 'MAVLink AI',
@@ -36,12 +49,12 @@
       roll: { value: '' },
       yaw: { value: '' },
       instance: { value: '' },
-      /** Required (numeric) only for the servo action. */
+      /** Required (numeric) only for the servo / repeat-servo actions. */
       pwm: {
         value: '',
         validate: function (v) {
           const action = $('#node-input-action').length ? $('#node-input-action').val() : this.action;
-          if (action !== 'servo') {
+          if (action !== 'servo' && action !== 'repeat_servo') {
             return true;
           }
           return Number.isFinite(Number(String(v == null ? '' : v).trim()));
@@ -52,6 +65,20 @@
       gimbalDeviceId: { value: '' },
       yawLock: { value: false },
       cameraMode: { value: 'image' },
+      zoomType: { value: 'range' },
+      zoomValue: { value: '' },
+      focusType: { value: 'range' },
+      focusValue: { value: '' },
+      winchAction: { value: 'relax' },
+      length: { value: '' },
+      rate: { value: '' },
+      /** Default to the non-destructive 'disable'; the operator must consciously pick 'release'. */
+      parachuteAction: { value: 'disable' },
+      period: { value: '' },
+      /** Optional COMMAND_ACK wait for the command-type verbs (#129). */
+      awaitAck: { value: false },
+      timeoutMs: { value: '' },
+      maxRetries: { value: '' },
       /** Required (non-negative) only for the trigger-by-distance action. */
       distance: {
         value: '',
@@ -77,15 +104,28 @@
 
       /** Show only the input rows the selected action uses. */
       function refresh() {
-        const fields = MAV_PAYLOAD_FIELDS[$action.val()] || [];
+        const action = $action.val();
+        const fields = MAV_PAYLOAD_FIELDS[action] || [];
         $('.mav-payload-field').each(function () {
           const key = $(this).attr('data-field');
           $(this).toggle(fields.indexOf(key) !== -1);
         });
+
+        /**
+         * Await-ack only applies to COMMAND_LONG verbs — message verbs carry no
+         * COMMAND_ACK — so hide the whole section for those, and reveal the
+         * timeout/retry rows only when the wait is enabled.
+         */
+        const isCommandVerb = MAV_PAYLOAD_MESSAGE_VERBS.indexOf(action) === -1;
+        $('.mav-payload-ack').toggle(isCommandVerb);
+        const showAckOpts = isCommandVerb && $('#node-input-awaitAck').is(':checked');
+        $('.mav-payload-ack-opts').toggle(showAckOpts);
+
         $('#node-input-pwm').trigger('change');
       }
 
       $action.on('change', refresh);
+      $('#node-input-awaitAck').on('change', refresh);
       refresh();
     }
   });
@@ -115,18 +155,25 @@
         <option value="camera_video_start">Start Video</option>
         <option value="camera_video_stop">Stop Video</option>
         <option value="camera_mode">Set Mode (image / video / survey)</option>
+        <option value="camera_zoom">Set Zoom</option>
+        <option value="camera_focus">Set Focus</option>
         <option value="cam_trigger_distance">Trigger by Distance</option>
       </optgroup>
       <optgroup label="Gimbal / Mount">
         <option value="gimbal_aim">Aim — mount control (legacy)</option>
-        <option value="gimbal_manager_aim">Aim — gimbal manager</option>
+        <option value="gimbal_manager_aim">Aim — gimbal manager (pitch/yaw)</option>
+        <option value="gimbal_manager_attitude">Aim — gimbal manager (attitude)</option>
       </optgroup>
       <optgroup label="Servo / Relay">
         <option value="servo">Set Servo (PWM)</option>
         <option value="relay">Set Relay (on / off)</option>
+        <option value="repeat_servo">Repeat Servo (pulse)</option>
+        <option value="repeat_relay">Repeat Relay (pulse)</option>
       </optgroup>
-      <optgroup label="Gripper">
+      <optgroup label="Gripper / Winch / Parachute">
         <option value="gripper">Grab / Release</option>
+        <option value="winch">Winch (relax / length / rate)</option>
+        <option value="parachute">Parachute (enable / disable / release)</option>
       </optgroup>
     </select>
   </div>
@@ -212,6 +259,77 @@
     <label for="node-input-triggerNow" title="Also shoot one frame immediately">Trigger now</label>
     <input type="checkbox" id="node-input-triggerNow" title="Also shoot one frame immediately" style="width:auto; vertical-align:middle;">
   </div>
+  <div class="form-row mav-payload-field" data-field="zoomType">
+    <label for="node-input-zoomType">Zoom type</label>
+    <select id="node-input-zoomType">
+      <option value="range">Range (0–100 %)</option>
+      <option value="step">Step (in / out)</option>
+      <option value="continuous">Continuous (rate)</option>
+      <option value="focal">Focal length (mm)</option>
+    </select>
+  </div>
+  <div class="form-row mav-payload-field" data-field="zoomValue">
+    <label for="node-input-zoomValue">Zoom value</label>
+    <input type="number" step="any" id="node-input-zoomValue" placeholder="0–100 for range; ±1 for step; -1..1 for continuous">
+  </div>
+  <div class="form-row mav-payload-field" data-field="focusType">
+    <label for="node-input-focusType">Focus type</label>
+    <select id="node-input-focusType">
+      <option value="range">Range (0–100 %)</option>
+      <option value="step">Step (near / far)</option>
+      <option value="continuous">Continuous (rate)</option>
+      <option value="meters">Metres</option>
+      <option value="auto">Auto</option>
+      <option value="auto-single">Auto (single)</option>
+      <option value="auto-continuous">Auto (continuous)</option>
+    </select>
+  </div>
+  <div class="form-row mav-payload-field" data-field="focusValue">
+    <label for="node-input-focusValue">Focus value</label>
+    <input type="number" step="any" id="node-input-focusValue" placeholder="0–100 for range; metres for metres; ignored for auto">
+  </div>
+  <div class="form-row mav-payload-field" data-field="winchAction">
+    <label for="node-input-winchAction">Winch action</label>
+    <select id="node-input-winchAction">
+      <option value="relax">Relax (free-spool)</option>
+      <option value="length">Relative length (m)</option>
+      <option value="rate">Rate (m/s)</option>
+    </select>
+  </div>
+  <div class="form-row mav-payload-field" data-field="length">
+    <label for="node-input-length">Length (m)</label>
+    <input type="number" step="any" id="node-input-length" placeholder="+ pay out / - reel in">
+  </div>
+  <div class="form-row mav-payload-field" data-field="rate">
+    <label for="node-input-rate">Rate (m/s)</label>
+    <input type="number" step="any" id="node-input-rate" placeholder="0">
+  </div>
+  <div class="form-row mav-payload-field" data-field="parachuteAction">
+    <label for="node-input-parachuteAction">Parachute</label>
+    <select id="node-input-parachuteAction">
+      <option value="disable">Disable</option>
+      <option value="enable">Enable</option>
+      <option value="release">Release (deploys chute + kills motors)</option>
+    </select>
+  </div>
+  <div class="form-row mav-payload-field" data-field="period">
+    <label for="node-input-period">Period (s)</label>
+    <input type="number" step="any" min="0" id="node-input-period" placeholder="seconds between pulses">
+  </div>
+
+  <hr class="mav-payload-ack">
+  <div class="form-row mav-payload-ack">
+    <label for="node-input-awaitAck" title="Wait for COMMAND_ACK and confirm the device accepted the command">Await ack</label>
+    <input type="checkbox" id="node-input-awaitAck" title="Wait for COMMAND_ACK and confirm the device accepted the command" style="width:auto; vertical-align:middle;">
+  </div>
+  <div class="form-row mav-payload-ack-opts">
+    <label for="node-input-timeoutMs">Timeout (ms)</label>
+    <input type="number" step="1" min="1" id="node-input-timeoutMs" placeholder="3000">
+  </div>
+  <div class="form-row mav-payload-ack-opts">
+    <label for="node-input-maxRetries">Max retries</label>
+    <input type="number" step="1" min="0" id="node-input-maxRetries" placeholder="3">
+  </div>
 </script>
 
 <script type="text/html" data-help-name="mavlink-ai-payload">
@@ -224,15 +342,23 @@
   <ul>
     <li><b>Take Photo / Start Video / Stop Video</b> — <code>IMAGE_START_CAPTURE</code> / <code>VIDEO_START_CAPTURE</code> / <code>VIDEO_STOP_CAPTURE</code>.</li>
     <li><b>Set Mode (image / video / survey)</b> — <code>SET_CAMERA_MODE</code>.</li>
+    <li><b>Set Zoom</b> — <code>SET_CAMERA_ZOOM</code>. <b>Zoom type</b> chooses the meaning of the value: <i>range</i> is a 0–100 % level, <i>step</i> is ±1 in/out, <i>continuous</i> is a −1..1 rate, <i>focal</i> is a focal length in mm.</li>
+    <li><b>Set Focus</b> — <code>SET_CAMERA_FOCUS</code>. <b>Focus type</b> selects range / step / continuous / metres / auto variants; the value is ignored for the auto types.</li>
     <li><b>Trigger by Distance</b> — <code>DO_SET_CAM_TRIGG_DIST</code>: shoot every N metres of travel (the backbone of fixed-wing mapping). <code>0</code> disables it; <b>Trigger now</b> also fires one frame immediately.</li>
     <li><b>Aim — mount control (legacy)</b> — <code>DO_MOUNT_CONTROL</code> in degrees, under MAVLink targeting. Widely supported.</li>
-    <li><b>Aim — gimbal manager</b> — <code>GIMBAL_MANAGER_SET_PITCHYAW</code>, the modern gimbal-manager protocol. This is a <b>message</b>, not a command; pitch/yaw are entered in degrees and sent in radians (the angular rates are sent as NaN — the message's "ignore" sentinel — so a static aim isn't misread as "move at 0 rad/s"). <b>Gimbal ID</b> <code>0</code> targets all gimbals; <b>Yaw lock</b> makes yaw earth-frame instead of following the vehicle.</li>
+    <li><b>Aim — gimbal manager (pitch/yaw)</b> — <code>GIMBAL_MANAGER_SET_PITCHYAW</code>, the modern gimbal-manager protocol. This is a <b>message</b>, not a command; pitch/yaw are entered in degrees and sent in radians (the angular rates are sent as NaN — the message's "ignore" sentinel — so a static aim isn't misread as "move at 0 rad/s"). <b>Gimbal ID</b> <code>0</code> targets all gimbals; <b>Yaw lock</b> makes yaw earth-frame instead of following the vehicle.</li>
+    <li><b>Aim — gimbal manager (attitude)</b> — <code>GIMBAL_MANAGER_SET_ATTITUDE</code>, a <b>message</b> that sends the full roll/pitch/yaw as a quaternion (angular velocities NaN). Use this when roll matters; otherwise pitch/yaw is simpler.</li>
     <li><b>Set Servo (PWM)</b> — <code>DO_SET_SERVO</code> (instance + PWM µs, typically 1000–2000).</li>
     <li><b>Set Relay (on / off)</b> — <code>DO_SET_RELAY</code>.</li>
+    <li><b>Repeat Servo / Repeat Relay</b> — <code>DO_REPEAT_SERVO</code> / <code>DO_REPEAT_RELAY</code>: pulse the output <b>Count</b> times, <b>Period</b> seconds apart (repeat-servo toggles to the given PWM).</li>
     <li><b>Grab / Release</b> — <code>DO_GRIPPER</code>.</li>
+    <li><b>Winch</b> — <code>DO_WINCH</code>: <i>relax</i> free-spools, <i>length</i> pays out a relative metres amount (negative reels in), <i>rate</i> holds a m/s speed.</li>
+    <li><b>Parachute</b> — <code>DO_PARACHUTE</code>: enable, disable, or release.</li>
   </ul>
+  <h3>Await ack</h3>
+  <p>For the command verbs (everything except the gimbal-manager messages), tick <b>Await ack</b> to wait for the device's <code>COMMAND_ACK</code> and confirm it accepted the command, retransmitting up to <b>Max retries</b> times every <b>Timeout</b> ms. On success the ack rides the output as a <code>command/ack</code> message; a rejection or timeout is emitted as a structured <code>mavlink/error</code>. The gimbal-manager verbs are messages with no ack, so they stay fire-and-forget regardless.</p>
   <h3>Inputs</h3>
-  <p><code>msg.payload</code> overrides any editor value: <code>action</code>, <code>target_system</code>, <code>target_component</code>, and the per-action fields (<code>interval</code>, <code>count</code>, <code>sequence</code>, <code>stream_id</code>, <code>status_frequency</code>, <code>camera_mode</code>, <code>distance</code>, <code>trigger_now</code>, <code>pitch</code>, <code>roll</code>, <code>yaw</code>, <code>gimbal_device_id</code>, <code>yaw_lock</code>, <code>instance</code>, <code>pwm</code>, <code>on</code>, <code>grip_action</code>).</p>
+  <p><code>msg.payload</code> overrides any editor value: <code>action</code>, <code>target_system</code>, <code>target_component</code>, and the per-action fields (<code>interval</code>, <code>count</code>, <code>sequence</code>, <code>stream_id</code>, <code>status_frequency</code>, <code>camera_mode</code>, <code>zoom_type</code>, <code>zoom_value</code>, <code>focus_type</code>, <code>focus_value</code>, <code>distance</code>, <code>trigger_now</code>, <code>pitch</code>, <code>roll</code>, <code>yaw</code>, <code>gimbal_device_id</code>, <code>yaw_lock</code>, <code>instance</code>, <code>pwm</code>, <code>on</code>, <code>grip_action</code>, <code>winch_action</code>, <code>length</code>, <code>rate</code>, <code>parachute_action</code>, <code>period</code>, <code>timeout_ms</code>, <code>max_retries</code>).</p>
   <h3>Output</h3>
   <p>Without a connection, a <code>mavlink/send</code> message for <b>mavlink-ai-out</b>. Failures are emitted as a structured <code>mavlink/error</code> message on the same output.</p>
 </script>
