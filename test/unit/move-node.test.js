@@ -187,6 +187,25 @@ test('msg.payload.stream=true streams even from a one-shot node and each input r
   assert.ok(node._streamTimer, 'still a single running stream');
 });
 
+test('refreshing a running stream does not force an extra immediate send — the rate is honored (#128)', async (t) => {
+  /** Slow rate so the repeat timer cannot fire during the test; only the initial
+   * start should send immediately. Later refreshes must update the streamed
+   * setpoint for the next scheduled tick, not fire an out-of-band send. */
+  const { RED, node, conn } = setup(
+    { coordinate: 'local', preset: 'position', altitude: '5', stream: true, streamRateHz: 0.2 },
+    { withConnection: true }
+  );
+  t.after(() => RED.close(node));
+
+  await RED.inject(node, { payload: {} });
+  assert.strictEqual(conn.sent.length, 1, 'initial start sends immediately');
+
+  await RED.inject(node, { payload: { altitude: 12 } });
+  await RED.inject(node, { payload: { altitude: 18 } });
+  assert.strictEqual(conn.sent.length, 1, 'refreshes do not send out-of-band — the rate is honored');
+  assert.strictEqual(node._streamState.fields.z, -18, 'streamed setpoint refreshed for the next tick');
+});
+
 test('a plain input keeps a payload-started stream alive and refreshes it (not one-shot) (#128)', async (t) => {
   const { RED, node, conn } = setup(
     { coordinate: 'local', preset: 'position', altitude: '5', streamRateHz: 50 },

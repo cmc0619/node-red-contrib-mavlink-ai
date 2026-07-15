@@ -263,18 +263,20 @@ function streamTick(node) {
 }
 
 /**
- * Send the streamed setpoint immediately and ensure the repeat timer is running
- * (a running timer just picks up the refreshed `_streamState` on its next tick).
- * The timer is unref'd so it never holds the process open.
+ * Ensure the repeat timer is running for the streamed setpoint. Only the initial
+ * start forces an immediate send; a refresh on an already-running stream just
+ * updates `_streamState` (done by the caller) and lets the next scheduled tick
+ * pick it up, so a burst of inputs can't outrun the configured rate. The timer
+ * is unref'd so it never holds the process open.
  *
  * @param {object} node
  * @returns {void}
  */
 function startStream(node) {
-  streamTick(node);
   if (node._streamTimer) {
     return;
   }
+  streamTick(node);
   node._streamTimer = setInterval(() => streamTick(node), Math.round(1000 / node.streamRateHz));
   if (typeof node._streamTimer.unref === 'function') {
     node._streamTimer.unref();
