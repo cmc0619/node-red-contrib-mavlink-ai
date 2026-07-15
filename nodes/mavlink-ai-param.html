@@ -145,6 +145,13 @@
 
       /** Monotonic guard so a superseded param-detail response can't overwrite a newer one. */
       let detailRequestId = 0;
+      /**
+       * Generation bumped on every Connection/Profile/Action change. The catalog
+       * status and download callbacks capture it and ignore their response if the
+       * context has moved on, so a delayed reply can't restore a stale source's
+       * URL row or status for a profile the user already switched away from.
+       */
+      let ctxRequestId = 0;
 
       /**
        * Render the value control for one parameter definition. Enumerated
@@ -232,7 +239,15 @@
           $box.append($lbl);
         });
         const $custom = $('<label style="display:block; font-weight:normal; margin:4px 0 0 0;"></label>');
-        const $customCb = $('<input type="checkbox" style="width:auto; margin-right:6px;">').prop('checked', !representable && current !== '');
+        /**
+         * Custom mode whenever the current value isn't a clean combination of
+         * known bits — including a blank value. A blank must land in custom mode
+         * (visible, empty input) rather than an all-unchecked checklist that
+         * looks like 0 but persists blank: blank means "defer to
+         * msg.payload.param_value", and an unchecked checklist hiding a blank
+         * input would silently drop that intent.
+         */
+        const $customCb = $('<input type="checkbox" style="width:auto; margin-right:6px;">').prop('checked', !representable);
         $custom.append($customCb).append(document.createTextNode('Custom value…'));
         $box.append($custom);
         $choices.append($box);
@@ -253,7 +268,7 @@
         }
         $box.find('input[data-bit]').on('change', syncBitmask);
         $customCb.on('change', syncBitmask);
-        if (!representable && current !== '') {
+        if (!representable) {
           $box.find('input[data-bit]').prop('disabled', true);
           $value.show();
         } else {
@@ -270,6 +285,10 @@
        * @returns {void}
        */
       function loadParamDetail() {
+        /** Invalidate any in-flight detail request first, before the early
+         * returns, so clearing the Param ID or leaving the Set action can't be
+         * overwritten by an older response arriving late. */
+        const rid = ++detailRequestId;
         if ($('#node-input-action').val() !== 'set') {
           return;
         }
@@ -279,7 +298,6 @@
           return;
         }
         const ctx = paramContext();
-        const rid = ++detailRequestId;
         $.getJSON('mavlink-ai/param-catalog/param', { firmware: ctx.firmware, vehicleType: ctx.vehicleType, paramId: paramId })
           .done(function (resp) {
             if (rid !== detailRequestId) {
@@ -328,11 +346,15 @@
        */
       function loadCatalogStatus() {
         const ctx = paramContext();
+        const gen = ctxRequestId;
         const $status = $('#mav-param-catalog-status');
         const $btn = $('#mav-param-catalog-load');
         const $urlRow = $('#mav-param-catalog-url-row');
         $.getJSON('mavlink-ai/param-catalog', { firmware: ctx.firmware, vehicleType: ctx.vehicleType })
           .done(function (resp) {
+            if (gen !== ctxRequestId) {
+              return;
+            }
             if (!resp || !resp.source) {
               $status.text('No parameter catalog for this profile — enter the Param ID by hand.');
               $btn.hide();
@@ -353,6 +375,9 @@
             }
           })
           .fail(function () {
+            if (gen !== ctxRequestId) {
+              return;
+            }
             $status.text('');
             $btn.hide();
             $urlRow.hide();
@@ -362,6 +387,7 @@
       /** Download/refresh the catalog for the current firmware/vehicle. */
       function loadCatalog() {
         const ctx = paramContext();
+        const gen = ctxRequestId;
         /** Only forward the URL when its row is active (PX4). A source with its
          * own default URL (ArduPilot) must not be overridden by a value left in
          * the hidden field from an earlier PX4 selection. */
@@ -377,11 +403,17 @@
           data: JSON.stringify({ firmware: ctx.firmware, vehicleType: ctx.vehicleType, url: url || undefined })
         })
           .done(function (resp) {
+            if (gen !== ctxRequestId) {
+              return;
+            }
             $status.text('Loaded ' + resp.count + ' parameters (' + resp.sourceKey + ').');
             loadParamList();
             loadParamDetail();
           })
           .fail(function (xhr) {
+            if (gen !== ctxRequestId) {
+              return;
+            }
             const err = xhr && xhr.responseJSON ? xhr.responseJSON.error : 'download failed';
             $status.text('Catalog download failed: ' + err);
           });
@@ -404,7 +436,10 @@
         revalidateValue();
       }
 
-      $('#node-input-action').on('change', refresh);
+      $('#node-input-action').on('change', function () {
+        ctxRequestId += 1;
+        refresh();
+      });
       $('#node-input-paramType').on('change', revalidateValue);
       $('#node-input-paramId').on('change', loadParamDetail);
       /**
@@ -415,6 +450,7 @@
        * firmware can't keep writing into paramValue for the new profile.
        */
       function onContextChange() {
+        ctxRequestId += 1;
         loadCatalogStatus();
         loadParamList();
         loadParamDetail();

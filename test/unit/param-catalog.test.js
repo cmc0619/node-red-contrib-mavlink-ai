@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { ParamCatalog } = require('../../lib/params/param-catalog');
+const { ParamCatalog, defaultFetchText } = require('../../lib/params/param-catalog');
 const { resolveParamDefSource } = require('../../lib/params/param-def-sources');
 
 /** A fresh temp cache dir per catalog. */
@@ -40,9 +40,10 @@ test('resolveParamDefSource maps firmware/vehicle and degrades for the rest (#12
   assert.strictEqual(resolveParamDefSource({ firmware: 'ardupilot', vehicleType: 'gcs' }), null);
 
   const px4 = resolveParamDefSource({ firmware: 'px4', vehicleType: 'copter' });
-  assert.strictEqual(px4.sourceKey, 'px4');
+  assert.strictEqual(px4.sourceKey, 'px4-copter', 'PX4 keys by vehicle so profiles do not collide');
   assert.strictEqual(px4.url, null);
   assert.strictEqual(px4.urlRequired, true);
+  assert.strictEqual(resolveParamDefSource({ firmware: 'px4' }).sourceKey, 'px4');
 
   assert.strictEqual(resolveParamDefSource({ firmware: 'generic', vehicleType: 'copter' }), null);
   assert.strictEqual(resolveParamDefSource({ firmware: 'custom' }), null);
@@ -109,6 +110,37 @@ test('a fetch failure propagates from update (#125)', async () => {
     }
   });
   await assert.rejects(catalog.update({ firmware: 'ardupilot', vehicleType: 'copter' }), /network down/);
+});
+
+test('defaultFetchText normalizes non-2xx and transport failures to a structured code (#125)', async () => {
+  const origFetch = global.fetch;
+  try {
+    global.fetch = async () => ({ ok: false, status: 503, statusText: 'Unavailable', text: async () => '' });
+    await assert.rejects(defaultFetchText('http://x/params.json'), (e) => e.code === 'PARAM_CATALOG_FETCH_FAILED');
+    global.fetch = async () => {
+      throw new Error('ECONNREFUSED');
+    };
+    await assert.rejects(defaultFetchText('http://x/params.json'), (e) => e.code === 'PARAM_CATALOG_FETCH_FAILED');
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('a failed update leaves the previously cached catalog intact (#125)', async () => {
+  const catalog = makeCatalog(APM_PDEF);
+  await catalog.update({ firmware: 'ardupilot', vehicleType: 'copter' });
+  assert.strictEqual(catalog.get({ firmware: 'ardupilot', vehicleType: 'copter' }).count, 2);
+  /** A later download returning garbage fails to parse and must not clobber the good cache. */
+  catalog.fetchText = async () => '{not json';
+  await assert.rejects(
+    catalog.update({ firmware: 'ardupilot', vehicleType: 'copter' }),
+    (e) => e.code === 'PARAM_DEF_PARSE_FAILED'
+  );
+  assert.strictEqual(
+    catalog.get({ firmware: 'ardupilot', vehicleType: 'copter' }).count,
+    2,
+    'previous cache survived the failed update'
+  );
 });
 
 test('getByKey neutralizes path traversal in the source key (#125)', () => {
