@@ -385,17 +385,22 @@ test('outbound send resolves profile names, applies profile target defaults, and
   };
   t.after(async () => RED.close(conn));
 
-  // A profile *name* (what inbound payloads and hand-authored flows carry)
-  // resolves to the real config node: framed from sysid 42, and the target
-  // defaults come from that profile (7), not the connection default's (1).
+  /**
+   * A profile *name* (what inbound payloads and hand-authored flows carry)
+   * resolves to the real config node: HEARTBEAT is framed from that profile's
+   * source sysid (42). HEARTBEAT is a broadcast with no target_system field, so
+   * it carries no routing target regardless of the profile default (#148) — the
+   * per-profile target-default routing for *addressed* messages is covered in
+   * connection-send-targets.test.js.
+   */
   await conn.send({ name: 'HEARTBEAT', profile: 'Alt', fields: { type: 'MAV_TYPE_GCS' } });
   assert.strictEqual(sent[sent.length - 1].buf[5], 42);
-  assert.strictEqual(sent[sent.length - 1].meta.targetSystem, 7);
+  assert.strictEqual(sent[sent.length - 1].meta.targetSystem, undefined);
 
-  // No profile: connection default identity and defaults.
+  /** No profile: connection default source identity; a broadcast still has no target. */
   await conn.send({ name: 'HEARTBEAT', fields: { type: 'MAV_TYPE_GCS' } });
   assert.strictEqual(sent[sent.length - 1].buf[5], 255);
-  assert.strictEqual(sent[sent.length - 1].meta.targetSystem, 1);
+  assert.strictEqual(sent[sent.length - 1].meta.targetSystem, undefined);
 
   // Unknown explicit profile: reject, never silently fall back to the default.
   await assert.rejects(

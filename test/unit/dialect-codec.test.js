@@ -290,3 +290,13 @@ test('auto version detects v1 from a real parsed frame, not header.magic (#138, 
   assert.strictEqual(auto.effectiveVersion(3), 'v1');
   assert.strictEqual(auto.encode('HEARTBEAT', HB_FIELDS, { targetSystem: 3 })[0], 0xfe);
 });
+
+test('addressesTarget distinguishes addressed messages from broadcasts (#148)', () => {
+  const b = loadDialect('common');
+  const codec = new MavlinkCodec({ bundle: b, version: 'v2', sysid: 255, compid: 190 });
+  assert.strictEqual(codec.addressesTarget('COMMAND_LONG'), true);
+  assert.strictEqual(codec.addressesTarget('MISSION_REQUEST_LIST'), true);
+  assert.strictEqual(codec.addressesTarget('HEARTBEAT'), false);
+  assert.strictEqual(codec.addressesTarget('ATTITUDE'), false);
+  assert.strictEqual(codec.addressesTarget('NOT_A_REAL_MESSAGE'), false);
+});
