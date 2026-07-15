@@ -122,12 +122,18 @@ test('udp-peer routes sends to the addressed sysid endpoint (#21)', () => {
   transport.peersBySysid.set(2, { address: '127.0.0.1', port: 22222 });
   transport.learnedPeer = { address: '127.0.0.1', port: 22222 }; // vehicle 2 spoke last
 
-  // Addressed sends go to the owning endpoint, not the last sender.
+  /** Addressed sends go to the owning endpoint, not the last sender. */
   assert.deepStrictEqual(transport._target({ targetSystem: 1 }), { address: '127.0.0.1', port: 11111 });
   assert.deepStrictEqual(transport._target({ targetSystem: 2 }), { address: '127.0.0.1', port: 22222 });
-  // Unknown sysid / broadcast falls back to the last sender.
+  /** An unknown *specific* sysid falls back to the learned fallback peer. */
   assert.deepStrictEqual(transport._target({ targetSystem: 9 }), { address: '127.0.0.1', port: 22222 });
-  assert.deepStrictEqual(transport._target(), { address: '127.0.0.1', port: 22222 });
+  /** Broadcast (0) and untargeted sends fan out to every known peer (#148). */
+  const bothPeers = [
+    { address: '127.0.0.1', port: 11111 },
+    { address: '127.0.0.1', port: 22222 }
+  ];
+  assert.deepStrictEqual(transport._targets({ targetSystem: 0 }), bothPeers);
+  assert.deepStrictEqual(transport._targets(), bothPeers);
 
   // A manual remote override beats everything.
   transport.remoteHost = '10.0.0.1';
@@ -174,6 +180,68 @@ test('udp-peer observes candidates but only confirmPeer commits mappings (#21, #
   await transport.stop();
   await new Promise((r) => v1.close(r));
   await new Promise((r) => v2.close(r));
+});
+
+test('udp-peer broadcast (target_system 0) fans out to every learned peer (#148)', async () => {
+  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  const addr = await new Promise((resolve) => { transport.on('listening', resolve); transport.start(); });
+
+  const v1 = dgram.createSocket('udp4');
+  const v2 = dgram.createSocket('udp4');
+  await new Promise((r) => v1.bind(0, '127.0.0.1', r));
+  await new Promise((r) => v2.bind(0, '127.0.0.1', r));
+
+  const got1 = new Promise((resolve) => v1.on('message', resolve));
+  const got2 = new Promise((resolve) => v2.on('message', resolve));
+
+  const twoSeen = new Promise((resolve) => { let n = 0; transport.on('data', () => { if (++n === 2) resolve(); }); });
+  v1.send(Buffer.from([0xfd, 9, 0, 0, 0, 1, 1, 0, 0, 0]), addr.port, '127.0.0.1');
+  v2.send(Buffer.from([0xfe, 9, 0, 2, 1, 0]), addr.port, '127.0.0.1');
+  await twoSeen;
+  transport.confirmPeer(1);
+  transport.confirmPeer(2);
+
+  /** A broadcast must reach both vehicles, not only the last sender. */
+  await transport.send(Buffer.from([1, 2, 3]), { targetSystem: 0 });
+  const [m1, m2] = await Promise.all([got1, got2]);
+  assert.deepStrictEqual([...m1], [1, 2, 3]);
+  assert.deepStrictEqual([...m2], [1, 2, 3]);
+
+  await transport.stop();
+  await new Promise((r) => v1.close(r));
+  await new Promise((r) => v2.close(r));
+});
+
+test('a later GCS confirmation does not steal the fallback; untargeted sends still reach the vehicle (#148)', async () => {
+  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  const addr = await new Promise((resolve) => { transport.on('listening', resolve); transport.start(); });
+
+  const vehicle = dgram.createSocket('udp4');
+  const gcs = dgram.createSocket('udp4');
+  await new Promise((r) => vehicle.bind(0, '127.0.0.1', r));
+  await new Promise((r) => gcs.bind(0, '127.0.0.1', r));
+
+  const gotVehicle = new Promise((resolve) => vehicle.on('message', resolve));
+
+  const twoSeen = new Promise((resolve) => { let n = 0; transport.on('data', () => { if (++n === 2) resolve(); }); });
+  /** Vehicle sysid 1 speaks first; a GCS at sysid 255 confirms later. */
+  vehicle.send(Buffer.from([0xfd, 9, 0, 0, 0, 1, 1, 0, 0, 0]), addr.port, '127.0.0.1');
+  gcs.send(Buffer.from([0xfd, 9, 0, 0, 0, 255, 1, 0, 0, 0]), addr.port, '127.0.0.1');
+  await twoSeen;
+
+  transport.confirmPeer(1);
+  transport.confirmPeer(255);
+
+  assert.strictEqual(transport.learnedPeer.port, vehicle.address().port, 'GCS did not steal the fallback');
+
+  /** An untargeted send fans out to all peers, so the vehicle still gets it. */
+  await transport.send(Buffer.from([7]), {});
+  const m = await gotVehicle;
+  assert.deepStrictEqual([...m], [7]);
+
+  await transport.stop();
+  await new Promise((r) => vehicle.close(r));
+  await new Promise((r) => gcs.close(r));
 });
 
 test('non-MAVLink datagrams never become peer candidates (#85)', async () => {
