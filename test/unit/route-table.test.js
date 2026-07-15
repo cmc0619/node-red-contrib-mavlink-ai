@@ -70,6 +70,39 @@ test('routed mode can fall back to default profile', () => {
   assert.strictEqual(decision.profile, 'DefaultProfile');
 });
 
+test('routed mode with an empty route table fails closed, not open (#150)', () => {
+  /**
+   * Deleting the last route leaves routed mode with no routes. It must honor
+   * the reject policy, not fall through to single-profile accept-everything and
+   * decode every packet with the default profile.
+   */
+  const router = new PacketRouter({
+    mode: 'routed',
+    defaultProfile: 'DefaultProfile',
+    acceptedSysids: [],
+    routes: [],
+    resolveProfile: (p) => p
+  });
+  const decision = router.route(1, 1);
+  assert.strictEqual(decision.accepted, false);
+  assert.strictEqual(decision.profile, null);
+  assert.strictEqual(decision.reason, 'unmatched-reject');
+});
+
+test('routed mode with an empty route table still honors unmatched=default (#150)', () => {
+  const router = new PacketRouter({
+    mode: 'routed',
+    unmatched: 'default',
+    defaultProfile: 'DefaultProfile',
+    routes: [],
+    resolveProfile: (p) => p
+  });
+  const decision = router.route(1, 1);
+  assert.strictEqual(decision.accepted, true);
+  assert.strictEqual(decision.profile, 'DefaultProfile');
+  assert.strictEqual(decision.reason, 'unmatched-default');
+});
+
 test('single-profile mode applies accept filters', () => {
   const router = new PacketRouter({
     mode: 'single-profile',
