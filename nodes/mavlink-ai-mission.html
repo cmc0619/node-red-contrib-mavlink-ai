@@ -24,6 +24,12 @@
        * common case (the Connection carries a default profile) stays uncluttered
        * (#127). Expand it automatically when a profile is already set, so an
        * existing override is never hidden.
+       *
+       * The section is NOT hidden in the markup: Node-RED builds the config-node
+       * picker (replacing the Profile input with a select) before oneditprepare,
+       * sizing it from the input's width — inside a display:none parent that
+       * width is 0 and the picker renders unusably narrow. So it starts visible
+       * and this initial call hides it after the picker is built (#127).
        */
       function toggleAdvanced(show) {
         $('.mav-advanced').toggle(show);
@@ -50,7 +56,7 @@
   <div class="form-row">
     <a href="#" id="node-mav-advanced-toggle" style="color: inherit;"><i class="fa fa-caret-right"></i> Advanced</a>
   </div>
-  <div class="mav-advanced" style="display: none;">
+  <div class="mav-advanced">
     <div class="form-row">
       <label for="node-input-profile">Profile</label>
       <input type="text" id="node-input-profile">
