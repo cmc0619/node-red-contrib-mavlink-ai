@@ -21,6 +21,15 @@ const { MavlinkError, toMavlinkError, errorPayload } = require('../lib/util/erro
 const HEARTBEAT_MIN_INTERVAL_MS = 1000;
 
 /**
+ * MAVLink 2 incompatibility flags this implementation understands. The spec
+ * requires discarding any inbound frame that sets an incompat flag the receiver
+ * doesn't implement. Today only MAVLINK_IFLAG_SIGNED (0x01) is handled (its
+ * signature is verified per profile policy); a frame setting any other bit is
+ * rejected in onPacket rather than decoded with an unknown framing (#153).
+ */
+const KNOWN_INCOMPAT_FLAGS = 0x01;
+
+/**
  * Upper bound on how long the close handler waits for a transport stop() to
  * settle before signalling Node-RED anyway (issue #140). A socket or server
  * whose close() callback never fires would otherwise leave the deploy hung; a
@@ -1023,6 +1032,24 @@ module.exports = function registerMavlinkAiConnection(RED) {
      */
     function onPacket(packet) {
       const header = packet.header;
+      /**
+       * Discard a frame carrying a MAVLink-2 incompatibility flag we don't
+       * implement (#153). The spec mandates dropping such a frame: an unknown
+       * incompat flag can change how the rest of the frame must be interpreted,
+       * so decoding it anyway risks misreading the payload. Only IFLAG_SIGNED
+       * (0x01) is understood — its signature is checked below; any other bit set
+       * means we cannot safely decode. (v1 frames have no incompat field, so
+       * incompatibilityFlags is 0/undefined and this never trips.)
+       */
+      const incompatFlags = Number(header.incompatibilityFlags) || 0;
+      if (incompatFlags & ~KNOWN_INCOMPAT_FLAGS) {
+        node.emitter.emit('rejected', {
+          sysid: header.sysid,
+          compid: header.compid,
+          reason: 'incompat-unsupported'
+        });
+        return;
+      }
       // Track the peer's wire version, keyed by its sysid, so an "auto" profile
       // frames outbound packets the way *that* peer speaks — a v1-only vehicle
       // ignores v2 frames, and a mixed fleet must not have one peer's version
