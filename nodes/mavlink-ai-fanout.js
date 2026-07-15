@@ -46,6 +46,14 @@ module.exports = function registerMavlinkAiFanout(RED) {
     node.spacingMs = toInt(config.spacingMs, 0);
     node.stopOnError = toBool(config.stopOnError, false);
     node.dryRun = toBool(config.dryRun, false);
+    /**
+     * How many per-target await-ack workflows may run at once (#155). Default 1
+     * keeps the original strictly-sequential behavior; a higher value lets a
+     * "simultaneous" formation command dispatch to several vehicles in parallel
+     * so one slow/timing-out straggler doesn't delay the rest by timeout×retries.
+     * Clamped to at least 1.
+     */
+    node.concurrency = Math.max(1, toInt(config.concurrency, 1));
 
     let configBase = {};
     if (config.fields) {
@@ -67,10 +75,13 @@ module.exports = function registerMavlinkAiFanout(RED) {
 
     const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    // Close-time abort state (#83): the currently running per-target ACK
-    // workflow, and a flag the loops check so a closed node stops fanning out
-    // to the remaining targets instead of pacing on until success/timeout.
-    let activeWorkflow = null;
+    /**
+     * Close-time abort state (#83): every in-flight per-target ACK workflow (a
+     * Set now that up to node.concurrency run at once, #155), and a flag the
+     * dispatcher checks so a closed node stops fanning out to the remaining
+     * targets instead of pacing on until success/timeout.
+     */
+    const activeWorkflows = new Set();
     let closed = false;
 
     node.on('input', async (msg, send, done) => {
@@ -148,29 +159,32 @@ module.exports = function registerMavlinkAiFanout(RED) {
         const timedOut = [];
         const skipped = [];
         let aborted = false;
+        let dispatched = 0;
 
-        for (let i = 0; i < decorated.length; i += 1) {
+        /**
+         * Run the command protocol for one target and fold the outcome into the
+         * aggregation arrays. Never rejects — every error is classified here — so
+         * the dispatcher can Promise.race the in-flight set safely. Sets `aborted`
+         * on the first failure when stop-on-error is on, so the dispatcher stops
+         * launching new targets.
+         *
+         * @param {number} i  index into `decorated`
+         * @returns {Promise<void>}
+         */
+        async function runTarget(i) {
           const m = decorated[i];
           const sysid = m.target_system;
-          if (closed) {
-            break; // node closed mid-run: stop processing remaining targets (#83)
-          }
-          if (aborted) {
-            skipped.push(sysid);
-            results[sysid] = { error: 'SKIPPED', reason: 'stop-on-error aborted remaining targets' };
-            continue;
-          }
-          node.status({ fill: 'blue', shape: 'dot', text: `ack ${i + 1}/${decorated.length} (sys ${sysid})` });
+          dispatched += 1;
+          node.status({ fill: 'blue', shape: 'dot', text: `ack ${dispatched}/${decorated.length} (sys ${sysid})` });
+          let workflow;
           try {
-            const workflow = new CommandSend({
+            workflow = new CommandSend({
               connection: node.connection,
-              // The connection must encode these sends with this node's
-              // profile, not its own default.
+              /** The connection must encode these sends with this node's profile, not its own default. */
               profile: node.profile.id,
               targetSystem: sysid,
               targetComponent: m.target_component,
-              // Our own identity, so an ACK addressed to another GCS sharing
-              // this link doesn't settle the workflow (#99).
+              /** Our own identity, so an ACK addressed to another GCS sharing this link doesn't settle the workflow (#99). */
               sourceSystem: defaults.sourceSystemId,
               sourceComponent: defaults.sourceComponentId,
               command: m.fields.command,
@@ -180,7 +194,7 @@ module.exports = function registerMavlinkAiFanout(RED) {
               timeoutMs: node.timeoutMs,
               maxRetries: node.maxRetries
             });
-            activeWorkflow = workflow;
+            activeWorkflows.add(workflow);
             const res = await workflow.run();
             accepted.push(sysid);
             results[sysid] = { result: res.payload.result_name || res.payload.result, command: res.payload.command_name };
@@ -197,15 +211,57 @@ module.exports = function registerMavlinkAiFanout(RED) {
               aborted = true;
             }
           } finally {
-            activeWorkflow = null;
-          }
-          if (node.spacingMs > 0 && i < decorated.length - 1) {
-            await delay(node.spacingMs);
+            if (workflow) {
+              activeWorkflows.delete(workflow);
+            }
           }
         }
 
+        /**
+         * Dispatch up to node.concurrency targets at once. A free slot is awaited
+         * before each launch; `spacingMs` still paces successive dispatches (a gap
+         * before every launch but the first), so at concurrency 1 the run/gap/run
+         * cadence is identical to the original sequential loop. `closed` (redeploy)
+         * and `aborted` (stop-on-error) both halt further dispatch.
+         */
+        let nextIndex = 0;
+        const inFlight = new Set();
+        while (nextIndex < decorated.length && !closed && !aborted) {
+          while (inFlight.size >= node.concurrency) {
+            await Promise.race(inFlight);
+            if (closed || aborted) {
+              break;
+            }
+          }
+          if (closed || aborted) {
+            break;
+          }
+          if (node.spacingMs > 0 && nextIndex > 0) {
+            await delay(node.spacingMs);
+            if (closed || aborted) {
+              break;
+            }
+          }
+          const i = nextIndex;
+          nextIndex += 1;
+          const p = runTarget(i).finally(() => inFlight.delete(p));
+          inFlight.add(p);
+        }
+        await Promise.allSettled(inFlight);
+
+        /** Aborted by close (redeploy): emit no output from an obsolete node. */
         if (closed) {
-          return done(); // aborted by close: no output from an obsolete node
+          return done();
+        }
+
+        /**
+         * Stop-on-error leaves the targets never dispatched — mark them skipped in
+         * target order so the caller sees exactly which vehicles were not commanded.
+         */
+        for (let i = nextIndex; aborted && i < decorated.length; i += 1) {
+          const sysid = decorated[i].target_system;
+          skipped.push(sysid);
+          results[sysid] = { error: 'SKIPPED', reason: 'stop-on-error aborted remaining targets' };
         }
         msg.topic = 'swarm/ack';
         msg.payload = { accepted, failed, timedOut, skipped, results };
@@ -248,15 +304,18 @@ module.exports = function registerMavlinkAiFanout(RED) {
       done();
     });
 
-    // Abort the in-flight per-target ACK workflow and stop the fan-out loops
-    // on close (#83), so a partial deploy doesn't keep commanding the
-    // remaining targets from an obsolete node.
+    /**
+     * Abort every in-flight per-target ACK workflow and stop the fan-out
+     * dispatcher on close (#83), so a partial deploy doesn't keep commanding the
+     * remaining targets from an obsolete node. Multiple may be in flight once
+     * concurrency > 1 (#155).
+     */
     node.on('close', function closeFanout(done) {
       closed = true;
-      if (activeWorkflow) {
-        activeWorkflow.abort('mavlink-ai-fanout node closed');
-        activeWorkflow = null;
+      for (const workflow of activeWorkflows) {
+        workflow.abort('mavlink-ai-fanout node closed');
       }
+      activeWorkflows.clear();
       done();
     });
   }
