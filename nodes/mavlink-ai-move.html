@@ -10,9 +10,13 @@
     velocity: { velocity: true },
     velocity_yaw_rate: { velocity: true, yawRate: true },
     position_velocity: { position: true, velocity: true },
+    acceleration: { accel: true },
+    acceleration_yaw: { accel: true, yaw: true },
+    force: { accel: true },
+    force_yaw: { accel: true, yaw: true },
     yaw: { yaw: true },
     yaw_rate: { yawRate: true },
-    custom: { position: true, velocity: true, yaw: true, yawRate: true, custom: true }
+    custom: { position: true, velocity: true, accel: true, yaw: true, yawRate: true, custom: true }
   };
 
   /** Frame options offered per coordinate kind: [value, label]. */
@@ -60,6 +64,9 @@
       velNorth: { value: '' },
       velEast: { value: '' },
       climb: { value: '' },
+      accelNorth: { value: '' },
+      accelEast: { value: '' },
+      accelUp: { value: '' },
       yaw: { value: '' },
       yawRate: { value: '' }
     },
@@ -107,6 +114,7 @@
         $('.mav-move-local-pos').toggle(!!groups.position && !isGlobal);
         $('.mav-move-global-pos').toggle(!!groups.position && isGlobal);
         $('.mav-move-velocity').toggle(!!groups.velocity);
+        $('.mav-move-accel').toggle(!!groups.accel);
         $('.mav-move-yaw').toggle(!!groups.yaw);
         $('.mav-move-yawrate').toggle(!!groups.yawRate);
         $('.mav-move-typemask').toggle(!!groups.custom);
@@ -155,6 +163,10 @@
       <option value="velocity">Velocity</option>
       <option value="velocity_yaw_rate">Velocity + Yaw rate</option>
       <option value="position_velocity">Position + Velocity</option>
+      <option value="acceleration">Acceleration</option>
+      <option value="acceleration_yaw">Acceleration + Yaw</option>
+      <option value="force">Force</option>
+      <option value="force_yaw">Force + Yaw</option>
       <option value="yaw">Yaw only</option>
       <option value="yaw_rate">Yaw-rate only</option>
       <option value="custom">Custom (raw type_mask)</option>
@@ -203,6 +215,19 @@
     <input type="number" step="any" id="node-input-climb" placeholder="up-positive (mapped to -vz)">
   </div>
 
+  <div class="form-row mav-move-accel">
+    <label for="node-input-accelNorth">Accel North</label>
+    <input type="number" step="any" id="node-input-accelNorth" placeholder="+ forward / north (m/s² or N with Force)">
+  </div>
+  <div class="form-row mav-move-accel">
+    <label for="node-input-accelEast">Accel East</label>
+    <input type="number" step="any" id="node-input-accelEast" placeholder="+ right / east (m/s² or N with Force)">
+  </div>
+  <div class="form-row mav-move-accel">
+    <label for="node-input-accelUp">Accel Up</label>
+    <input type="number" step="any" id="node-input-accelUp" placeholder="up-positive (mapped to -afz)">
+  </div>
+
   <div class="form-row mav-move-yaw">
     <label for="node-input-yaw">Yaw (°)</label>
     <input type="number" step="any" id="node-input-yaw" placeholder="heading in degrees">
@@ -222,13 +247,13 @@
   <h3>Sending</h3>
   <p>With a <b>Connection</b> the node sends the setpoint directly (fire-and-forget — setpoints carry no ack). Without one it emits a <code>mavlink/send</code> message to wire into a <b>mavlink-ai-out</b> node. A <b>Profile</b> is always required for encoding.</p>
   <h3>Setpoint presets</h3>
-  <p>The <b>Setpoint</b> selector builds the correct <code>type_mask</code> for you. Because a set mask bit means <i>ignore</i> that dimension, "Position" is encoded as "ignore everything except position". Pick <b>Custom</b> to enter a raw 0..65535 mask.</p>
+  <p>The <b>Setpoint</b> selector builds the correct <code>type_mask</code> for you. Because a set mask bit means <i>ignore</i> that dimension, "Position" is encoded as "ignore everything except position". <b>Acceleration</b> drives the <code>af</code> vector as an acceleration; <b>Force</b> sends the same <code>af</code> inputs but sets the force bit (bit 9) so the autopilot treats them as a force. Pick <b>Custom</b> to enter a raw 0..65535 mask.</p>
   <h3>Frames &amp; axes</h3>
   <p>Vertical inputs are <b>up-positive</b>. For a <b>Local</b> coordinate the <code>Altitude</code> maps to a negative <code>z</code> and <code>Climb</code> to a negative <code>vz</code> (NED is down-positive). For a <b>Global</b> coordinate the altitude is up-positive metres and is sent as-is; latitude/longitude are entered in degrees and converted to <code>1e7</code> integers. Yaw and yaw-rate are entered in degrees and sent in radians.</p>
   <h3>Modes</h3>
   <p>The vehicle must already be in a mode that accepts external setpoints (ArduPilot <b>GUIDED</b>, PX4 <b>OFFBOARD</b>) — switch modes with the <b>mavlink-ai-command</b> node's <i>Set Mode</i>.</p>
   <h3>Inputs</h3>
-  <p><code>msg.payload</code> may override any editor value: <code>coordinate</code>, <code>preset</code>, <code>frame</code>, <code>type_mask</code>, <code>north</code>, <code>east</code>, <code>altitude</code>, <code>lat</code>, <code>lon</code>, <code>velNorth</code>, <code>velEast</code>, <code>climb</code>, <code>yaw</code>, <code>yawRate</code>, <code>target_system</code>, <code>target_component</code>, and <code>time_boot_ms</code>.</p>
+  <p><code>msg.payload</code> may override any editor value: <code>coordinate</code>, <code>preset</code>, <code>frame</code>, <code>type_mask</code>, <code>north</code>, <code>east</code>, <code>altitude</code>, <code>lat</code>, <code>lon</code>, <code>velNorth</code>, <code>velEast</code>, <code>climb</code>, <code>accelNorth</code>, <code>accelEast</code>, <code>accelUp</code>, <code>yaw</code>, <code>yawRate</code>, <code>target_system</code>, <code>target_component</code>, and <code>time_boot_ms</code>.</p>
   <h3>Output</h3>
   <p>Without a connection, a <code>mavlink/send</code> message for <b>mavlink-ai-out</b>. Failures are emitted as a structured <code>mavlink/error</code> message on the same output.</p>
 </script>
