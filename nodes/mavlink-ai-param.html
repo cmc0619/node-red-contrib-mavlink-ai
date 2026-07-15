@@ -203,16 +203,30 @@
           return;
         }
 
-        /** Bitmask: OR of the checked bits, with a custom escape for unknown bits. */
+        /**
+         * Bitmask: a checklist that sums the selected bits, with a custom escape
+         * for unknown bits. Uses 2**bit arithmetic, not signed 32-bit bitwise
+         * shifts — `1 << 31` would go negative, so bit 31 (and a full UINT32
+         * mask up to 4294967295) must round-trip through plain arithmetic.
+         */
         const numeric = current === '' ? NaN : Number(current);
-        const knownMask = def.bitmask.reduce((acc, b) => acc | (1 << b.bit), 0);
-        const representable = Number.isInteger(numeric) && numeric >= 0 && (numeric & ~knownMask) === 0;
+        const knownBits = new Set(def.bitmask.map((b) => b.bit));
+        const bitIsSet = (value, bit) => Math.floor(value / Math.pow(2, bit)) % 2 === 1;
+        let representable = Number.isInteger(numeric) && numeric >= 0 && numeric <= 4294967295;
+        if (representable) {
+          for (let bit = 0; bit <= 31; bit += 1) {
+            if (bitIsSet(numeric, bit) && !knownBits.has(bit)) {
+              representable = false;
+              break;
+            }
+          }
+        }
         const $box = $('<div class="mav-pv-bitmask"></div>');
         def.bitmask.forEach(function (flag) {
           const $lbl = $('<label style="display:block; font-weight:normal; margin:0;"></label>');
           $('<input type="checkbox" style="width:auto; margin-right:6px;">')
             .attr('data-bit', flag.bit)
-            .prop('checked', representable && (numeric & (1 << flag.bit)) !== 0)
+            .prop('checked', representable && bitIsSet(numeric, flag.bit))
             .appendTo($lbl);
           $lbl.append(document.createTextNode(flag.label ? flag.label + ' (bit ' + flag.bit + ')' : 'bit ' + flag.bit));
           $box.append($lbl);
@@ -231,7 +245,7 @@
             $box.find('input[data-bit]').prop('disabled', false);
             let mask = 0;
             $box.find('input[data-bit]:checked').each(function () {
-              mask |= 1 << Number($(this).attr('data-bit'));
+              mask += Math.pow(2, Number($(this).attr('data-bit')));
             });
             $value.val(String(mask)).hide();
           }
@@ -327,6 +341,11 @@
             }
             $btn.show();
             $urlRow.toggle(!!resp.source.urlRequired);
+            /** Clear a URL carried over from a previous (PX4) source so it can't
+             * silently override a source that supplies its own default URL. */
+            if (!resp.source.urlRequired) {
+              $('#mav-param-catalog-url').val('');
+            }
             if (resp.cached) {
               $status.text('Catalog: ' + resp.cached.count + ' parameters cached (' + resp.source.sourceKey + ').');
             } else {
@@ -343,7 +362,12 @@
       /** Download/refresh the catalog for the current firmware/vehicle. */
       function loadCatalog() {
         const ctx = paramContext();
-        const url = String($('#mav-param-catalog-url').val() || '').trim();
+        /** Only forward the URL when its row is active (PX4). A source with its
+         * own default URL (ArduPilot) must not be overridden by a value left in
+         * the hidden field from an earlier PX4 selection. */
+        const url = $('#mav-param-catalog-url-row').is(':visible')
+          ? String($('#mav-param-catalog-url').val() || '').trim()
+          : '';
         const $status = $('#mav-param-catalog-status');
         $status.text('Downloading parameter catalog…');
         $.ajax({
@@ -383,14 +407,20 @@
       $('#node-input-action').on('change', refresh);
       $('#node-input-paramType').on('change', revalidateValue);
       $('#node-input-paramId').on('change', loadParamDetail);
-      $('#node-input-connection').on('change', function () {
+      /**
+       * A Connection/Profile change moves the whole context to a new
+       * firmware/vehicle: refresh the status, the picker list, and — via
+       * loadParamDetail (which also bumps detailRequestId, dropping any in-flight
+       * response) — the value control, so a stale enum/bitmask from the old
+       * firmware can't keep writing into paramValue for the new profile.
+       */
+      function onContextChange() {
         loadCatalogStatus();
         loadParamList();
-      });
-      $('#node-input-profile').on('change', function () {
-        loadCatalogStatus();
-        loadParamList();
-      });
+        loadParamDetail();
+      }
+      $('#node-input-connection').on('change', onContextChange);
+      $('#node-input-profile').on('change', onContextChange);
       $('#mav-param-catalog-load').on('click', loadCatalog);
 
       loadCatalogStatus();
