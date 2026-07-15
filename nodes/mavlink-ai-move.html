@@ -68,7 +68,19 @@
       accelEast: { value: '' },
       accelUp: { value: '' },
       yaw: { value: '' },
-      yawRate: { value: '' }
+      yawRate: { value: '' },
+      /** Optional continuous streaming (#128); rate only matters when streaming. */
+      stream: { value: false },
+      streamRateHz: {
+        value: 5,
+        validate: function (v) {
+          if (!$('#node-input-stream').is(':checked')) {
+            return true;
+          }
+          const n = Number(String(v == null ? '' : v).trim());
+          return Number.isFinite(n) && n > 0 && n <= 50;
+        }
+      }
     },
     inputs: 1,
     outputs: 1,
@@ -121,13 +133,21 @@
         $('#node-input-typeMask').trigger('change');
       }
 
+      /** Show the stream rate only when streaming is enabled. */
+      function refreshStream() {
+        $('.mav-move-streamrate').toggle($('#node-input-stream').is(':checked'));
+        $('#node-input-streamRateHz').trigger('change');
+      }
+
       $coordinate.on('change', function () {
         refreshFrames();
         refresh();
       });
       $preset.on('change', refresh);
+      $('#node-input-stream').on('change', refreshStream);
       refreshFrames();
       refresh();
+      refreshStream();
     }
   });
 </script>
@@ -147,6 +167,16 @@
   </div>
   <div class="form-tips" style="margin: -6px 0 8px 105px; width: 70%;">
     Set a Connection to <b>send</b> the setpoint directly; leave it empty to emit a <code>mavlink/send</code> message for a <b>mavlink-ai-out</b> node.
+  </div>
+  <div class="form-row">
+    <label for="node-input-stream" style="width: auto;"><input type="checkbox" id="node-input-stream" style="width: auto; vertical-align: top; margin-right: 6px;"> Stream continuously</label>
+  </div>
+  <div class="form-row mav-move-streamrate">
+    <label for="node-input-streamRateHz">Rate (Hz)</label>
+    <input type="number" id="node-input-streamRateHz" min="0.2" max="50" step="any" placeholder="5">
+  </div>
+  <div class="form-tips mav-move-streamrate" style="margin: -6px 0 8px 105px; width: 70%;">
+    Resends the setpoint at this rate until stopped. Needs a Connection. PX4 <b>OFFBOARD</b> requires a setpoint stream (≥ ~2 Hz) <i>before</i> the mode switch. Send <code>msg.payload.stream = false</code> to stop; the stream also stops automatically on redeploy.
   </div>
   <div class="form-row">
     <label for="node-input-coordinate">Coordinate</label>
@@ -250,10 +280,12 @@
   <p>The <b>Setpoint</b> selector builds the correct <code>type_mask</code> for you. Because a set mask bit means <i>ignore</i> that dimension, "Position" is encoded as "ignore everything except position". <b>Acceleration</b> drives the <code>af</code> vector as an acceleration; <b>Force</b> sends the same <code>af</code> inputs but sets the force bit (bit 9) so the autopilot treats them as a force. Pick <b>Custom</b> to enter a raw 0..65535 mask.</p>
   <h3>Frames &amp; axes</h3>
   <p>Vertical inputs are <b>up-positive</b>. For a <b>Local</b> coordinate the <code>Altitude</code> maps to a negative <code>z</code> and <code>Climb</code> to a negative <code>vz</code> (NED is down-positive). For a <b>Global</b> coordinate the altitude is up-positive metres and is sent as-is; latitude/longitude are entered in degrees and converted to <code>1e7</code> integers. Yaw and yaw-rate are entered in degrees and sent in radians.</p>
+  <h3>Streaming</h3>
+  <p>Enable <b>Stream continuously</b> to resend the setpoint at a fixed <b>Rate (Hz)</b> until stopped, instead of once per input. This is required for <b>PX4 OFFBOARD</b>, which won't enter (and drops out of) OFFBOARD unless a setpoint stream of ≥ ~2 Hz is already flowing — so start streaming <i>before</i> the mode switch. Each input refreshes the streamed setpoint; <code>msg.payload.stream = true</code>/<code>false</code> starts/stops it per message. Streaming needs a <b>Connection</b> (there is nowhere to stream a build-only message). The stream is torn down automatically on redeploy/close, so a partial deploy can never leave the vehicle flying an orphaned setpoint. Transient send failures are surfaced once and the stream keeps trying.</p>
   <h3>Modes</h3>
   <p>The vehicle must already be in a mode that accepts external setpoints (ArduPilot <b>GUIDED</b>, PX4 <b>OFFBOARD</b>) — switch modes with the <b>mavlink-ai-command</b> node's <i>Set Mode</i>.</p>
   <h3>Inputs</h3>
-  <p><code>msg.payload</code> may override any editor value: <code>coordinate</code>, <code>preset</code>, <code>frame</code>, <code>type_mask</code>, <code>north</code>, <code>east</code>, <code>altitude</code>, <code>lat</code>, <code>lon</code>, <code>velNorth</code>, <code>velEast</code>, <code>climb</code>, <code>accelNorth</code>, <code>accelEast</code>, <code>accelUp</code>, <code>yaw</code>, <code>yawRate</code>, <code>target_system</code>, <code>target_component</code>, and <code>time_boot_ms</code>.</p>
+  <p><code>msg.payload</code> may override any editor value: <code>coordinate</code>, <code>preset</code>, <code>frame</code>, <code>type_mask</code>, <code>north</code>, <code>east</code>, <code>altitude</code>, <code>lat</code>, <code>lon</code>, <code>velNorth</code>, <code>velEast</code>, <code>climb</code>, <code>accelNorth</code>, <code>accelEast</code>, <code>accelUp</code>, <code>yaw</code>, <code>yawRate</code>, <code>target_system</code>, <code>target_component</code>, and <code>time_boot_ms</code>. <code>stream</code> (<code>true</code>/<code>false</code>) starts/stops continuous streaming for that message.</p>
   <h3>Output</h3>
   <p>Without a connection, a <code>mavlink/send</code> message for <b>mavlink-ai-out</b>. Failures are emitted as a structured <code>mavlink/error</code> message on the same output.</p>
 </script>

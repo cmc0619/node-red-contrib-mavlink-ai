@@ -1,7 +1,7 @@
 'use strict';
 
 const { buildSetpoint } = require('../lib/move/setpoint');
-const { toNum, firstDefined } = require('../lib/util/validation');
+const { toNum, toBool, firstDefined } = require('../lib/util/validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { watchProfileBadge } = require('../lib/util/node-lifecycle');
@@ -47,9 +47,23 @@ module.exports = function registerMavlinkAiMove(RED) {
     node.accelUp = config.accelUp;
     node.yaw = config.yaw;
     node.yawRate = config.yawRate;
+    /** Optional continuous streaming (#128): resend the setpoint at a fixed rate. */
+    node.stream = toBool(config.stream, false);
+    node.streamRateHz = clampStreamRate(Number(config.streamRateHz));
+    node._streamTimer = null;
+    node._streamState = null;
+    node._streamErrored = false;
 
     node.on('input', async (msg, send, done) => {
       const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
+
+      /** An explicit `stream: false` stops a running stream and sends nothing. */
+      if (payload.stream === false) {
+        const wasStreaming = !!node._streamTimer;
+        stopStream(node);
+        node.status(wasStreaming ? { fill: 'grey', shape: 'ring', text: 'stream stopped' } : {});
+        return done();
+      }
 
       if (!node.profile || !node.profile.isValid || !node.profile.isValid()) {
         return finishError(node, send, done, errorPayload({
@@ -114,9 +128,31 @@ module.exports = function registerMavlinkAiMove(RED) {
       }
 
       /**
-       * With a connection the node is the sender (setpoints are fire-and-forget,
-       * so there is no ack to await); without one it hands the built message to
-       * a downstream mavlink-ai-out node.
+       * Streaming mode (#128): resend this setpoint continuously at the node
+       * rate until stopped. Each input refreshes the streamed setpoint. Requires
+       * a Connection (there is nowhere to stream a build-only message to), and
+       * the stream is torn down on redeploy/close so a partial deploy can never
+       * leave a setpoint stream flying the vehicle.
+       */
+      const streaming = payload.stream === true || (payload.stream === undefined && node.stream);
+      if (streaming) {
+        if (!node.connection) {
+          return finishError(node, send, done, errorPayload({
+            node: 'mavlink-ai-move',
+            code: 'STREAM_NEEDS_CONNECTION',
+            message: 'Streaming requires a Connection to send setpoints continuously.'
+          }));
+        }
+        node._streamState = { name: built.name, profile: node.profile.id, fields: built.fields };
+        startStream(node);
+        node.status({ fill: 'green', shape: 'dot', text: `streaming ${labelFor(built.name)} @ ${node.streamRateHz} Hz` });
+        return done();
+      }
+
+      /**
+       * One-shot: with a connection the node is the sender (setpoints are
+       * fire-and-forget, so there is no ack to await); without one it hands the
+       * built message to a downstream mavlink-ai-out node.
        */
       if (node.connection) {
         try {
@@ -149,10 +185,115 @@ module.exports = function registerMavlinkAiMove(RED) {
       send(msg);
       done();
     });
+
+    /**
+     * Stop-on-deploy/close guard (#128): a redeploy or flow stop must never
+     * leave a setpoint stream running — that would keep commanding the vehicle
+     * with no node in control. Tear the timer down synchronously on close.
+     */
+    node.on('close', function closeMove(done) {
+      stopStream(node);
+      done();
+    });
   }
 
   RED.nodes.registerType('mavlink-ai-move', MavlinkAiMoveNode);
 };
+
+/** Streaming rate bounds. PX4 OFFBOARD needs >= ~2 Hz; cap the top end so a bad
+ * rate can't spin a tight send loop. */
+const DEFAULT_STREAM_RATE_HZ = 5;
+const MIN_STREAM_RATE_HZ = 0.2;
+const MAX_STREAM_RATE_HZ = 50;
+
+/**
+ * Clamp a configured stream rate into the supported band, defaulting a
+ * missing/invalid value.
+ *
+ * @param {number} hz
+ * @returns {number}
+ */
+function clampStreamRate(hz) {
+  if (!Number.isFinite(hz) || hz <= 0) {
+    return DEFAULT_STREAM_RATE_HZ;
+  }
+  return Math.min(MAX_STREAM_RATE_HZ, Math.max(MIN_STREAM_RATE_HZ, hz));
+}
+
+/**
+ * Send the currently streamed setpoint once. Best-effort: a transient send
+ * failure (e.g. no learned UDP peer yet) surfaces once per failure streak and
+ * keeps the stream running so it recovers on its own, rather than flooding the
+ * error output at the stream rate or tearing the stream down.
+ *
+ * @param {object} node
+ * @returns {void}
+ */
+function streamTick(node) {
+  const s = node._streamState;
+  if (!s || !node.connection) {
+    return;
+  }
+  node.connection
+    .send({ name: s.name, profile: s.profile, fields: s.fields }, {})
+    .then(() => {
+      if (node._streamErrored) {
+        node._streamErrored = false;
+        node.status({ fill: 'green', shape: 'dot', text: `streaming @ ${node.streamRateHz} Hz` });
+      }
+    })
+    .catch((err) => {
+      const e = toMavlinkError(err, 'SEND_FAILED');
+      node.status({ fill: 'yellow', shape: 'ring', text: `stream: ${e.code}` });
+      if (!node._streamErrored) {
+        node._streamErrored = true;
+        node.send({
+          topic: 'mavlink/error',
+          payload: errorPayload({
+            node: 'mavlink-ai-move',
+            connection: node.connection.name,
+            code: e.code,
+            message: e.message,
+            context: e.context
+          })
+        });
+      }
+    });
+}
+
+/**
+ * Send the streamed setpoint immediately and ensure the repeat timer is running
+ * (a running timer just picks up the refreshed `_streamState` on its next tick).
+ * The timer is unref'd so it never holds the process open.
+ *
+ * @param {object} node
+ * @returns {void}
+ */
+function startStream(node) {
+  streamTick(node);
+  if (node._streamTimer) {
+    return;
+  }
+  node._streamTimer = setInterval(() => streamTick(node), Math.round(1000 / node.streamRateHz));
+  if (typeof node._streamTimer.unref === 'function') {
+    node._streamTimer.unref();
+  }
+}
+
+/**
+ * Stop any running setpoint stream and clear its state.
+ *
+ * @param {object} node
+ * @returns {void}
+ */
+function stopStream(node) {
+  if (node._streamTimer) {
+    clearInterval(node._streamTimer);
+    node._streamTimer = null;
+  }
+  node._streamState = null;
+  node._streamErrored = false;
+}
 
 /**
  * Default coordinate frame for a coordinate kind.

@@ -125,6 +125,68 @@ test('a bad custom type_mask emits a structured error', async () => {
   assert.strictEqual(err.code, 'BAD_TYPE_MASK');
 });
 
+test('streaming resends the setpoint at the configured rate until stopped (#128)', async (t) => {
+  const { RED, node, conn } = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', stream: true, streamRateHz: 50 },
+    { withConnection: true }
+  );
+  t.after(() => RED.close(node));
+
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected.length, 0, 'streaming does not emit on the output');
+  assert.strictEqual(conn.sent.length, 1, 'sends immediately');
+  assert.ok(node._streamTimer, 'a repeat timer is running');
+
+  /** The stream timer is unref'd; this ref'd wait keeps the loop alive so it fires. */
+  await new Promise((r) => setTimeout(r, 70));
+  assert.ok(conn.sent.length >= 2, `resends on the timer (got ${conn.sent.length})`);
+});
+
+test('msg.payload.stream=false stops a running stream (#128)', async (t) => {
+  const { RED, node } = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', stream: true, streamRateHz: 50 },
+    { withConnection: true }
+  );
+  t.after(() => RED.close(node));
+  await RED.inject(node, { payload: {} });
+  assert.ok(node._streamTimer, 'streaming');
+  await RED.inject(node, { payload: { stream: false } });
+  assert.strictEqual(node._streamTimer, null, 'stream stopped');
+});
+
+test('streaming without a connection is a structured error (#128)', async () => {
+  const { RED, node } = setup({ coordinate: 'local', preset: 'velocity', stream: true });
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'STREAM_NEEDS_CONNECTION');
+  assert.strictEqual(node._streamTimer, null, 'no stream started');
+});
+
+test('closing the node stops the stream (stop-on-deploy guard) (#128)', async () => {
+  const { RED, node } = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', stream: true, streamRateHz: 50 },
+    { withConnection: true }
+  );
+  await RED.inject(node, { payload: {} });
+  assert.ok(node._streamTimer, 'streaming before close');
+  await RED.close(node);
+  assert.strictEqual(node._streamTimer, null, 'close cleared the stream timer');
+});
+
+test('msg.payload.stream=true streams even from a one-shot node and each input refreshes it (#128)', async (t) => {
+  const { RED, node } = setup(
+    { coordinate: 'local', preset: 'position', altitude: '5', streamRateHz: 50 },
+    { withConnection: true }
+  );
+  t.after(() => RED.close(node));
+  await RED.inject(node, { payload: { stream: true } });
+  assert.ok(node._streamTimer, 'stream started from payload');
+  assert.strictEqual(node._streamState.fields.z, -5);
+  await RED.inject(node, { payload: { stream: true, altitude: 12 } });
+  assert.strictEqual(node._streamState.fields.z, -12, 'streamed setpoint refreshed');
+  assert.ok(node._streamTimer, 'still a single running stream');
+});
+
 test('missing profile emits MISSING_PROFILE', async () => {
   const RED = new MockRED().loadNodes();
   const node = RED.create('mavlink-ai-move', { id: 'm2', preset: 'position' });
