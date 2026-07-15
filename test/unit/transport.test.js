@@ -241,3 +241,26 @@ test('tcp server destroys a client socket after its error and drops it (#78)', a
   client.destroy();
   await transport.stop();
 });
+
+test('udp stop() keeps an error handler so a late socket error does not crash (#149)', async () => {
+  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  await new Promise((resolve) => {
+    transport.on('listening', resolve);
+    transport.start();
+  });
+  const socket = transport.socket;
+  await transport.stop();
+  /** Without the swallow handler this unhandled 'error' would throw and crash. */
+  assert.doesNotThrow(() => socket.emit('error', new Error('late close error')));
+});
+
+test('tcp stop() keeps an error handler so a late server error does not crash (#149)', async () => {
+  const transport = new TcpTransport({ mode: 'tcp-server', host: '127.0.0.1' });
+  transport.port = 0;
+  const server = await new Promise((resolve) => {
+    transport.on('listening', () => resolve(transport.server));
+    transport.start();
+  });
+  await transport.stop();
+  assert.doesNotThrow(() => server.emit('error', new Error('late close error')));
+});
