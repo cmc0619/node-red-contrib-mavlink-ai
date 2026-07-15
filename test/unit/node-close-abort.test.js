@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { MockRED } = require('../helpers/mock-red');
+const { fakeIdentity } = require('../helpers/v3-config');
 const { LockManager } = require('../../lib/runtime/lock-manager');
 
 /**
@@ -45,6 +46,7 @@ function setup() {
     };
     this.acquireLock = (key, owner) => this.locks.acquire(key, owner);
     this.releaseLock = (key, owner) => this.locks.release(key, owner);
+    this.resolveOutboundIdentity = () => fakeIdentity();
   });
   const conn = RED.create('stub-connection', { id: 'conn1' });
   return { RED, conn };

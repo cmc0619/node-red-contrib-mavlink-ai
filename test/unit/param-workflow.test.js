@@ -324,7 +324,7 @@ test('param workflow sends carry the profile reference end-to-end', async () => 
   assert.ok(conn.sent.length >= 2, 'expected the initial send plus a retransmit');
   for (const m of conn.sent) {
     assert.strictEqual(m.name, 'PARAM_REQUEST_READ');
-    assert.strictEqual(m.profile, 'p_routed');
+    assert.strictEqual(m.vehicleProfile, 'p_routed', 'legacy profile alias maps to vehicleProfile');
   }
 });
 

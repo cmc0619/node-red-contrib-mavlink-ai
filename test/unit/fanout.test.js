@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { MockRED } = require('../helpers/mock-red');
+const { fakeIdentity } = require('../helpers/v3-config');
 const { buildFanout } = require('../../lib/swarm/fanout');
 
 // ---------------------------------------------------------------------------
@@ -229,6 +230,7 @@ function stubAckConnection(RED, id, script) {
       return sid;
     },
     unsubscribe: (sid) => subs.delete(sid),
+    resolveOutboundIdentity: () => fakeIdentity(),
     send: (message) => {
       conn.sent.push(message);
       const sysid = message.fields.target_system;
@@ -275,6 +277,7 @@ function probeAckConnection(RED, id, ackDelayMs) {
       return sid;
     },
     unsubscribe: (sid) => subs.delete(sid),
+    resolveOutboundIdentity: () => fakeIdentity(),
     send: (message) => {
       conn.sent.push(message);
       inFlight += 1;
@@ -311,8 +314,6 @@ function setupProbe(extraConfig, ackDelayMs) {
     name: 'Copter',
     dialect: 'ardupilotmega',
     mavlinkVersion: 'v2',
-    sourceSystemId: 255,
-    sourceComponentId: 190,
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   });
@@ -328,8 +329,6 @@ function setup(extraConfig, script) {
     name: 'Copter',
     dialect: 'ardupilotmega',
     mavlinkVersion: 'v2',
-    sourceSystemId: 255,
-    sourceComponentId: 190,
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   });
@@ -351,8 +350,8 @@ test('node fans out to payload.sysids as mavlink/send messages (#46)', async () 
   assert.strictEqual(batch[0].payload.target_system, 1);
   assert.strictEqual(batch[1].payload.target_system, 2);
   // The profile rides along as the canonical config-node id, name for display.
-  assert.strictEqual(batch[0].payload.profile, 'p1');
-  assert.strictEqual(batch[0].payload.profile_name, 'Copter');
+  assert.strictEqual(batch[0].payload.vehicleProfile, 'p1');
+  assert.strictEqual(batch[0].payload.vehicleProfileName, 'Copter');
 });
 
 test('node accepts a swarm registry output (payload.vehicles) directly (#46)', async () => {
@@ -501,8 +500,8 @@ test('fan-out messages carry the canonical profile config-node id', async () => 
   const batch = collected[0][0];
   // The id (not the display name) resolves unambiguously on the sending
   // connection, even with duplicate profile names.
-  assert.strictEqual(batch[0].payload.profile, 'p1');
-  assert.strictEqual(batch[1].payload.profile, 'p1');
+  assert.strictEqual(batch[0].payload.vehicleProfile, 'p1');
+  assert.strictEqual(batch[1].payload.vehicleProfile, 'p1');
 });
 
 test('await-acks workflow sends carry the node profile id (#81)', async () => {
@@ -513,6 +512,6 @@ test('await-acks workflow sends carry the node profile id (#81)', async () => {
   await RED.inject(node, { payload: { sysids: [1, 2] } });
   assert.strictEqual(conn.sent.length, 2);
   for (const m of conn.sent) {
-    assert.strictEqual(m.profile, 'p1');
+    assert.strictEqual(m.vehicleProfile, 'p1');
   }
 });

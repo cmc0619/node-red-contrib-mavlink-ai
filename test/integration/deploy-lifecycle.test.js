@@ -7,8 +7,10 @@ const dgram = require('dgram');
 const helper = require('node-red-node-test-helper');
 const connectionNode = require('../../nodes/mavlink-ai-connection.js');
 const profileNode = require('../../nodes/mavlink-ai-profile.js');
+const identityNode = require('../../nodes/mavlink-ai-local-identity.js');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
+const { enc } = require('../helpers/v3-config');
 
 /**
  * Real Node-RED deploy lifecycle tests (#119).
@@ -80,13 +82,22 @@ const profileConfig = (id, name, dialect, extra = {}) => ({
   id,
   type: 'mavlink-ai-profile',
   name,
-  profileType: 'gcs',
+  vehicleFamily: 'generic',
   dialect,
   mavlinkVersion: 'v2',
-  sourceSystemId: 255,
-  sourceComponentId: 190,
   defaultTargetSystem: 1,
   defaultTargetComponent: 1,
+  ...extra
+});
+
+/** A Local Identity config node — required for a connection to open (#228). */
+const identityConfig = (id = 'id1', extra = {}) => ({
+  id,
+  type: 'mavlink-ai-local-identity',
+  name: 'GCS',
+  role: 'custom',
+  sourceSystemId: 255,
+  sourceComponentId: 190,
   ...extra
 });
 
@@ -95,6 +106,7 @@ const connectionConfig = (id, profile, port, extra = {}) => ({
   type: 'mavlink-ai-connection',
   name: 'UDP',
   profile,
+  localIdentity: 'id1',
   transport: 'udp-peer',
   routingMode: 'single-profile',
   bindAddress: HOST,
@@ -113,14 +125,14 @@ const routedConnectionConfig = (port, routes) =>
 
 /** A GNSS_INTEGRITY (id 441) frame — decodable only by the development dialect. */
 function gnssIntegrityFrame(sysid = 1) {
-  const codec = new MavlinkCodec({ bundle: loadDialect('development'), version: 'v2', sysid, compid: 1 });
-  return codec.encode('GNSS_INTEGRITY', {});
+  const codec = new MavlinkCodec({ bundle: loadDialect('development'), version: 'v2' });
+  return enc(codec, 'GNSS_INTEGRITY', {}, { sysid, compid: 1 });
 }
 
 /** An ATTITUDE (id 30) frame — decodable by ardupilotmega/common, not minimal. */
 function attitudeFrame(sysid = 1) {
-  const codec = new MavlinkCodec({ bundle: loadDialect('ardupilotmega'), version: 'v2', sysid, compid: 1 });
-  return codec.encode('ATTITUDE', { roll: 0, pitch: 0, yaw: 0 });
+  const codec = new MavlinkCodec({ bundle: loadDialect('ardupilotmega'), version: 'v2' });
+  return enc(codec, 'ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }, { sysid, compid: 1 });
 }
 
 /**
@@ -159,8 +171,8 @@ describe('Node-RED deploy lifecycle (#119)', () => {
 
   it('binds the UDP port on deploy and releases it when the connection is removed', async () => {
     const port = await freeUdpPort();
-    const flow = [profileConfig('p1', 'Vehicle', 'common'), connectionConfig('c1', 'p1', port)];
-    await helper.load([connectionNode, profileNode], flow);
+    const flow = [identityConfig(), profileConfig('p1', 'Vehicle', 'common'), connectionConfig('c1', 'p1', port)];
+    await helper.load([connectionNode, profileNode, identityNode], flow);
     const c1 = helper.getNode('c1');
     assert.ok(c1 && c1._active, 'connection is active');
     await assertBound(port);
@@ -169,14 +181,14 @@ describe('Node-RED deploy lifecycle (#119)', () => {
      * Remove the connection node via a real deploy; its close handler must stop
      * the transport and free the port before the deploy completes.
      */
-    await helper.setFlows([profileConfig('p1', 'Vehicle', 'common')], 'nodes');
+    await helper.setFlows([identityConfig(), profileConfig('p1', 'Vehicle', 'common')], 'nodes');
     await waitBindable(port);
   });
 
   it('applies a profile dialect edit so the connection decodes the new dialect on the same port', async () => {
     const port = await freeUdpPort();
-    const flow = [profileConfig('p1', 'Vehicle', 'common'), connectionConfig('c1', 'p1', port)];
-    await helper.load([connectionNode, profileNode], flow);
+    const flow = [identityConfig(), profileConfig('p1', 'Vehicle', 'common'), connectionConfig('c1', 'p1', port)];
+    await helper.load([connectionNode, profileNode, identityNode], flow);
     const c1 = helper.getNode('c1');
 
     /** On `common`, message 441 cannot be decoded -> structured decode error. */
@@ -194,7 +206,7 @@ describe('Node-RED deploy lifecycle (#119)', () => {
      * The connection binds the same UDP port and now speaks the new dialect.
      */
     await helper.setFlows(
-      [profileConfig('p1', 'Vehicle', 'development'), connectionConfig('c1', 'p1', port)],
+      [identityConfig(), profileConfig('p1', 'Vehicle', 'development'), connectionConfig('c1', 'p1', port)],
       'nodes'
     );
     const c1b = helper.getNode('c1');
@@ -214,15 +226,16 @@ describe('Node-RED deploy lifecycle (#119)', () => {
 
   it('fails closed and frees the port when the default profile is deleted', async () => {
     const port = await freeUdpPort();
-    const flow = [profileConfig('p1', 'Vehicle', 'common'), connectionConfig('c1', 'p1', port)];
-    await helper.load([connectionNode, profileNode], flow);
+    const flow = [identityConfig(), profileConfig('p1', 'Vehicle', 'common'), connectionConfig('c1', 'p1', port)];
+    await helper.load([connectionNode, profileNode, identityNode], flow);
     await assertBound(port);
 
     /**
-     * Delete the profile. The connection must not keep decoding/commanding with a
-     * missing required profile, and its UDP port must be released (#116).
+     * Delete the profile (the Local Identity stays, isolating the missing-profile
+     * case). The connection must not keep decoding/commanding with a missing
+     * required profile, and its UDP port must be released (#116).
      */
-    await helper.setFlows([connectionConfig('c1', 'p1', port)], 'nodes');
+    await helper.setFlows([identityConfig(), connectionConfig('c1', 'p1', port)], 'nodes');
     const c1 = helper.getNode('c1');
     assert.ok(c1, 'connection node still present');
     assert.strictEqual(c1._active, false, 'connection is not active without its profile');
@@ -237,8 +250,8 @@ describe('Node-RED deploy lifecycle (#119)', () => {
 
   it('rebinds the same port across repeated connection recreation without EADDRINUSE', async () => {
     const port = await freeUdpPort();
-    const profileFlow = [profileConfig('p1', 'Vehicle', 'common')];
-    await helper.load([connectionNode, profileNode], profileFlow);
+    const profileFlow = [identityConfig(), profileConfig('p1', 'Vehicle', 'common')];
+    await helper.load([connectionNode, profileNode, identityNode], profileFlow);
 
     for (let i = 0; i < 4; i += 1) {
       /** Add the connection on the fixed port. */
@@ -259,12 +272,13 @@ describe('Node-RED deploy lifecycle (#119)', () => {
       { sysid: 2, compid: '*', profile: 'pb' }
     ];
     const flow = [
+      identityConfig(),
       profileConfig('p_def', 'Def', 'minimal'),
       profileConfig('pa', 'A', 'ardupilotmega'),
       profileConfig('pb', 'B', 'ardupilotmega'),
       routedConnectionConfig(port, routes)
     ];
-    await helper.load([connectionNode, profileNode], flow);
+    await helper.load([connectionNode, profileNode, identityNode], flow);
     const c1 = helper.getNode('c1');
 
     /** sysid 1 -> 'pa' (ardupilotmega): ATTITUDE decodes. */
@@ -284,6 +298,7 @@ describe('Node-RED deploy lifecycle (#119)', () => {
      */
     await helper.setFlows(
       [
+        identityConfig(),
         profileConfig('p_def', 'Def', 'minimal'),
         profileConfig('pa', 'A', 'minimal'),
         profileConfig('pb', 'B', 'ardupilotmega'),
@@ -309,11 +324,12 @@ describe('Node-RED deploy lifecycle (#119)', () => {
     /** The route references the profile by NAME (legacy form), not by id. */
     const routes = [{ sysid: 1, compid: '*', profile: 'Ardu' }];
     const flow = [
+      identityConfig(),
       profileConfig('p_def', 'Def', 'minimal'),
       profileConfig('pa', 'Ardu', 'ardupilotmega'),
       routedConnectionConfig(port, routes)
     ];
-    await helper.load([connectionNode, profileNode], flow);
+    await helper.load([connectionNode, profileNode, identityNode], flow);
     const c1 = helper.getNode('c1');
     assert.strictEqual(c1.resolveProfile('Ardu'), helper.getNode('pa'));
 
@@ -323,6 +339,7 @@ describe('Node-RED deploy lifecycle (#119)', () => {
      */
     await helper.setFlows(
       [
+        identityConfig(),
         profileConfig('p_def', 'Def', 'minimal'),
         profileConfig('pa', 'Renamed', 'ardupilotmega'),
         routedConnectionConfig(port, routes)
@@ -343,12 +360,14 @@ describe('Node-RED deploy lifecycle (#119)', () => {
      */
     const deadPort = await freeUdpPort();
     const flow = [
+      identityConfig(),
       profileConfig('p1', 'Vehicle', 'common'),
       {
         id: 'c1',
         type: 'mavlink-ai-connection',
         name: 'TCP',
         profile: 'p1',
+        localIdentity: 'id1',
         transport: 'tcp-client',
         routingMode: 'single-profile',
         remoteHost: HOST,
@@ -357,7 +376,7 @@ describe('Node-RED deploy lifecycle (#119)', () => {
         heartbeat: false
       }
     ];
-    await helper.load([connectionNode, profileNode], flow);
+    await helper.load([connectionNode, profileNode, identityNode], flow);
     const c1 = helper.getNode('c1');
     const transport = c1._transport;
     assert.ok(transport, 'transport created');

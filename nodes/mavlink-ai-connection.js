@@ -1,7 +1,8 @@
 'use strict';
 
 const { EventEmitter } = require('events');
-const { MavlinkCodec } = require('../lib/protocol/mavlink-codec');
+const { MavlinkCodec, verifyInboundPacket } = require('../lib/protocol/mavlink-codec');
+const { LinkState } = require('../lib/protocol/link-state');
 const { createTransport } = require('../lib/transport');
 const { validateConnectionConfig } = require('../lib/transport/transport-fields');
 const { PacketRouter } = require('../lib/routing/packet-router');
@@ -9,7 +10,7 @@ const { SubscriptionRegistry } = require('../lib/runtime/subscription-registry')
 const { OutboundQueue } = require('../lib/runtime/outbound-queue');
 const { LockManager } = require('../lib/runtime/lock-manager');
 const { statusPayload } = require('../lib/util/status');
-const { toInt, toBool, parseIdList, firstDefined } = require('../lib/util/validation');
+const { toInt, toBool, parseIdList } = require('../lib/util/validation');
 const { MavlinkError, toMavlinkError, errorPayload } = require('../lib/util/errors');
 
 /**
@@ -24,8 +25,9 @@ const HEARTBEAT_MIN_INTERVAL_MS = 1000;
  * MAVLink 2 incompatibility flags this implementation understands. The spec
  * requires discarding any inbound frame that sets an incompat flag the receiver
  * doesn't implement. Today only MAVLINK_IFLAG_SIGNED (0x01) is handled (its
- * signature is verified per profile policy); a frame setting any other bit is
- * rejected in onPacket rather than decoded with an unknown framing (#153).
+ * signature is verified per the default identity's policy); a frame setting any
+ * other bit is rejected in onPacket rather than decoded with an unknown framing
+ * (#153).
  */
 const KNOWN_INCOMPAT_FLAGS = 0x01;
 
@@ -54,12 +56,46 @@ const MAX_STREAM_DECODERS = 256;
 const CLOSE_STOP_TIMEOUT_MS = 5000;
 
 /**
- * mavlink-ai-connection (DESIGN.md §8, §11, §19).
+ * True if a resolved reference is a mavlink-ai-local-identity config node.
  *
- * The connection config node owns the wire: transport/session, the codec built
- * from its default profile's dialect, inbound routing, the subscription
- * registry, the outbound queue, the heartbeat timer, and mission locks. All
- * state is scoped to the instance — no module-level singletons.
+ * @param {*} n
+ * @returns {boolean}
+ */
+function isIdentityNode(n) {
+  return !!n && typeof n.getIdentity === 'function' && typeof n.getSigningPolicy === 'function';
+}
+
+/**
+ * True if a resolved reference is a mavlink-ai-profile (Vehicle Profile)
+ * config node.
+ *
+ * @param {*} n
+ * @returns {boolean}
+ */
+function isProfileNode(n) {
+  return !!n && typeof n.getDialect === 'function';
+}
+
+/**
+ * mavlink-ai-connection (DESIGN.md §8, §11, §19; issue #228).
+ *
+ * The connection config node owns the wire and everything channel-scoped:
+ * transport/session, inbound routing, the subscription registry, the outbound
+ * queue, heartbeat scheduling, mission locks, the signing link id, and the
+ * {@link LinkState} carrying sequence / signing-timestamp / replay / detected-
+ * version state (#192). All state is scoped to the instance — no module-level
+ * singletons.
+ *
+ * Encoding composes three independently resolved inputs (#228):
+ *
+ *   Vehicle Profile -> dialect, message definitions, target defaults
+ *   Local Identity  -> source ids, heartbeat fields, signing policy/key
+ *   Connection      -> transport, queue, link id, channel state
+ *
+ * A connection references exactly one required **default Local Identity**.
+ * Additional identities may transmit on this link only through the explicit,
+ * disabled-by-default multi-identity binding list — and a Vehicle Profile can
+ * never determine or change the local identity.
  */
 module.exports = function registerMavlinkAiConnection(RED) {
   function MavlinkAiConnectionNode(config) {
@@ -92,6 +128,13 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node.acceptedCompids = parseIdList(config.acceptedCompids);
     node.unmatchedPolicy = config.unmatchedPolicy || (node.routingMode === 'routed' ? 'reject' : 'default');
 
+    /**
+     * Multi-identity transmission is an explicit opt-in (#228): additional
+     * identity bindings are inert unless this is enabled, so a runtime can
+     * never stumble into acting as several MAVLink participants.
+     */
+    node.allowMultipleIdentities = toBool(config.allowMultipleIdentities, false);
+
     node.emitter = new EventEmitter();
     node.emitter.setMaxListeners(0);
     // Default 'error' listener: an EventEmitter throws if an 'error' event is
@@ -108,7 +151,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node.statusState = 'idle';
     node.statusDetail = '';
 
-    node._heartbeatTimer = null;
+    /**
+     * Per-identity heartbeat timers, keyed by identity config-node id. The
+     * default identity's heartbeat comes from the connection's Heartbeat
+     * setting; each additional binding opts into its own (#228).
+     */
+    node._heartbeatTimers = new Map();
     /**
      * Stream decoders keyed by stream identity: `SHARED_STREAM_KEY` for
      * single-peer transports, or a tcp-server client's `clientId` so two
@@ -120,17 +168,26 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node._router = null;
     node._queue = null;
     /**
+     * Channel/session state for this link (#192): outbound sequence numbers per
+     * local identity, monotonic signing timestamps per (identity, link id)
+     * stream, inbound replay memory per verification key, and per-peer detected
+     * wire versions. Lives exactly as long as the transport/session — it is
+     * never reset by a profile or identity edit, only by deactivation.
+     */
+    node._link = new LinkState();
+    /**
      * Whether this connection is live. A connection whose required default
-     * profile is missing/invalid fails closed (#116): it is marked inactive,
-     * its transport is released, and new sends reject until a valid default
-     * profile is restored on a later deploy.
+     * profile or default Local Identity is missing/invalid fails closed
+     * (#116, #228): it is marked inactive, its transport is released, and new
+     * sends reject until a valid configuration is restored on a later deploy.
      */
     node._active = false;
     /** The structured error describing why the connection is inactive, if it is. */
     node._inactiveError = null;
     /**
-     * Set by {@link reactivate}: a promise that settles once a restored default
-     * profile's transport restart has been attempted. Null until a reactivation.
+     * Set by {@link reactivate}: a promise that settles once a restored
+     * configuration's transport restart has been attempted. Null until a
+     * reactivation.
      *
      * @type {?Promise<void>}
      */
@@ -143,6 +200,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * edited profile as a new object under the same id, so a cache keyed by id
      * alone would keep handing back the codec for the old dialect (#117); the
      * entry is only reused when its profile object is still the resolved one.
+     *
+     * Codecs are dialect-scoped only (#192): identity, sequence, and signing
+     * state are supplied per encode() call, so one cached codec serves every
+     * local identity transmitting through this connection.
      */
     node._codecByProfile = new Map();
     /**
@@ -194,23 +255,95 @@ module.exports = function registerMavlinkAiConnection(RED) {
       node.error(`mavlink-ai-connection '${node.name || node.id}': ${code}: ${message}`);
     }
 
-    // --- profile / codec setup ----------------------------------------------
+    // --- required default profile / identity ---------------------------------
     if (!node.profile) {
-      fatal('NO_PROFILE', 'Connection has no profile configured.');
+      fatal('NO_PROFILE', 'Connection has no Vehicle Profile configured.');
       registerNoop(node);
       return;
     }
     if (!node.profile.isValid()) {
       const err = node.profile.getError();
-      fatal((err && err.code) || 'PROFILE_INVALID', `Profile invalid: ${err && err.message}`);
+      fatal((err && err.code) || 'PROFILE_INVALID', `Vehicle Profile invalid: ${err && err.message}`);
       registerNoop(node);
       return;
     }
 
-    try {
-      node._codec = new MavlinkCodec(
-        Object.assign({ bundle: node.profile.getDialect() }, node.profile.getProtocolOptions())
+    /**
+     * The required default Local Identity (#228). Every transmitted message
+     * must resolve to exactly one permitted identity; without a default there
+     * is nothing safe to resolve to, so the connection fails closed with an
+     * actionable error instead of guessing (e.g. from a Vehicle Profile).
+     */
+    node.localIdentity = config.localIdentity ? RED.nodes.getNode(config.localIdentity) : null;
+    if (!isIdentityNode(node.localIdentity)) {
+      const legacyHint = config.profile && config.localIdentity === undefined
+        ? ' (Flows created before v3 stored the local identity on the profile; that coupling was removed — ' +
+          'create a Local Identity carrying the old profile’s Source SysID/CompID and signing settings.)'
+        : '';
+      fatal(
+        'LOCAL_IDENTITY_REQUIRED',
+        `Connection '${node.name || node.id}' has no Local Identity. Select one in Connection > Local Identity. ` +
+          `If none exists, create a GCS, Companion, or Custom Local Identity first.${legacyHint}`
       );
+      registerNoop(node);
+      return;
+    }
+    if (!node.localIdentity.isValid()) {
+      const err = node.localIdentity.getError();
+      fatal(
+        'LOCAL_IDENTITY_INVALID',
+        `Local Identity '${node.localIdentity.name || node.localIdentity.id}' is invalid: ${err && err.message}`
+      );
+      registerNoop(node);
+      return;
+    }
+
+    /**
+     * The connection-owned signing link id (#192): link ids identify channels,
+     * so it lives here — one identity/credential reused on two links no longer
+     * silently shares a link id. A uint8; wrapping an out-of-range value would
+     * turn a config mistake into a *different* valid link id (#90), so reject.
+     */
+    node.signingLinkId = 0;
+    if (config.signingLinkId !== undefined && config.signingLinkId !== null && config.signingLinkId !== '') {
+      const linkId = Number(config.signingLinkId);
+      if (!Number.isInteger(linkId) || linkId < 0 || linkId > 255) {
+        fatal(
+          'SIGNING_BAD_LINK_ID',
+          `Signing link ID must be an integer in [0, 255] (got ${JSON.stringify(config.signingLinkId)}).`
+        );
+        registerNoop(node);
+        return;
+      }
+      node.signingLinkId = linkId;
+    }
+
+    /**
+     * Additional Local Identity binding specs (#228): the advanced, explicit
+     * list of extra identities this connection may transmit as. Each entry
+     * references an identity config node and carries per-binding permissions:
+     * { identity, allowOutbound (default true), heartbeat (default false),
+     * heartbeatIntervalMs (default 1000, clamped) }. References resolve lazily
+     * (the identity nodes may register after this connection within a deploy).
+     */
+    node._identityBindings = [];
+    try {
+      node._identityBindings = parseIdentityBindings(config.additionalIdentities);
+    } catch (err) {
+      fatal('ADDITIONAL_IDENTITIES_INVALID', err.message);
+      registerNoop(node);
+      return;
+    }
+    if (node._identityBindings.length && !node.allowMultipleIdentities) {
+      node.warn(
+        `Connection '${node.name || node.id}' lists ${node._identityBindings.length} additional Local Identity ` +
+          'binding(s) but multi-identity transmission is disabled; they are inert until ' +
+          "'Allow this connection to transmit as multiple local identities' is enabled."
+      );
+    }
+
+    try {
+      node._codec = buildCodec(node.profile);
       node._codecByProfile.set(node.profile.id, { profile: node.profile, codec: node._codec });
     } catch (err) {
       fatal('CODEC_INIT_FAILED', err.message);
@@ -244,11 +377,23 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
+     * Build a dialect codec for a Vehicle Profile. Codecs carry no identity or
+     * channel state (#192) — just the dialect bundle and the profile's version
+     * preference.
+     *
+     * @param {object} profile  a valid Vehicle Profile config node
+     * @returns {MavlinkCodec}
+     */
+    function buildCodec(profile) {
+      return new MavlinkCodec({ bundle: profile.getDialect(), version: profile.mavlinkVersion });
+    }
+
+    /**
      * Resolve (and cache) the codec for a resolved profile. The default
      * profile uses the connection codec; any other profile must be a valid
      * profile config node — an invalid dialect or a failed codec build throws
      * instead of silently falling back to the default codec, which would
-     * decode/sign/encode with the wrong dialect while claiming the profile.
+     * decode/encode with the wrong dialect while claiming the profile.
      *
      * @param {object} profile  a resolved profile config node
      * @returns {MavlinkCodec}
@@ -272,22 +417,20 @@ module.exports = function registerMavlinkAiConnection(RED) {
         }
         node._codecByProfile.delete(profile.id);
       }
-      if (typeof profile.getDialect !== 'function' || !profile.isValid || !profile.isValid()) {
+      if (!isProfileNode(profile) || !profile.isValid || !profile.isValid()) {
         const detail = profile.getError && profile.getError() ? `: ${profile.getError().message}` : '';
         throw new MavlinkError(
           'PROFILE_INVALID',
-          `Profile '${profile.name || profile.id}' has no valid dialect${detail}`
+          `Vehicle Profile '${profile.name || profile.id}' has no valid dialect${detail}`
         );
       }
       let codec;
       try {
-        codec = new MavlinkCodec(
-          Object.assign({ bundle: profile.getDialect() }, profile.getProtocolOptions())
-        );
+        codec = buildCodec(profile);
       } catch (err) {
         throw new MavlinkError(
           'CODEC_INIT_FAILED',
-          `Cannot build codec for profile '${profile.name || profile.id}': ${err.message}`
+          `Cannot build codec for Vehicle Profile '${profile.name || profile.id}': ${err.message}`
         );
       }
       if (profile.id) {
@@ -297,15 +440,39 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
-     * Resolve the effective profile for an outbound message. No reference means
-     * the connection's default profile. An explicit reference must resolve to a
-     * real, valid profile config node — silently falling back to the default
-     * would encode with the wrong dialect, source identity, version, signing,
-     * and target defaults, which is exactly the failure the reference exists to
-     * prevent (#68).
+     * The vehicle-profile reference carried on an outbound message. The
+     * canonical field is `vehicleProfile` (#228); `profile` is accepted as a
+     * documented deprecated alias for pre-v3 flows. Setting both to different
+     * values is a conflict — silently picking one could encode with the wrong
+     * dialect while claiming the other.
      *
-     * @param {string|object} [profileRef]  message.profile (config-node id,
-     *   legacy unique name, or profile object)
+     * @param {object} message
+     * @returns {*} the reference (may be undefined/blank for "use default")
+     * @throws {MavlinkError} VEHICLE_PROFILE_CONFLICT
+     */
+    function vehicleProfileRef(message) {
+      const canonical = message.vehicleProfile;
+      const legacy = message.profile;
+      const has = (v) => v !== undefined && v !== null && v !== '';
+      if (has(canonical) && has(legacy) && canonical !== legacy) {
+        throw new MavlinkError(
+          'VEHICLE_PROFILE_CONFLICT',
+          `Outbound message sets both vehicleProfile ('${canonical}') and the deprecated profile alias ('${legacy}') ` +
+            'to different values. Set only vehicleProfile.'
+        );
+      }
+      return has(canonical) ? canonical : legacy;
+    }
+
+    /**
+     * Resolve the effective Vehicle Profile for an outbound message. No
+     * reference means the connection's default profile. An explicit reference
+     * must resolve to a real, valid profile config node — silently falling
+     * back to the default would encode with the wrong dialect, version, and
+     * target defaults, which is exactly the failure the reference exists to
+     * prevent (#68). It can never influence the local identity (#228).
+     *
+     * @param {string|object} [profileRef]
      * @returns {object} a valid profile config node
      * @throws {MavlinkError} PROFILE_UNRESOLVED | PROFILE_AMBIGUOUS | PROFILE_INVALID
      */
@@ -321,11 +488,279 @@ module.exports = function registerMavlinkAiConnection(RED) {
         const err = profile.getError && profile.getError();
         throw new MavlinkError(
           'PROFILE_INVALID',
-          `Outbound message names profile '${profile.name || profile.id}' whose dialect failed to load${err ? `: ${err.message}` : '.'}`,
+          `Outbound message names Vehicle Profile '${profile.name || profile.id}' whose dialect failed to load${err ? `: ${err.message}` : '.'}`,
           { profile: profile.name || profile.id }
         );
       }
       return profile;
+    }
+
+    // --- local identity resolution (#228) -------------------------------------
+    /**
+     * Memoized identity name -> config-node id resolutions, mirroring
+     * profileByName below: successful unique-name lookups only, re-verified on
+     * every use, cleared on every deploy.
+     */
+    const identityByName = new Map();
+
+    /**
+     * Resolve a Local Identity reference to an identity config node. The
+     * canonical reference is the config-node id; a plain name is accepted when
+     * exactly one identity config node has that name.
+     *
+     * This resolves *existence* only — whether the identity may transmit on
+     * this connection is decided by {@link node.resolveOutboundIdentity}.
+     *
+     * @param {string|object} ref  config-node id, unique identity name, or an
+     *   identity node object
+     * @returns {object} an identity config node
+     * @throws {MavlinkError} LOCAL_IDENTITY_UNRESOLVED | LOCAL_IDENTITY_AMBIGUOUS
+     */
+    node.resolveLocalIdentity = (ref) => {
+      if (!ref) {
+        return node.localIdentity;
+      }
+      if (typeof ref === 'object') {
+        if (isIdentityNode(ref)) {
+          return ref;
+        }
+        throw new MavlinkError(
+          'LOCAL_IDENTITY_UNRESOLVED',
+          `Local Identity reference ${JSON.stringify(ref && ref.name ? ref.name : ref)} is not a mavlink-ai-local-identity config node.`
+        );
+      }
+      const byId = RED.nodes.getNode(ref);
+      if (isIdentityNode(byId)) {
+        return byId;
+      }
+      if (identityByName.has(ref)) {
+        const cached = RED.nodes.getNode(identityByName.get(ref));
+        if (isIdentityNode(cached) && cached.name === ref) {
+          return cached;
+        }
+        identityByName.delete(ref);
+      }
+      const matchIds = [];
+      if (typeof RED.nodes.eachNode === 'function') {
+        RED.nodes.eachNode((n) => {
+          if (n.type === 'mavlink-ai-local-identity' && n.name === ref) {
+            matchIds.push(n.id);
+          }
+        });
+      } else if (node.localIdentity && node.localIdentity.name === ref) {
+        matchIds.push(node.localIdentity.id);
+      }
+      if (matchIds.length > 1) {
+        throw new MavlinkError(
+          'LOCAL_IDENTITY_AMBIGUOUS',
+          `The requested Local Identity name '${ref}' matches ${matchIds.length} config nodes. ` +
+            'Use the config-node ID or rename the identities so each name is unique.'
+        );
+      }
+      const byName = matchIds.length === 1 ? RED.nodes.getNode(matchIds[0]) : null;
+      if (isIdentityNode(byName)) {
+        identityByName.set(ref, byName.id);
+        return byName;
+      }
+      throw new MavlinkError(
+        'LOCAL_IDENTITY_UNRESOLVED',
+        `Local Identity '${ref}' does not match any mavlink-ai-local-identity config node (by id or unique name).`
+      );
+    };
+
+    /**
+     * The binding spec attached to an identity on this connection, or null.
+     * Binding references resolve lazily so an identity registered later in the
+     * same deploy still matches.
+     *
+     * @param {object} identity  a resolved identity config node
+     * @returns {?object} the binding spec
+     */
+    function bindingFor(identity) {
+      for (const spec of node._identityBindings) {
+        try {
+          const resolved = node.resolveLocalIdentity(spec.identity);
+          if (resolved === identity || resolved.id === identity.id) {
+            return spec;
+          }
+        } catch (e) {
+          /** An unresolved binding matches nothing; reported by validation. */
+        }
+      }
+      return null;
+    }
+
+    /**
+     * Resolve the Local Identity an outbound message transmits as (#228).
+     *
+     * Resolution order — and, critically, what it never does:
+     *
+     *  1. No explicit reference -> the connection's default Local Identity.
+     *  2. An explicit reference resolves strictly (id, unique name, or node) —
+     *     never falls back to the default on failure.
+     *  3. The resolved identity must be attached to this connection: the
+     *     default, or an additional binding with outbound permission while
+     *     multi-identity transmission is enabled.
+     *  4. The local identity is never derived from a Vehicle Profile.
+     *
+     * @param {string|object} [ref]  message.localIdentity
+     * @returns {object} a valid, attached identity config node
+     * @throws {MavlinkError} LOCAL_IDENTITY_UNRESOLVED | LOCAL_IDENTITY_AMBIGUOUS |
+     *   LOCAL_IDENTITY_INVALID | LOCAL_IDENTITY_NOT_ATTACHED | MULTI_IDENTITY_DISABLED
+     */
+    node.resolveOutboundIdentity = (ref) => {
+      if (ref === undefined || ref === null || ref === '') {
+        return node.localIdentity;
+      }
+      const identity = node.resolveLocalIdentity(ref);
+      if (!identity.isValid()) {
+        const err = identity.getError && identity.getError();
+        throw new MavlinkError(
+          'LOCAL_IDENTITY_INVALID',
+          `Local Identity '${identity.name || identity.id}' is invalid${err ? `: ${err.message}` : '.'}`
+        );
+      }
+      if (identity === node.localIdentity || identity.id === node.localIdentity.id) {
+        return identity;
+      }
+      if (!node.allowMultipleIdentities) {
+        throw new MavlinkError(
+          'MULTI_IDENTITY_DISABLED',
+          `This message requested a non-default Local Identity, but multi-identity transmission is disabled for ` +
+            `Connection '${node.name || node.id}'. Enable Connection > Advanced > Allow multiple local identities ` +
+            'only if this Node-RED runtime is intentionally acting as multiple MAVLink participants.'
+        );
+      }
+      const binding = bindingFor(identity);
+      if (!binding || binding.allowOutbound === false) {
+        throw new MavlinkError(
+          'LOCAL_IDENTITY_NOT_ATTACHED',
+          `This message requested Local Identity '${identity.describe()}', but Connection '${node.name || node.id}' ` +
+            `only permits '${node.localIdentity.describe()}'${describeBindings(node)}. Add the identity under ` +
+            'Connection > Advanced > Additional Local Identities, or remove the message identity override.'
+        );
+      }
+      return identity;
+    };
+
+    /** @returns {object} the connection's default Local Identity node */
+    node.getDefaultIdentity = () => node.localIdentity;
+
+    /** @returns {number} how many additional identity bindings are configured */
+    node.identityBindingCount = () => node._identityBindings.length;
+
+    /**
+     * Every identity currently attached to this connection: the default plus
+     * each resolvable additional binding (when multi-identity is enabled).
+     *
+     * @returns {Array<{identity: object, binding: ?object}>}
+     */
+    function attachedIdentities() {
+      const out = [{ identity: node.localIdentity, binding: null }];
+      if (!node.allowMultipleIdentities) {
+        return out;
+      }
+      const seen = new Set([node.localIdentity.id]);
+      for (const spec of node._identityBindings) {
+        try {
+          const identity = node.resolveLocalIdentity(spec.identity);
+          if (!seen.has(identity.id)) {
+            seen.add(identity.id);
+            out.push({ identity, binding: spec });
+          }
+        } catch (e) {
+          /** Unresolved bindings are reported by validateIdentityBindings. */
+        }
+      }
+      return out;
+    }
+
+    /**
+     * Validate the attached identity set (#228): every binding must resolve to
+     * a valid identity, and no two attached identities may share a source
+     * (sysid, compid) — such senders are indistinguishable on the wire, so the
+     * configuration fails closed rather than transmitting ambiguously.
+     *
+     * @param {boolean} [reportProblems=false]  also error-log unresolved or
+     *   invalid bindings. Only the flows:started reconcile passes true: at
+     *   construction time an identity referenced solely from the binding JSON
+     *   may simply not have registered yet within the same deploy, so
+     *   reporting then would false-alarm. (Unresolved bindings reject their
+     *   own sends regardless.)
+     * @returns {?MavlinkError} a LOCAL_IDENTITY_COLLISION error, or null; other
+     *   problems are logged loudly but only reject their own sends
+     */
+    function validateIdentityBindings(reportProblems = false) {
+      if (node.allowMultipleIdentities && reportProblems) {
+        for (const spec of node._identityBindings) {
+          try {
+            const identity = node.resolveLocalIdentity(spec.identity);
+            if (!identity.isValid()) {
+              const err = identity.getError && identity.getError();
+              node.error(
+                `mavlink-ai-connection '${node.name || node.id}': additional Local Identity ` +
+                  `'${identity.name || identity.id}' is invalid${err ? `: ${err.message}` : '.'} ` +
+                  'Sends requesting it will be rejected.'
+              );
+            }
+          } catch (err) {
+            node.error(
+              `mavlink-ai-connection '${node.name || node.id}': additional Local Identity binding ` +
+                `'${typeof spec.identity === 'object' ? JSON.stringify(spec.identity) : spec.identity}' ` +
+                `does not resolve: ${err.message} Sends requesting it will be rejected.`
+            );
+          }
+        }
+      }
+      const byWireId = new Map();
+      for (const { identity } of attachedIdentities()) {
+        if (!identity.isValid || !identity.isValid()) {
+          continue;
+        }
+        const { sysid, compid } = identity.getIdentity();
+        const key = `${sysid}:${compid}`;
+        const existing = byWireId.get(key);
+        if (existing && existing.id !== identity.id) {
+          return new MavlinkError(
+            'LOCAL_IDENTITY_COLLISION',
+            `Connection '${node.name || node.id}' attaches two Local Identities using source SysID ${sysid} / ` +
+              `CompID ${compid} ('${existing.name || existing.id}' and '${identity.name || identity.id}'). ` +
+              'Those senders are indistinguishable on this link. Remove one binding or assign a unique component ID.'
+          );
+        }
+        byWireId.set(key, identity);
+      }
+      return null;
+    }
+
+    {
+      const collision = validateIdentityBindings();
+      if (collision) {
+        fatal(collision.code, collision.message);
+        registerNoop(node);
+        return;
+      }
+    }
+
+    /**
+     * The inbound signature-verification policy (#228): the credential and
+     * verify/require flags follow the connection's default Local Identity; the
+     * anti-replay memory is link state keyed by the verification key, so a
+     * profile/identity rebuild under the same key cannot reset it (#192).
+     *
+     * @returns {?object} policy for {@link verifyInboundPacket}, or null
+     */
+    function inboundPolicy() {
+      const policy = node.localIdentity.getSigningPolicy();
+      if (!policy || !policy.verifyInbound) {
+        return null;
+      }
+      return {
+        verifyInbound: true,
+        requireSignature: policy.requireSignature,
+        key: policy.key,
+        replay: policy.key ? node._link.replayTrackerFor(policy.key) : null
+      };
     }
 
     // --- routing -------------------------------------------------------------
@@ -350,9 +785,8 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * compatibility when exactly one profile config node has that name.
      *
      * An explicitly requested profile that cannot be resolved throws — never
-     * falls back to the default profile (a routed packet must not be decoded,
-     * signature-checked, or encoded with a dialect other than the one its
-     * route names).
+     * falls back to the default profile (a routed packet must not be decoded
+     * or encoded with a dialect other than the one its route names).
      *
      * @param {string|object} ref  config-node id, unique profile name, or a
      *   profile object; blank means the connection's default profile
@@ -364,16 +798,16 @@ module.exports = function registerMavlinkAiConnection(RED) {
         return node.profile;
       }
       if (typeof ref === 'object') {
-        if (typeof ref.getDialect === 'function') {
+        if (isProfileNode(ref)) {
           return ref;
         }
         throw new MavlinkError(
           'PROFILE_UNRESOLVED',
-          `Profile reference ${JSON.stringify(ref && ref.name ? ref.name : ref)} is not a mavlink-ai-profile config node.`
+          `Vehicle Profile reference ${JSON.stringify(ref && ref.name ? ref.name : ref)} is not a mavlink-ai-profile config node.`
         );
       }
       const byId = RED.nodes.getNode(ref);
-      if (byId && typeof byId.getDialect === 'function') {
+      if (isProfileNode(byId)) {
         return byId;
       }
       /**
@@ -387,7 +821,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
        */
       if (profileByName.has(ref)) {
         const cached = RED.nodes.getNode(profileByName.get(ref));
-        if (cached && typeof cached.getDialect === 'function' && cached.name === ref) {
+        if (isProfileNode(cached) && cached.name === ref) {
           return cached;
         }
         profileByName.delete(ref);
@@ -405,17 +839,17 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (matchIds.length > 1) {
         throw new MavlinkError(
           'PROFILE_AMBIGUOUS',
-          `Profile name '${ref}' matches ${matchIds.length} profile config nodes; reference the profile by config-node id.`
+          `Vehicle Profile name '${ref}' matches ${matchIds.length} profile config nodes; reference the profile by config-node id.`
         );
       }
       const byName = matchIds.length === 1 ? RED.nodes.getNode(matchIds[0]) : null;
-      if (byName && typeof byName.getDialect === 'function') {
+      if (isProfileNode(byName)) {
         profileByName.set(ref, byName.id);
         return byName;
       }
       throw new MavlinkError(
         'PROFILE_UNRESOLVED',
-        `Profile '${ref}' does not match any mavlink-ai-profile config node (by id or unique name).`
+        `Vehicle Profile '${ref}' does not match any mavlink-ai-profile config node (by id or unique name).`
       );
     };
 
@@ -477,7 +911,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       const contributor = new Map(); // msgid -> { magic, profile, dialect }
       const conflicts = [];
       for (const profile of node._router.profiles()) {
-        const bundle = profile && typeof profile.getDialect === 'function' ? profile.getDialect() : null;
+        const bundle = profile && isProfileNode(profile) ? profile.getDialect() : null;
         if (!bundle || !bundle.valid) {
           continue;
         }
@@ -569,9 +1003,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * connection is still holding the *previous* profile object, the codec built
      * from its dialect, the per-profile codec cache, the router's default
      * profile, and a decoder whose splitter CRC table came from the old dialect.
-     * That stale state is why an already-running connection kept decoding with
-     * the pre-edit dialect (message 441 rejected as 'common') until Node-RED was
-     * restarted. Swapping all of it here applies the edit on the next deploy.
+     * Swapping all of it here applies the edit on the next deploy.
+     *
+     * The {@link LinkState} deliberately survives this rebuild (#192): sequence
+     * numbers, signing timestamps, replay memory, and detected peer versions
+     * are channel state, not dialect state, so a profile edit no longer resets
+     * them.
      *
      * @param {object} newProfile  the freshly resolved, valid default profile
      * @returns {void}
@@ -582,17 +1019,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       // one, throw before mutating any live state so the connection keeps
       // running with the profile it already had rather than ending up
       // half-swapped between two dialects.
-      const codec = new MavlinkCodec(
-        Object.assign({ bundle: newProfile.getDialect() }, newProfile.getProtocolOptions())
-      );
-      // The transport/session and its learned peers stay up across this rebuild,
-      // so carry over the per-peer wire versions the old codec detected (#69):
-      // otherwise an `auto` profile would frame the next send to an already-known
-      // v1-only vehicle as v2 (which it ignores) until another inbound frame
-      // re-teaches the version.
-      if (node._codec) {
-        codec.adoptDetectedVersions(node._codec);
-      }
+      const codec = buildCodec(newProfile);
       node.profile = newProfile;
       node._codec = codec;
       // Drop every cached profile-dependent artifact so it is rebuilt against
@@ -667,18 +1094,21 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
-     * Tear the connection down to a fail-closed, inactive state (#116). Used
-     * when the required default profile has been deleted or become invalid: the
-     * connection must stop decoding and commanding vehicles, and release its
-     * transport (UDP/TCP/serial) immediately rather than leaving a socket bound
-     * after the configuration that justified it was removed.
+     * Tear the connection down to a fail-closed, inactive state (#116, #228).
+     * Used when the required default profile or Local Identity has been deleted
+     * or become invalid, or the attached identity set collides: the connection
+     * must stop decoding and commanding vehicles, and release its transport
+     * (UDP/TCP/serial) immediately rather than leaving a socket bound after the
+     * configuration that justified it was removed.
      *
      * Subscriptions are intentionally retained so a later deploy that restores a
-     * valid profile can {@link reactivate} and resume delivering to the same
-     * subscribers; everything profile-dependent (codecs, decoder, name cache,
-     * mission locks) is dropped.
+     * valid configuration can {@link reactivate} and resume delivering to the
+     * same subscribers; everything profile/identity-dependent (codecs, decoder,
+     * name caches, mission locks) is dropped, and the {@link LinkState} is
+     * reset — the link/session itself is ending, so its channel state ends with
+     * it.
      *
-     * @param {string} code     structured error code (NO_PROFILE | PROFILE_INVALID | ...)
+     * @param {string} code     structured error code (NO_PROFILE | LOCAL_IDENTITY_REQUIRED | ...)
      * @param {string} message  human-readable cause
      * @returns {Promise<void>} resolves once the transport has fully stopped and
      *   its port/handle is released
@@ -691,29 +1121,31 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (alreadyInactive) {
         return node._deactivating || Promise.resolve();
       }
-      stopHeartbeat();
+      stopHeartbeats();
       /** Reject queued outbound work; new sends reject via the _active guard. */
       if (node._queue) {
         node._queue.clear();
       }
       /**
-       * Drop every profile-dependent artifact so nothing keeps decoding or
-       * commanding with the removed profile.
+       * Drop every profile/identity-dependent artifact so nothing keeps
+       * decoding or commanding with the removed configuration.
        */
       node._codecByProfile.clear();
       node._activeProfiles = new Set();
       profileByName.clear();
+      identityByName.clear();
       loggedRouteProblems.clear();
       node.locks.clear();
       destroyDecoders();
+      node._link = new LinkState();
       node.statusState = 'error';
       node.statusDetail = message;
       node.emitter.emit('status', node.getStatus());
       node.error(`mavlink-ai-connection '${node.name || node.id}': ${code}: ${message}`);
       /**
        * Release the bound transport so its port/handle is freed immediately —
-       * a deleted profile must not leave the socket bound (EADDRINUSE) until
-       * Node-RED restarts.
+       * a deleted profile/identity must not leave the socket bound
+       * (EADDRINUSE) until Node-RED restarts.
        */
       const transport = node._transport;
       node._transport = null;
@@ -722,22 +1154,21 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
-     * Bring a previously {@link deactivate}d connection back up around a freshly
-     * resolved, valid default profile (#116). Rebuilds the codec/router state and
-     * restarts the transport on the same config so a profile that was deleted and
-     * then re-created on a later deploy resumes without recreating this config
-     * node. Waits for any in-flight teardown to finish first so the port is free
-     * before it is rebound.
+     * Bring a previously {@link deactivate}d connection back up around freshly
+     * resolved, valid default profile and Local Identity (#116, #228). Rebuilds
+     * the codec/router state and restarts the transport on the same config so a
+     * config node that was deleted and then re-created on a later deploy
+     * resumes without recreating this connection node. Waits for any in-flight
+     * teardown to finish first so the port is free before it is rebound.
      *
-     * @param {object} profile  the restored, valid default profile config node
+     * @param {object} profile   the restored, valid default Vehicle Profile
+     * @param {object} identity  the restored, valid default Local Identity
      * @returns {void}
      */
-    function reactivate(profile) {
+    function reactivate(profile, identity) {
       let codec;
       try {
-        codec = new MavlinkCodec(
-          Object.assign({ bundle: profile.getDialect() }, profile.getProtocolOptions())
-        );
+        codec = buildCodec(profile);
       } catch (err) {
         /** The restored profile still cannot build a codec: stay inactive. */
         node._inactiveError = toMavlinkError(err, 'CODEC_INIT_FAILED');
@@ -748,11 +1179,13 @@ module.exports = function registerMavlinkAiConnection(RED) {
         return;
       }
       node.profile = profile;
+      node.localIdentity = identity;
       node._codec = codec;
       node._codecByProfile.clear();
       node._codecByProfile.set(profile.id, { profile, codec });
       node._router.defaultProfile = profile;
       profileByName.clear();
+      identityByName.clear();
       loggedRouteProblems.clear();
       node._inactiveError = null;
       node._active = true;
@@ -775,47 +1208,100 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
-     * Reconcile the connection's required default profile on every deploy (#116).
+     * Reconcile the connection's required default Vehicle Profile and default
+     * Local Identity on every deploy (#116, #228).
      *
-     * - Missing or invalid  -> fail closed: {@link deactivate}.
-     * - Restored after a prior deactivation -> {@link reactivate}.
-     * - Edited under the same id (a different object) while still running ->
-     *   {@link rebuildProfileState} hot-reload, no transport restart.
+     * - Either missing or invalid  -> fail closed: {@link deactivate}.
+     * - Both restored after a prior deactivation -> {@link reactivate}.
+     * - Profile edited under the same id (a different object) while still
+     *   running -> {@link rebuildProfileState} hot-reload, no transport restart.
+     * - Identity edited under the same id -> adopt the new object; the
+     *   LinkState survives (#192), and heartbeat timers are rebuilt so the new
+     *   heartbeat fields apply.
      *
      * @returns {void}
      */
-    function reconcileDefaultProfile() {
-      const resolved = RED.nodes.getNode(config.profile);
-      const isProfileNode = resolved && typeof resolved.getDialect === 'function';
-      const valid = isProfileNode && resolved.isValid && resolved.isValid();
-      if (!valid) {
-        const code = !isProfileNode ? 'NO_PROFILE' : 'PROFILE_INVALID';
-        const err = isProfileNode && resolved.getError && resolved.getError();
+    function reconcileRequiredConfig() {
+      const resolvedProfile = RED.nodes.getNode(config.profile);
+      const profileOk = isProfileNode(resolvedProfile) && resolvedProfile.isValid && resolvedProfile.isValid();
+      if (!profileOk) {
+        const code = !isProfileNode(resolvedProfile) ? 'NO_PROFILE' : 'PROFILE_INVALID';
+        const err = isProfileNode(resolvedProfile) && resolvedProfile.getError && resolvedProfile.getError();
         const message =
           code === 'NO_PROFILE'
-            ? 'Required default profile has been deleted; connection deactivated and transport released.'
-            : `Required default profile '${resolved.name || resolved.id}' is invalid; ` +
+            ? 'Required default Vehicle Profile has been deleted; connection deactivated and transport released.'
+            : `Required default Vehicle Profile '${resolvedProfile.name || resolvedProfile.id}' is invalid; ` +
               `connection deactivated and transport released.${err ? ` ${err.message}` : ''}`;
         deactivate(code, message);
         return;
       }
-      if (!node._active) {
-        /** A valid default profile is back after a prior deactivation. */
-        reactivate(resolved);
+
+      const resolvedIdentity = config.localIdentity ? RED.nodes.getNode(config.localIdentity) : null;
+      if (!isIdentityNode(resolvedIdentity)) {
+        deactivate(
+          'LOCAL_IDENTITY_REQUIRED',
+          `Connection '${node.name || node.id}' has no Local Identity (deleted or never configured); ` +
+            'connection deactivated and transport released. Select one in Connection > Local Identity.'
+        );
         return;
       }
-      if (resolved !== node.profile) {
-        /** A valid edited profile under the same id: hot-reload in place. */
-        try {
-          rebuildProfileState(resolved);
-        } catch (err) {
-          const e = toMavlinkError(err, 'CODEC_INIT_FAILED');
-          deactivate(
-            e.code || 'CODEC_INIT_FAILED',
-            `Failed to apply edited default profile '${resolved.name || resolved.id}': ${e.message}`
-          );
-        }
+      if (!resolvedIdentity.isValid()) {
+        const err = resolvedIdentity.getError();
+        deactivate(
+          'LOCAL_IDENTITY_INVALID',
+          `Local Identity '${resolvedIdentity.name || resolvedIdentity.id}' is invalid; ` +
+            `connection deactivated and transport released.${err ? ` ${err.message}` : ''}`
+        );
+        return;
       }
+
+      /**
+       * Collision check across the freshly resolved attached identity set. Run
+       * against the resolved default (not the possibly stale node.localIdentity)
+       * by adopting it first when it changed.
+       */
+      const identityChanged = resolvedIdentity !== node.localIdentity;
+      if (node._active) {
+        if (identityChanged) {
+          node.localIdentity = resolvedIdentity;
+          identityByName.clear();
+        }
+        const collision = validateIdentityBindings(true);
+        if (collision) {
+          deactivate(collision.code, collision.message);
+          return;
+        }
+        if (resolvedProfile !== node.profile) {
+          /** A valid edited profile under the same id: hot-reload in place. */
+          try {
+            rebuildProfileState(resolvedProfile);
+          } catch (err) {
+            const e = toMavlinkError(err, 'CODEC_INIT_FAILED');
+            deactivate(
+              e.code || 'CODEC_INIT_FAILED',
+              `Failed to apply edited default Vehicle Profile '${resolvedProfile.name || resolvedProfile.id}': ${e.message}`
+            );
+            return;
+          }
+        }
+        /**
+         * Heartbeat timers capture identity objects and intervals; rebuild them
+         * so an edited identity's new heartbeat fields (or a changed binding
+         * set) take effect on a running connection.
+         */
+        restartHeartbeats();
+        return;
+      }
+
+      /** Inactive: a valid configuration is back after a prior deactivation. */
+      node.localIdentity = resolvedIdentity;
+      const collision = validateIdentityBindings(true);
+      if (collision) {
+        node._inactiveError = collision;
+        node.error(`mavlink-ai-connection '${node.name || node.id}': ${collision.code}: ${collision.message}`);
+        return;
+      }
+      reactivate(resolvedProfile, resolvedIdentity);
     }
 
     /**
@@ -874,9 +1360,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
     if (RED.events && typeof RED.events.on === 'function') {
       /**
        * Every deploy leaves this connection node in place unless its own config
-       * changed, so reconcile all profile dependencies here — Node-RED cannot
-       * see the profile edits/deletions that matter (default edits, and route
-       * profiles embedded in serialized JSON) as dependencies of this node.
+       * changed, so reconcile all profile/identity dependencies here — Node-RED
+       * cannot see the edits/deletions that matter (default profile/identity
+       * edits, and route/binding references embedded in serialized JSON) as
+       * dependencies of this node.
        *
        * @returns {void}
        */
@@ -886,8 +1373,9 @@ module.exports = function registerMavlinkAiConnection(RED) {
          * never resolves to a stale object (#118).
          */
         profileByName.clear();
-        /** Fail closed / reactivate / hot-reload the required default profile (#116). */
-        reconcileDefaultProfile();
+        identityByName.clear();
+        /** Fail closed / reactivate / hot-reload the required config (#116, #228). */
+        reconcileRequiredConfig();
         if (!node._active) {
           /** Deactivated: nothing further to validate or decode. */
           return;
@@ -918,6 +1406,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
     /**
      * Resolve which profile owns a packet identity, or null if rejected.
      *
+     * Inbound routing maps remote packet identities to Vehicle Profiles for
+     * decode/interpretation only — it never selects the local identity used
+     * for outbound traffic (#228).
+     *
      * @param {{sysid: number, compid: number}} packetOrHeader
      * @returns {?object}
      */
@@ -942,20 +1434,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node.releaseLock = (lockName, owner) => node.locks.release(lockName, owner);
 
     /**
-     * Encode and enqueue a normalized outbound message (§14.2), filling target
-     * defaults from the effective profile (message.profile, or the connection
-     * default).
-     *
-     * @param {object} message  { name, fields, profile?, target_system?, target_component? }
-     * @param {object} [options]  { priority, coalesceKey } — coalesceKey lets a
-     *   periodic sender (e.g. the heartbeat) supersede its own still-queued copy
-     *   rather than accumulate behind a slow transport.
-     * @returns {Promise<void>}
-     */
-    /**
      * The rejection for a send attempted while the connection is failed-closed
-     * (#116). Carries the deactivation reason (NO_PROFILE / PROFILE_INVALID) so
-     * callers see a clear structured error instead of a generic transport miss.
+     * (#116). Carries the deactivation reason (NO_PROFILE /
+     * LOCAL_IDENTITY_REQUIRED / ...) so callers see a clear structured error
+     * instead of a generic transport miss.
      *
      * @returns {MavlinkError}
      */
@@ -966,6 +1448,19 @@ module.exports = function registerMavlinkAiConnection(RED) {
         : new MavlinkError('CONNECTION_INACTIVE', `Connection '${node.name || node.id}' is inactive.`);
     }
 
+    /**
+     * Encode and enqueue a normalized outbound message (§14.2), filling target
+     * defaults from the effective Vehicle Profile and stamping the source
+     * identity of the resolved Local Identity (#228).
+     *
+     * @param {object} message  { name, fields, vehicleProfile?, localIdentity?,
+     *   target_system?, target_component? } — `profile` is accepted as a
+     *   deprecated alias for `vehicleProfile`.
+     * @param {object} [options]  { priority, coalesceKey } — coalesceKey lets a
+     *   periodic sender (e.g. a heartbeat) supersede its own still-queued copy
+     *   rather than accumulate behind a slow transport.
+     * @returns {Promise<void>}
+     */
     node.send = (message, options = {}) => {
       if (!node._active) {
         return Promise.reject(inactiveRejection());
@@ -973,17 +1468,26 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (!message || typeof message !== 'object') {
         return Promise.reject(new MavlinkError('BAD_OUTBOUND', 'Outbound message must be an object.'));
       }
-      // The profile named on the message is the effective profile for the whole
-      // send: it supplies the codec (dialect, source identity, version, signing
-      // — #68) *and* the target defaults, so a send addressed through a
-      // non-default profile doesn't inherit the default profile's targets. An
-      // explicit profile that can't be resolved rejects rather than silently
-      // sending as the default.
+      // The Vehicle Profile named on the message supplies the codec (dialect,
+      // version — #68) *and* the target defaults. It never supplies the source
+      // identity (#228): that resolves independently below. An explicit
+      // reference that can't be resolved rejects rather than silently sending
+      // as the default.
       let profile;
       try {
-        profile = resolveOutboundProfile(message.profile);
+        profile = resolveOutboundProfile(vehicleProfileRef(message));
       } catch (err) {
         return Promise.reject(toMavlinkError(err, 'PROFILE_UNRESOLVED'));
+      }
+      // Resolve the Local Identity this message transmits as: the explicit
+      // message.localIdentity when present (which must be attached and
+      // permitted), else the connection's required default. Never derived from
+      // the Vehicle Profile; never a fallback from an invalid explicit request.
+      let identity;
+      try {
+        identity = node.resolveOutboundIdentity(message.localIdentity);
+      } catch (err) {
+        return Promise.reject(toMavlinkError(err, 'LOCAL_IDENTITY_UNRESOLVED'));
       }
       const defaults = profile.getDefaults();
       const fields = message.fields && typeof message.fields === 'object' ? { ...message.fields } : {};
@@ -1029,18 +1533,31 @@ module.exports = function registerMavlinkAiConnection(RED) {
        *   - routing: an addressed packet goes to that sysid's udp-peer endpoint
        *     (#21); a broadcast fans out to every learned peer instead of
        *     unicasting to the profile default.
-       *   - encoding: under `mavlinkVersion: 'auto'`, `effectiveVersion` picks
-       *     the wire version from the target sysid, so passing the profile
-       *     default target would frame an untargeted HEARTBEAT as that peer's
-       *     version (e.g. v2) and a learned v1-only vehicle would miss it. With
-       *     no target the encoder uses the connection's own detected default.
+       *   - encoding: under `mavlinkVersion: 'auto'`, the effective version is
+       *     picked from the target sysid's detected version, so passing the
+       *     profile default target would frame an untargeted HEARTBEAT as that
+       *     peer's version (e.g. v2) and a learned v1-only vehicle would miss
+       *     it. With no target the encoder uses the link's detected default.
        * (A genuinely mixed v1/v2 fleet still can't be reached by a single
        * broadcast frame — that's inherent to MAVLink versioning, not this path.)
        */
       const routingTargetSystem = codec.addressesTarget(message.name) ? targetSystem : undefined;
+      const { sysid, compid } = identity.getIdentity();
+      const signingPolicy = identity.getSigningPolicy();
+      const signing =
+        signingPolicy && signingPolicy.signOutbound && signingPolicy.key
+          ? { key: signingPolicy.key, linkId: node.signingLinkId }
+          : null;
       let buffer;
       try {
-        buffer = codec.encode(message.name, fields, { targetSystem: routingTargetSystem, targetComponent });
+        buffer = codec.encode(message.name, fields, {
+          sysid,
+          compid,
+          link: node._link,
+          signing,
+          targetSystem: routingTargetSystem,
+          targetComponent
+        });
       } catch (err) {
         return Promise.reject(toMavlinkError(err, 'ENCODE_FAILED'));
       }
@@ -1125,15 +1642,15 @@ module.exports = function registerMavlinkAiConnection(RED) {
       // Track the peer's wire version, keyed by its sysid, so an "auto" profile
       // frames outbound packets the way *that* peer speaks — a v1-only vehicle
       // ignores v2 frames, and a mixed fleet must not have one peer's version
-      // flip framing for all of them (#69). Noted on the default codec (which
-      // encodes outbound) here; the matched profile's codec is updated below.
+      // flip framing for all of them (#69). Recorded once on the connection's
+      // LinkState, which every codec on this link shares (#192).
       /**
        * Read the wire version from the actual first frame byte, not
        * header.magic: node-mavlink's v1 parser never sets header.magic (it
        * stays 0), so a v1 (0xFE) frame would otherwise never be detected (#138).
        */
       const wireMagic = packet.buffer && packet.buffer.length ? packet.buffer[0] : header.magic;
-      node._codec.noteInboundMagic(wireMagic, header.sysid);
+      node._link.noteInboundMagic(wireMagic, header.sysid);
 
       // 1. Route on the framed header (sysid/compid) before decoding. A
       //    matched route whose profile cannot be resolved rejects the packet
@@ -1161,20 +1678,17 @@ module.exports = function registerMavlinkAiConnection(RED) {
         node.emitter.emit('rejected', { sysid: header.sysid, compid: header.compid, reason: 'profile-invalid' });
         return;
       }
-      // Give the matched profile's codec the same per-peer version observation,
-      // so a send that encodes with that profile's codec frames to the peer's
-      // version too (#69). No-op when it is the default codec (already noted).
-      if (codec !== node._codec) {
-        codec.noteInboundMagic(wireMagic, header.sysid);
-      }
 
-      // 3. MAVLink 2 signature verification (issue #15), using the *matched
-      //    profile's* codec so a routed system is checked against its own
-      //    signing policy/key rather than the default profile's. Verification
-      //    is a no-op (returns null) unless that profile enables it, so
-      //    unsigned setups are unaffected. Runs after routing but before decode
-      //    so an unauthentic frame never reaches subscribers.
-      const sigDecision = codec.verifyInboundPacket(packet);
+      // 3. MAVLink 2 signature verification (issue #15). The verification
+      //    policy/credential follows the connection's default Local Identity
+      //    (#228) — signing authenticates the link participants, not the
+      //    vehicle metadata — and the anti-replay memory lives in the
+      //    LinkState, keyed by the verification key, so it survives
+      //    profile/identity rebuilds (#192). Verification is a no-op (returns
+      //    null) unless the identity enables it, so unsigned setups are
+      //    unaffected. Runs after routing but before decode so an unauthentic
+      //    frame never reaches subscribers.
+      const sigDecision = verifyInboundPacket(packet, inboundPolicy());
       if (sigDecision && !sigDecision.accepted) {
         node.emitter.emit('rejected', {
           sysid: header.sysid,
@@ -1186,10 +1700,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
 
       // Only now is the sender trusted enough to route replies to (#85): the
       // frame passed CRC in the splitter, its identity passed routing, and it
-      // satisfied the matched profile's signature policy. Tell a udp-peer
-      // transport to commit the observed endpoint for this sysid — malformed,
-      // route-rejected, or signature-rejected traffic never reaches here, so
-      // it can never redirect outbound packets.
+      // satisfied the signature policy. Tell a udp-peer transport to commit
+      // the observed endpoint for this sysid — malformed, route-rejected, or
+      // signature-rejected traffic never reaches here, so it can never
+      // redirect outbound packets.
       if (node._transport && typeof node._transport.confirmPeer === 'function') {
         node._transport.confirmPeer(header.sysid);
       }
@@ -1253,15 +1767,62 @@ module.exports = function registerMavlinkAiConnection(RED) {
       node.emitter.emit('decodeError', { topic: 'mavlink/error', payload });
     }
 
-    // --- heartbeat -----------------------------------------------------------
+    // --- heartbeat (#228: one schedule per attached identity) ----------------
     /**
-     * Start the periodic HEARTBEAT timer (background priority) using the
-     * profile's heartbeat identity. No-op if heartbeat is disabled or running.
+     * The heartbeat schedules currently configured: the default identity's
+     * (from the connection's Heartbeat toggle) plus each additional binding
+     * that opted in — additional heartbeats are opt-in per binding and require
+     * multi-identity transmission to be enabled.
+     *
+     * @returns {Array<{identity: object, intervalMs: number}>}
+     */
+    function heartbeatSpecs() {
+      const specs = [];
+      if (node.heartbeatEnabled) {
+        specs.push({ identity: node.localIdentity, intervalMs: node.heartbeatIntervalMs });
+      }
+      if (node.allowMultipleIdentities) {
+        for (const spec of node._identityBindings) {
+          if (!spec.heartbeat) {
+            continue;
+          }
+          let identity;
+          try {
+            identity = node.resolveLocalIdentity(spec.identity);
+          } catch (err) {
+            node.warn(
+              `mavlink-ai-connection '${node.name || node.id}': cannot start heartbeat for additional ` +
+                `Local Identity '${spec.identity}': ${err.message}`
+            );
+            continue;
+          }
+          if (spec.allowOutbound === false) {
+            node.warn(
+              `mavlink-ai-connection '${node.name || node.id}': additional Local Identity ` +
+                `'${identity.describe()}' has heartbeat enabled but outbound disabled; not sending its heartbeats.`
+            );
+            continue;
+          }
+          if (identity.id === node.localIdentity.id) {
+            /** The default identity's schedule is the connection's own. */
+            continue;
+          }
+          specs.push({ identity, intervalMs: spec.heartbeatIntervalMs });
+        }
+      }
+      return specs;
+    }
+
+    /**
+     * Start the periodic HEARTBEAT timers (background priority), one per
+     * scheduled identity, each using that identity's own heartbeat fields.
+     * No-op for schedules already running.
      *
      * @returns {void}
      */
-    function startHeartbeat() {
-      if (!node.heartbeatEnabled || node._heartbeatTimer) {
+    function startHeartbeats() {
+      const specs = heartbeatSpecs();
+      if (!specs.length) {
         return;
       }
       if (node.transportType === 'udp-in') {
@@ -1272,45 +1833,74 @@ module.exports = function registerMavlinkAiConnection(RED) {
         );
         return;
       }
-      /**
-       * Send one heartbeat; surface failures through the error emitter. Sent at
-       * background priority (3) but coalesced: if a prior heartbeat is still
-       * queued behind slower-draining traffic, this tick supersedes it instead
-       * of stacking a second stale copy, and age promotion in the outbound queue
-       * keeps the surviving heartbeat from being starved by that traffic (#150).
-       */
-      const tick = () => {
-        node
-          .send(
-            { name: 'HEARTBEAT', fields: node.profile.getHeartbeatFields() },
-            { priority: 3, coalesceKey: 'heartbeat' }
-          )
-          .catch((err) => {
-            // "No peer yet" is a normal udp-peer startup state (nothing has
-            // sent to us, so there is nowhere to reply); logging it once per
-            // tick until a vehicle appears is pure noise. Heartbeats resume
-            // silently once a peer is learned.
-            if (err && (err.code === 'UDP_NO_PEER' || err.code === 'TRANSPORT_NOT_READY')) {
-              return;
-            }
-            node.emitter.emit('error', toMavlinkError(err, 'HEARTBEAT_FAILED'));
-          });
-      };
-      node._heartbeatTimer = setInterval(tick, node.heartbeatIntervalMs);
-      if (typeof node._heartbeatTimer.unref === 'function') {
-        node._heartbeatTimer.unref();
+      for (const spec of specs) {
+        if (node._heartbeatTimers.has(spec.identity.id)) {
+          continue;
+        }
+        /**
+         * Send one heartbeat as this identity; surface failures through the
+         * error emitter. Sent at background priority (3) but coalesced *per
+         * identity* (#228): if a prior heartbeat is still queued behind
+         * slower-draining traffic, this tick supersedes it instead of stacking
+         * a second stale copy — and one identity's heartbeat can never replace
+         * another's queued heartbeat, because the coalesce key includes the
+         * identity. Age promotion in the outbound queue keeps the surviving
+         * heartbeat from being starved by that traffic (#150).
+         */
+        const identity = spec.identity;
+        const tick = () => {
+          node
+            .send(
+              {
+                name: 'HEARTBEAT',
+                fields: identity.getHeartbeatFields(),
+                localIdentity: identity.id
+              },
+              { priority: 3, coalesceKey: `heartbeat:${identity.id}` }
+            )
+            .catch((err) => {
+              // "No peer yet" is a normal udp-peer startup state (nothing has
+              // sent to us, so there is nowhere to reply); logging it once per
+              // tick until a vehicle appears is pure noise. Heartbeats resume
+              // silently once a peer is learned.
+              if (err && (err.code === 'UDP_NO_PEER' || err.code === 'TRANSPORT_NOT_READY')) {
+                return;
+              }
+              node.emitter.emit('error', toMavlinkError(err, 'HEARTBEAT_FAILED'));
+            });
+        };
+        const timer = setInterval(tick, Math.max(HEARTBEAT_MIN_INTERVAL_MS, spec.intervalMs));
+        if (typeof timer.unref === 'function') {
+          timer.unref();
+        }
+        node._heartbeatTimers.set(identity.id, timer);
       }
     }
 
     /**
-     * Stop the heartbeat timer.
+     * Stop every heartbeat timer.
      *
      * @returns {void}
      */
-    function stopHeartbeat() {
-      if (node._heartbeatTimer) {
-        clearInterval(node._heartbeatTimer);
-        node._heartbeatTimer = null;
+    function stopHeartbeats() {
+      for (const timer of node._heartbeatTimers.values()) {
+        clearInterval(timer);
+      }
+      node._heartbeatTimers.clear();
+    }
+
+    /**
+     * Rebuild the heartbeat timers against the current identity set — used
+     * after a deploy reconcile so edited identities/bindings take effect on a
+     * running connection. Only restarts when the transport is up (the
+     * listening/connected handlers start them otherwise).
+     *
+     * @returns {void}
+     */
+    function restartHeartbeats() {
+      stopHeartbeats();
+      if (node._transport) {
+        startHeartbeats();
       }
     }
 
@@ -1468,11 +2058,11 @@ module.exports = function registerMavlinkAiConnection(RED) {
       });
       node._transport.on('listening', (info) => {
         setStatus(node.transportType.startsWith('udp') ? 'listening' : 'connected', describeListening(node, info));
-        startHeartbeat();
+        startHeartbeats();
       });
       node._transport.on('connected', (info) => {
         setStatus('connected', describeListening(node, info));
-        startHeartbeat();
+        startHeartbeats();
       });
       node._transport.on('reconnecting', () => setStatus('reconnecting', 'Reconnecting...'));
       node._transport.on('error', (err) => {
@@ -1518,7 +2108,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
         done();
       };
       try {
-        stopHeartbeat();
+        stopHeartbeats();
         node.subscriptions.clear();
         node.locks.clear();
         node._codecByProfile.clear();
@@ -1570,6 +2160,73 @@ module.exports = function registerMavlinkAiConnection(RED) {
 };
 
 // --- helpers ----------------------------------------------------------------
+
+/**
+ * Parse the additional-identity binding list (#228). Accepts an array (tests,
+ * programmatic configs) or the JSON string the editor persists. Each entry:
+ * { identity: <config-node id or unique name>, allowOutbound?: boolean,
+ * heartbeat?: boolean, heartbeatIntervalMs?: number }.
+ *
+ * @param {*} raw
+ * @returns {Array<object>} normalized binding specs
+ * @throws {MavlinkError} ADDITIONAL_IDENTITIES_INVALID
+ */
+function parseIdentityBindings(raw) {
+  if (raw === undefined || raw === null || raw === '') {
+    return [];
+  }
+  let entries = raw;
+  if (typeof raw === 'string') {
+    try {
+      entries = JSON.parse(raw);
+    } catch (err) {
+      throw new MavlinkError(
+        'ADDITIONAL_IDENTITIES_INVALID',
+        `Additional Local Identities is not valid JSON: ${err.message}`
+      );
+    }
+  }
+  if (!Array.isArray(entries)) {
+    throw new MavlinkError('ADDITIONAL_IDENTITIES_INVALID', 'Additional Local Identities must be a list.');
+  }
+  return entries.map((entry, i) => {
+    if (!entry || typeof entry !== 'object' || !entry.identity) {
+      throw new MavlinkError(
+        'ADDITIONAL_IDENTITIES_INVALID',
+        `Additional Local Identity binding ${i + 1} must be an object naming an 'identity'.`
+      );
+    }
+    const intervalMs = Number(entry.heartbeatIntervalMs);
+    return {
+      identity: entry.identity,
+      allowOutbound: entry.allowOutbound !== false,
+      heartbeat: entry.heartbeat === true,
+      heartbeatIntervalMs: Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : HEARTBEAT_MIN_INTERVAL_MS
+    };
+  });
+}
+
+/**
+ * Human-readable list of a connection's additional identity bindings for the
+ * LOCAL_IDENTITY_NOT_ATTACHED error, or '' when there are none.
+ *
+ * @param {object} node
+ * @returns {string}
+ */
+function describeBindings(node) {
+  if (!node._identityBindings.length) {
+    return '';
+  }
+  const labels = node._identityBindings.map((spec) => {
+    try {
+      const identity = node.resolveLocalIdentity(spec.identity);
+      return `'${identity.describe()}'${spec.allowOutbound === false ? ' (outbound disabled)' : ''}`;
+    } catch (e) {
+      return `'${spec.identity}' (unresolved)`;
+    }
+  });
+  return ` and additional binding(s) ${labels.join(', ')}`;
+}
 
 /**
  * Resolve one outbound target id from its two possible locations (#84):
@@ -1649,6 +2306,12 @@ function registerNoop(node) {
   node.subscribe = () => -1;
   node.unsubscribe = () => false;
   node.resolveProfile = () => node.profile || null;
+  node.resolveLocalIdentity = () => node.localIdentity || null;
+  node.resolveOutboundIdentity = () => {
+    throw new MavlinkError('CONNECTION_INVALID', `Connection '${node.name}' is not initialised.`);
+  };
+  node.getDefaultIdentity = () => node.localIdentity || null;
+  node.identityBindingCount = () => 0;
   node.getProfileForPacket = () => null;
   node.acquireLock = () => {
     throw new MavlinkError('CONNECTION_INVALID', `Connection '${node.name}' is not initialised.`);

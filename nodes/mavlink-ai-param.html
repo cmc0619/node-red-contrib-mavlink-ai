@@ -130,7 +130,7 @@
         const profileNode = profileId ? RED.nodes.node(profileId) : null;
         return {
           firmware: profileNode && profileNode.firmware ? profileNode.firmware : '',
-          vehicleType: profileNode && profileNode.profileType ? profileNode.profileType : ''
+          vehicleType: profileNode && (profileNode.vehicleFamily || profileNode.profileType) ? (profileNode.vehicleFamily || profileNode.profileType) : ''
         };
       }
 

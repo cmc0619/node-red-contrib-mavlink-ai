@@ -4,38 +4,55 @@
     "type": "tab",
     "label": "MAVLink AI - 17 Gimbal + ROI",
     "disabled": false,
-    "info": "Specialized command family example (issue #51): point a gimbal with MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW and aim at a region of interest with MAV_CMD_DO_SET_ROI_LOCATION (COMMAND_INT, lat/lon in degrees). Gimbals are separate MAVLink components with their own conventions — some setups need target_component set to the gimbal (e.g. 154, MAV_COMP_ID_GIMBAL) or a gimbal device id in param7. Debug-wired only."
+    "info": "Specialized command family example (issue #51): point a gimbal with MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW and aim at a region of interest with MAV_CMD_DO_SET_ROI_LOCATION (COMMAND_INT, lat/lon in degrees). Gimbals are separate MAVLink components with their own conventions \u2014 some setups need target_component set to the gimbal (e.g. 154, MAV_COMP_ID_GIMBAL) or a gimbal device id in param7. Debug-wired only."
   },
   {
     "id": "ai_profile_copter",
     "type": "mavlink-ai-profile",
     "name": "AI Profile - Copter",
-    "profileType": "copter",
     "firmware": "ardupilot",
     "dialect": "ardupilotmega",
     "customDialectPath": "",
     "mavlinkVersion": "auto",
-    "sourceSystemId": 255,
-    "sourceComponentId": 190,
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
     "defaultMissionType": "mission",
+    "debugProtocol": false,
+    "vehicleFamily": "copter"
+  },
+  {
+    "id": "ai_profile_copter__identity",
+    "type": "mavlink-ai-local-identity",
+    "name": "AI Profile - Copter Identity",
+    "role": "custom",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
     "heartbeatType": "",
     "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
-    "debugProtocol": false
+    "signOutbound": false,
+    "verifyInbound": false,
+    "requireSignature": false
   },
   {
     "id": "n17_i1",
     "type": "inject",
     "z": "flow17",
     "name": "Gimbal pitch -45, yaw 0 (gimbal comp 154)",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "payload": "{\"target_component\":154}",
     "payloadType": "json",
     "x": 180,
     "y": 100,
-    "wires": [["n17_gimbal"]]
+    "wires": [
+      [
+        "n17_gimbal"
+      ]
+    ]
   },
   {
     "id": "n17_gimbal",
@@ -52,19 +69,31 @@
     "presetFields": "",
     "x": 480,
     "y": 100,
-    "wires": [["n17_dbg"]]
+    "wires": [
+      [
+        "n17_dbg"
+      ]
+    ]
   },
   {
     "id": "n17_i2",
     "type": "inject",
     "z": "flow17",
     "name": "Point at ROI (lat/lon)",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "payload": "{\"lat\":39.1,\"lon\":-75.1,\"alt\":0}",
     "payloadType": "json",
     "x": 180,
     "y": 160,
-    "wires": [["n17_roi"]]
+    "wires": [
+      [
+        "n17_roi"
+      ]
+    ]
   },
   {
     "id": "n17_roi",
@@ -81,19 +110,31 @@
     "presetFields": "",
     "x": 470,
     "y": 160,
-    "wires": [["n17_dbg"]]
+    "wires": [
+      [
+        "n17_dbg"
+      ]
+    ]
   },
   {
     "id": "n17_i3",
     "type": "inject",
     "z": "flow17",
     "name": "Cancel ROI",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "payload": "{}",
     "payloadType": "json",
     "x": 150,
     "y": 220,
-    "wires": [["n17_roi_none"]]
+    "wires": [
+      [
+        "n17_roi_none"
+      ]
+    ]
   },
   {
     "id": "n17_roi_none",
@@ -110,7 +151,11 @@
     "presetFields": "",
     "x": 450,
     "y": 220,
-    "wires": [["n17_dbg"]]
+    "wires": [
+      [
+        "n17_dbg"
+      ]
+    ]
   },
   {
     "id": "n17_dbg",

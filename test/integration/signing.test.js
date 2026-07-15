@@ -4,9 +4,12 @@ const test = require('node:test');
 const assert = require('node:assert');
 const dgram = require('dgram');
 
+const { MavLinkPacketSignature } = require('node-mavlink');
+
 const { MockRED } = require('../helpers/mock-red');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
+const { enc } = require('../helpers/v3-config');
 
 const HEARTBEAT = {
   type: 'MAV_TYPE_QUADROTOR',
@@ -17,29 +20,38 @@ const HEARTBEAT = {
 };
 
 /**
- * End-to-end MAVLink 2 signing over a real UDP loopback (issue #15): a
- * connection whose profile requires valid signatures accepts a correctly-signed
- * frame, and rejects both unsigned and wrongly-signed frames with a structured
- * `rejected` reason — the same diagnostics path the in-node errors output uses.
+ * End-to-end MAVLink 2 signing over a real UDP loopback (issue #15). Under the
+ * v3 three-node model (#228) the signing *policy* (passphrase, verify, require,
+ * signOutbound) lives on the connection's Local Identity, while the signing
+ * *link id* lives on the Connection. The connection verifies inbound frames
+ * against its default identity's policy: a correctly-signed frame is accepted,
+ * and both unsigned and wrongly-signed frames are rejected with a structured
+ * `rejected` reason. External signer peers are now plain dialect codecs whose
+ * signing is supplied per-frame via `enc(..., { signing: { key, linkId } })`.
  */
-test('connection verifies inbound signatures per the profile policy', async (t) => {
+test('connection verifies inbound signatures per the identity policy', async (t) => {
   const RED = new MockRED().loadNodes();
 
   RED.create('mavlink-ai-profile', {
     id: 'p_sign',
     name: 'Signed',
-    profileType: 'gcs',
+    vehicleFamily: 'generic',
     dialect: 'ardupilotmega',
     mavlinkVersion: 'v2',
+    defaultTargetSystem: 1,
+    defaultTargetComponent: 1
+  });
+
+  // Signing policy now belongs to the Local Identity.
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id_sign',
+    name: 'Signer',
+    role: 'custom',
     sourceSystemId: 255,
     sourceComponentId: 190,
-    defaultTargetSystem: 1,
-    defaultTargetComponent: 1,
-    // Signing policy: verify inbound and require a valid signature.
     signOutbound: true,
     verifyInbound: true,
     requireSignature: true,
-    signingLinkId: 1,
     credentials: { signingPassphrase: 'shared-link-secret' }
   });
 
@@ -47,6 +59,9 @@ test('connection verifies inbound signatures per the profile policy', async (t) 
     id: 'c_sign',
     name: 'Signed UDP',
     profile: 'p_sign',
+    localIdentity: 'id_sign',
+    // The signing link id is connection-owned in v3.
+    signingLinkId: 1,
     transport: 'udp-peer',
     routingMode: 'single-profile',
     unmatchedPolicy: 'default',
@@ -60,21 +75,11 @@ test('connection verifies inbound signatures per the profile policy', async (t) 
   const port = addr.port;
 
   const bundle = loadDialect('ardupilotmega');
-  const goodSigner = new MavlinkCodec({
-    bundle,
-    version: 'v2',
-    sysid: 1,
-    compid: 1,
-    signing: { passphrase: 'shared-link-secret', linkId: 2, signOutbound: true }
-  });
-  const badSigner = new MavlinkCodec({
-    bundle,
-    version: 'v2',
-    sysid: 1,
-    compid: 1,
-    signing: { passphrase: 'wrong-secret', linkId: 2, signOutbound: true }
-  });
-  const unsigned = new MavlinkCodec({ bundle, version: 'v2', sysid: 1, compid: 1 });
+  const goodKey = MavLinkPacketSignature.key('shared-link-secret');
+  const badKey = MavLinkPacketSignature.key('wrong-secret');
+  const goodSigner = new MavlinkCodec({ bundle, version: 'v2' });
+  const badSigner = new MavlinkCodec({ bundle, version: 'v2' });
+  const unsigned = new MavlinkCodec({ bundle, version: 'v2' });
 
   const sock = dgram.createSocket('udp4');
   t.after(async () => {
@@ -101,7 +106,12 @@ test('connection verifies inbound signatures per the profile policy', async (t) 
   // A correctly-signed HEARTBEAT is accepted and dispatched.
   const msg = await until(
     (done) => conn.subscribe({ messageNames: ['HEARTBEAT'] }, done),
-    () => sock.send(goodSigner.encode('HEARTBEAT', HEARTBEAT), port, '127.0.0.1'),
+    () =>
+      sock.send(
+        enc(goodSigner, 'HEARTBEAT', HEARTBEAT, { sysid: 1, compid: 1, signing: { key: goodKey, linkId: 2 } }),
+        port,
+        '127.0.0.1'
+      ),
     'signed heartbeat accepted'
   );
   assert.strictEqual(msg.payload.name, 'HEARTBEAT');
@@ -110,64 +120,73 @@ test('connection verifies inbound signatures per the profile policy', async (t) 
   // A wrongly-signed HEARTBEAT is rejected with signature-invalid.
   const badReject = await until(
     (done) => conn.emitter.on('rejected', done),
-    () => sock.send(badSigner.encode('HEARTBEAT', HEARTBEAT), port, '127.0.0.1'),
+    () =>
+      sock.send(
+        enc(badSigner, 'HEARTBEAT', HEARTBEAT, { sysid: 1, compid: 1, signing: { key: badKey, linkId: 2 } }),
+        port,
+        '127.0.0.1'
+      ),
     'bad signature rejected'
   );
   assert.strictEqual(badReject.reason, 'signature-invalid');
   assert.strictEqual(badReject.sysid, 1);
 
-  // An unsigned HEARTBEAT is rejected because the profile requires a signature.
+  // An unsigned HEARTBEAT is rejected because the identity requires a signature.
   const unsignedReject = await until(
     (done) => conn.emitter.on('rejected', done),
-    () => sock.send(unsigned.encode('HEARTBEAT', HEARTBEAT), port, '127.0.0.1'),
+    () => sock.send(enc(unsigned, 'HEARTBEAT', HEARTBEAT, { sysid: 1, compid: 1 }), port, '127.0.0.1'),
     'unsigned rejected'
   );
   assert.strictEqual(unsignedReject.reason, 'signature-required');
 });
 
 /**
- * On a routed connection, inbound signatures are verified against the *matched
- * route's* profile key, not the default profile's (issue #15 review). Here the
- * default profile holds one key and a routed profile for sysid 2 holds another;
- * a frame from sysid 2 signed with the routed key must be accepted even though
- * it does not match the default profile's key.
+ * A routed connection still verifies inbound signatures, against its default
+ * Local Identity's key (#228: a Vehicle Profile no longer owns a signing key —
+ * signing is identity-scoped, and the connection verifies with its default
+ * identity's policy). The matched route still governs the *dialect/label*: a
+ * frame from a routed sysid signed with the connection's key is accepted and
+ * carries the matched route's profile name, while the same sysid signing with
+ * the wrong key is rejected as signature-invalid.
  */
-test('routed connection verifies against the matched profile key', async (t) => {
+test('routed connection verifies signed frames against the default identity key', async (t) => {
   const RED = new MockRED().loadNodes();
 
   RED.create('mavlink-ai-profile', {
     id: 'p_default',
     name: 'Default',
-    profileType: 'gcs',
+    vehicleFamily: 'generic',
     dialect: 'ardupilotmega',
     mavlinkVersion: 'v2',
-    sourceSystemId: 255,
-    sourceComponentId: 190,
     defaultTargetSystem: 1,
-    defaultTargetComponent: 1,
-    verifyInbound: true,
-    requireSignature: true,
-    credentials: { signingPassphrase: 'default-key' }
+    defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-profile', {
     id: 'p_routed',
     name: 'Routed',
-    profileType: 'copter',
+    vehicleFamily: 'copter',
     dialect: 'ardupilotmega',
     mavlinkVersion: 'v2',
+    defaultTargetSystem: 2,
+    defaultTargetComponent: 1
+  });
+
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id_def',
+    name: 'GCS',
+    role: 'custom',
     sourceSystemId: 255,
     sourceComponentId: 190,
-    defaultTargetSystem: 2,
-    defaultTargetComponent: 1,
     verifyInbound: true,
     requireSignature: true,
-    credentials: { signingPassphrase: 'routed-key' }
+    credentials: { signingPassphrase: 'link-key' }
   });
 
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c_routed_sign',
     name: 'Routed Signed UDP',
     profile: 'p_default',
+    localIdentity: 'id_def',
     transport: 'udp-peer',
     routingMode: 'routed',
     unmatchedPolicy: 'default',
@@ -182,22 +201,12 @@ test('routed connection verifies against the matched profile key', async (t) => 
   const port = addr.port;
 
   const bundle = loadDialect('ardupilotmega');
-  // sysid 2 signs with the ROUTED profile's key (not the default's).
-  const routedSigner = new MavlinkCodec({
-    bundle,
-    version: 'v2',
-    sysid: 2,
-    compid: 1,
-    signing: { passphrase: 'routed-key', linkId: 1, signOutbound: true }
-  });
-  // sysid 2 signing with the DEFAULT key must be rejected (wrong key for route).
-  const defaultKeySigner = new MavlinkCodec({
-    bundle,
-    version: 'v2',
-    sysid: 2,
-    compid: 1,
-    signing: { passphrase: 'default-key', linkId: 1, signOutbound: true }
-  });
+  const goodKey = MavLinkPacketSignature.key('link-key');
+  const wrongKey = MavLinkPacketSignature.key('other-key');
+  // sysid 2 signs with the connection's identity key -> accepted, labeled 'Routed'.
+  const routedSigner = new MavlinkCodec({ bundle, version: 'v2' });
+  // sysid 2 signing with a different key -> rejected as signature-invalid.
+  const wrongKeySigner = new MavlinkCodec({ bundle, version: 'v2' });
 
   const sock = dgram.createSocket('udp4');
   t.after(async () => {
@@ -221,21 +230,31 @@ test('routed connection verifies against the matched profile key', async (t) => 
       const retry = setInterval(sendOnce, 200);
     });
 
-  // Signed with the matched route's key -> accepted (proves the matched
-  // profile's codec, not the default's, did the verification).
+  // Signed with the identity key -> accepted, and labeled with the matched
+  // route's profile (proving routing decode still applies the matched profile).
   const msg = await until(
     (done) => conn.subscribe({ messageNames: ['HEARTBEAT'], sysid: 2 }, done),
-    () => sock.send(routedSigner.encode('HEARTBEAT', HEARTBEAT), port, '127.0.0.1'),
-    'routed-key heartbeat accepted'
+    () =>
+      sock.send(
+        enc(routedSigner, 'HEARTBEAT', HEARTBEAT, { sysid: 2, compid: 1, signing: { key: goodKey, linkId: 1 } }),
+        port,
+        '127.0.0.1'
+      ),
+    'routed signed heartbeat accepted'
   );
   assert.strictEqual(msg.payload.sysid, 2);
   assert.strictEqual(msg.payload.profile, 'Routed');
 
-  // Signed with the default key -> rejected, because the route uses the other key.
+  // Signed with the wrong key -> rejected.
   const reject = await until(
     (done) => conn.emitter.on('rejected', done),
-    () => sock.send(defaultKeySigner.encode('HEARTBEAT', HEARTBEAT), port, '127.0.0.1'),
-    'default-key from routed sysid rejected'
+    () =>
+      sock.send(
+        enc(wrongKeySigner, 'HEARTBEAT', HEARTBEAT, { sysid: 2, compid: 1, signing: { key: wrongKey, linkId: 1 } }),
+        port,
+        '127.0.0.1'
+      ),
+    'wrong-key from routed sysid rejected'
   );
   assert.strictEqual(reject.sysid, 2);
   assert.strictEqual(reject.reason, 'signature-invalid');
@@ -246,6 +265,7 @@ test('routed connection verifies against the matched profile key', async (t) => 
  * signed frame once, then rejects a byte-for-byte replay of the *same* frame
  * with `signature-replayed` — the monotonic-timestamp rule the signing spec
  * requires, surfaced on the same structured rejection path as other diagnostics.
+ * (v3: signing policy on the identity, signing link id on the connection.)
  */
 test('connection rejects a replayed signed frame', async (t) => {
   const RED = new MockRED().loadNodes();
@@ -253,16 +273,21 @@ test('connection rejects a replayed signed frame', async (t) => {
   RED.create('mavlink-ai-profile', {
     id: 'p_replay',
     name: 'Replay',
-    profileType: 'gcs',
+    vehicleFamily: 'generic',
     dialect: 'ardupilotmega',
     mavlinkVersion: 'v2',
+    defaultTargetSystem: 1,
+    defaultTargetComponent: 1
+  });
+
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id_replay',
+    name: 'GCS',
+    role: 'custom',
     sourceSystemId: 255,
     sourceComponentId: 190,
-    defaultTargetSystem: 1,
-    defaultTargetComponent: 1,
     verifyInbound: true,
     requireSignature: true,
-    signingLinkId: 1,
     credentials: { signingPassphrase: 'replay-secret' }
   });
 
@@ -270,6 +295,8 @@ test('connection rejects a replayed signed frame', async (t) => {
     id: 'c_replay',
     name: 'Replay UDP',
     profile: 'p_replay',
+    localIdentity: 'id_replay',
+    signingLinkId: 1,
     transport: 'udp-peer',
     routingMode: 'single-profile',
     unmatchedPolicy: 'default',
@@ -283,15 +310,10 @@ test('connection rejects a replayed signed frame', async (t) => {
   const port = addr.port;
 
   const bundle = loadDialect('ardupilotmega');
-  const signer = new MavlinkCodec({
-    bundle,
-    version: 'v2',
-    sysid: 1,
-    compid: 1,
-    signing: { passphrase: 'replay-secret', linkId: 2, signOutbound: true }
-  });
+  const key = MavLinkPacketSignature.key('replay-secret');
+  const signer = new MavlinkCodec({ bundle, version: 'v2' });
   /** One frame, captured so the exact bytes (and timestamp) can be replayed. */
-  const frame = signer.encode('HEARTBEAT', HEARTBEAT);
+  const frame = enc(signer, 'HEARTBEAT', HEARTBEAT, { sysid: 1, compid: 1, signing: { key, linkId: 2 } });
 
   const sock = dgram.createSocket('udp4');
   t.after(async () => {

@@ -7,6 +7,7 @@ const { MockRED } = require('../helpers/mock-red');
 const { nextEvent } = require('../helpers/next-event');
 const { loadDialect, getMessageClass } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
+const { enc } = require('../helpers/v3-config');
 
 /**
  * A frame carrying a MAVLink-2 incompatibility flag the implementation does not
@@ -23,10 +24,13 @@ function setup() {
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-profile', {
     id: 'p1', name: 'P', dialect: 'common', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 7, defaultTargetComponent: 3
+    defaultTargetSystem: 7, defaultTargetComponent: 3
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'C', profile: 'p1', transport: 'udp-peer',
+    id: 'c1', name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp-peer',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   return { RED, conn };
@@ -41,8 +45,8 @@ function setup() {
  * @returns {Buffer}
  */
 function heartbeatWithIncompat(incompatFlags) {
-  const codec = new MavlinkCodec({ bundle: common, version: 'v2', sysid: 3, compid: 1 });
-  const frame = Buffer.from(codec.encode('HEARTBEAT', HB));
+  const codec = new MavlinkCodec({ bundle: common, version: 'v2' });
+  const frame = Buffer.from(enc(codec, 'HEARTBEAT', HB, { sysid: 3, compid: 1 }));
   frame.writeUInt8(incompatFlags, 2);
   const magic = getMessageClass(common, 'HEARTBEAT').MAGIC_NUMBER;
   const crc = x25crc(frame, 1, 2, magic);

@@ -119,6 +119,47 @@
       defaults: {
         name: { value: '' },
         profile: { value: '', type: 'mavlink-ai-profile', required: true },
+        // Who this Node-RED runtime is on this link (#228). Required: every
+        // transmitted message must resolve to exactly one permitted identity.
+        localIdentity: { value: '', type: 'mavlink-ai-local-identity', required: true },
+        // Advanced multi-identity transmission (#228): explicit opt-in plus an
+        // explicit binding list, both disabled/empty by default.
+        allowMultipleIdentities: { value: false },
+        additionalIdentities: {
+          value: '',
+          /**
+           * Structural check: empty, or a JSON array whose entries each name an
+           * identity. Reference resolution is validated by the runtime at deploy.
+           *
+           * @param {string} v  the stored bindings JSON
+           * @returns {boolean}
+           */
+          validate: function (v) {
+            if (!v) {
+              return true;
+            }
+            try {
+              const arr = JSON.parse(v);
+              return Array.isArray(arr) && arr.every(function (r) {
+                return r && typeof r === 'object' && r.identity;
+              });
+            } catch (e) {
+              return false;
+            }
+          }
+        },
+        // Connection-owned signing link id (#192): link ids identify channels,
+        // so one identity/credential reused on two links gets distinct link ids.
+        signingLinkId: {
+          value: 0,
+          validate: function (v) {
+            if (v === undefined || v === null || v === '') {
+              return true;
+            }
+            const n = Number(v);
+            return (Number.isInteger(n) && n >= 0 && n <= 255) || 'must be an integer between 0 and 255';
+          }
+        },
         transport: { value: 'udp-peer', required: true },
         routingMode: { value: 'single-profile', required: true },
         bindAddress: { value: '0.0.0.0' },
@@ -173,12 +214,99 @@
         // Profile config nodes available as route targets. Routes store the
         // config-node id (canonical); the picker shows the display name.
         const profiles = [];
+        // Local Identity config nodes available as additional bindings (#228).
+        const identities = [];
         RED.nodes.eachConfig(function (n) {
           if (n.type === 'mavlink-ai-profile') {
             profiles.push({ id: n.id, name: n.name || n.id });
           }
+          if (n.type === 'mavlink-ai-local-identity') {
+            const ids =
+              n.sourceSystemId !== undefined && n.sourceComponentId !== undefined
+                ? ' (' + n.sourceSystemId + '/' + n.sourceComponentId + ')'
+                : '';
+            identities.push({ id: n.id, name: (n.name || n.id) + ids });
+          }
           return true;
         });
+
+        // --- additional Local Identity bindings (#228) --------------------
+        let bindings = [];
+        try {
+          const rawBindings = this.additionalIdentities;
+          if (Array.isArray(rawBindings)) {
+            bindings = rawBindings;
+          } else if (typeof rawBindings === 'string' && rawBindings.trim()) {
+            const parsedBindings = JSON.parse(rawBindings);
+            if (Array.isArray(parsedBindings)) {
+              bindings = parsedBindings;
+            }
+          }
+        } catch (e) {
+          // Malformed legacy JSON: start empty; the old value is preserved
+          // until the user saves, and the validator flags it.
+        }
+
+        $('#node-config-identity-list').editableList({
+          addButton: 'add identity',
+          removable: true,
+          sortable: true,
+          height: 140,
+          header: $('<div>').css({ 'padding-left': '32px', color: 'var(--red-ui-secondary-text-color, #888)' })
+            .append('<span style="display:inline-block;width:40%">Identity</span>')
+            .append('<span style="display:inline-block;width:90px">Outbound</span>')
+            .append('<span style="display:inline-block;width:90px">Heartbeat</span>')
+            .append('<span>HB ms</span>'),
+          /**
+           * Render one binding row (identity picker, allow-outbound, heartbeat
+           * opt-in, heartbeat interval) into the list.
+           *
+           * @param {jQuery} container  the row container provided by editableList
+           * @param {number} index  row index
+           * @param {object} data  the binding ({ identity, allowOutbound, heartbeat, heartbeatIntervalMs })
+           * @returns {void}
+           */
+          addItem: function (container, index, data) {
+            const row = $(container);
+            row.css({ display: 'flex', 'align-items': 'center', gap: '6px' });
+            const select = $('<select/>', { class: 'binding-identity' }).css({ width: '40%', 'flex-shrink': 0 }).appendTo(row);
+            identities.forEach(function (p) {
+              $('<option/>').val(p.id).text(p.name).appendTo(select);
+            });
+            let ref = data && data.identity;
+            if (ref && !identities.some(function (p) { return p.id === ref; })) {
+              $('<option/>').val(ref).text(ref + ' (unknown identity)').appendTo(select);
+            }
+            if (ref) {
+              select.val(ref);
+            }
+            const outbound = $('<input/>', { type: 'checkbox', class: 'binding-outbound' })
+              .css({ width: '90px', 'flex-shrink': 0, margin: 0 })
+              .prop('checked', !data || data.allowOutbound !== false)
+              .appendTo(row);
+            const heartbeat = $('<input/>', { type: 'checkbox', class: 'binding-heartbeat' })
+              .css({ width: '90px', 'flex-shrink': 0, margin: 0 })
+              .prop('checked', !!(data && data.heartbeat))
+              .appendTo(row);
+            $('<input/>', { type: 'number', class: 'binding-hbms', placeholder: '1000' })
+              .css({ flex: 1, width: 'auto' })
+              .val(data && data.heartbeatIntervalMs ? data.heartbeatIntervalMs : 1000)
+              .appendTo(row);
+            void outbound;
+            void heartbeat;
+          }
+        });
+        const identityList = $('#node-config-identity-list');
+        bindings.forEach(function (b) {
+          identityList.editableList('addItem', b || {});
+        });
+
+        // The binding list is only meaningful once multi-identity is enabled.
+        $('#node-config-input-allowMultipleIdentities')
+          .on('change', function () {
+            $('.multi-identity-only').toggle($(this).is(':checked'));
+          })
+          .trigger('change');
 
         let routes = [];
         try {
@@ -275,6 +403,28 @@
        * @returns {void}
        */
       oneditsave: function () {
+        // Serialize the additional-identity bindings back into JSON. Rows
+        // without an identity are dropped; defaults are stored explicitly so
+        // imported flow JSON reads unambiguously.
+        const bindingsOut = [];
+        $('#node-config-identity-list')
+          .editableList('items')
+          .each(function () {
+            const row = $(this);
+            const identity = row.find('.binding-identity').val();
+            if (!identity) {
+              return;
+            }
+            const hbms = Number(row.find('.binding-hbms').val());
+            bindingsOut.push({
+              identity: identity,
+              allowOutbound: row.find('.binding-outbound').is(':checked'),
+              heartbeat: row.find('.binding-heartbeat').is(':checked'),
+              heartbeatIntervalMs: Number.isFinite(hbms) && hbms > 0 ? hbms : 1000
+            });
+          });
+        $('#node-config-input-additionalIdentities').val(bindingsOut.length ? JSON.stringify(bindingsOut) : '');
+
         const routes = [];
         $('#node-config-route-list')
           .editableList('items')
@@ -304,8 +454,18 @@
     <input type="text" id="node-config-input-name" placeholder="Copter UDP 14550">
   </div>
   <div class="form-row">
-    <label for="node-config-input-profile">Profile</label>
+    <label for="node-config-input-profile">Vehicle</label>
     <input type="text" id="node-config-input-profile">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-localIdentity">Identity</label>
+    <input type="text" id="node-config-input-localIdentity">
+  </div>
+  <div class="form-tips" style="margin-bottom: 8px;">
+    <b>Local Identity</b> is who this Node-RED runtime is when it transmits on this link (source
+    SysID/CompID, heartbeat identity, signing). If none exists, create a GCS, Companion, or Custom
+    Local Identity first. The <b>Vehicle</b> profile describes what is being addressed and never
+    changes the local identity.
   </div>
   <div class="form-row">
     <label for="node-config-input-transport">Transport</label>
@@ -412,10 +572,62 @@
     <label for="node-config-input-outboundQueue">Queue</label>
     <input type="checkbox" id="node-config-input-outboundQueue" style="display: inline-block; width: auto; vertical-align: top;">
   </div>
+  <div class="form-row">
+    <label for="node-config-input-signingLinkId">Sign Link ID</label>
+    <input type="number" id="node-config-input-signingLinkId" min="0" max="255" placeholder="0">
+  </div>
+  <div class="form-tips" style="margin-bottom: 8px;">
+    The MAVLink 2 signing <b>link ID</b> (0–255) written into frames signed on this connection. Link
+    ids identify channels, so each connection owns its own — a signing identity reused on two
+    connections should give them different link ids.
+  </div>
+
+  <hr>
+  <h4 style="margin:6px 0;">Advanced: Additional Local Identities</h4>
+  <div class="form-row">
+    <label for="node-config-input-allowMultipleIdentities" style="width: auto; margin-right: 8px;">
+      <input type="checkbox" id="node-config-input-allowMultipleIdentities" style="display: inline-block; width: auto; vertical-align: top; margin-right: 6px;">
+      Allow this connection to transmit as multiple local identities
+    </label>
+  </div>
+  <div class="form-tips" style="margin-bottom: 8px;">
+    Off by default. Enable only if this Node-RED runtime is <em>intentionally</em> acting as more
+    than one MAVLink participant on this link (e.g. a GCS <code>255/190</code> and a companion
+    <code>1/191</code> sharing one UDP or serial link). Messages select an added identity with
+    <code>msg.payload.localIdentity</code>; everything else uses the default identity above.
+  </div>
+  <div class="form-row multi-identity-only" style="margin-bottom: 0;">
+    <label>Identities</label>
+    <input type="hidden" id="node-config-input-additionalIdentities">
+  </div>
+  <div class="form-row multi-identity-only">
+    <ol id="node-config-identity-list"></ol>
+  </div>
+  <div class="form-tips multi-identity-only" style="margin-bottom: 8px;">
+    Each binding grants one extra identity: <b>Outbound</b> permits sends requesting it;
+    <b>Heartbeat</b> opts into a periodic HEARTBEAT as that identity (off by default) at
+    <b>HB&nbsp;ms</b> (min 1000). Two attached identities must not share a SysID/CompID pair — the
+    connection fails closed on such a collision.
+  </div>
 </script>
 
 <script type="text/html" data-help-name="mavlink-ai-connection">
-  <p>Shared MAVLink transport/session config. This owns UDP, TCP, or serial connection runtime and references a MAVLink AI Profile.</p>
+  <p>Shared MAVLink transport/session config. This owns UDP, TCP, or serial connection runtime and
+  references a <b>Vehicle Profile</b> (what is being addressed: dialect, targets, vehicle metadata)
+  and a required default <b>Local Identity</b> (who this Node-RED runtime is on this link: source
+  SysID/CompID, heartbeat identity, signing policy).</p>
+  <p>Every transmitted message resolves to exactly one permitted Local Identity: the connection
+  default, or — with <b>Advanced &gt; Allow multiple local identities</b> enabled — an explicitly
+  bound additional identity requested via <code>msg.payload.localIdentity</code>. A Vehicle Profile
+  never determines the local identity, an invalid explicit request never falls back to the default,
+  and missing/ambiguous/unattached identity configuration fails closed with an actionable error
+  (<code>LOCAL_IDENTITY_REQUIRED</code>, <code>LOCAL_IDENTITY_NOT_ATTACHED</code>,
+  <code>LOCAL_IDENTITY_AMBIGUOUS</code>, <code>LOCAL_IDENTITY_COLLISION</code>,
+  <code>MULTI_IDENTITY_DISABLED</code>).</p>
+  <p>The connection also owns all per-link protocol state: outbound sequence numbers per identity,
+  monotonic signing timestamps per <code>(sysid, compid, link id)</code>, the signing <b>link ID</b>,
+  and inbound anti-replay memory — this state survives profile edits and is shared across routed
+  profiles, per the MAVLink signing and packet-loss rules.</p>
   <p>The editor shows only the settings the selected transport uses, and required endpoint/path values are validated before deploy so an unusable connection (for example <code>udp-out</code> or <code>tcp-client</code> with no remote, or <code>serial</code> with no device path) can't be saved blank.</p>
   <p><b>udp-peer</b> tracks a reply endpoint per source sysid, so with multiple vehicles on one port an outbound message addressed to a specific <code>target_system</code> goes to that vehicle's endpoint. Broadcast/untargeted sends go to the most recent sender; a manual remote host/port overrides both. Leaving the remote blank uses the learn-first workflow (reply to peers as they are heard).</p>
   <p><b>udp-in</b> is receive-only: it listens but cannot send, so sending nodes and the heartbeat report an error on this connection.</p>

@@ -276,7 +276,7 @@
       function loadModes($select) {
         const p = RED.nodes.node($('#node-input-profile').val());
         const firmware = (p && p.firmware) || 'generic';
-        const vehicleType = (p && p.profileType) || '';
+        const vehicleType = (p && (p.vehicleFamily || p.profileType)) || '';
         const requestId = ++modesRequestId;
         $.getJSON('mavlink-ai/modes', { firmware: firmware, vehicleType: vehicleType })
           .done(function (data) {
@@ -556,7 +556,7 @@
           const query = {
             resolver: p.resolver,
             firmware: (prof && prof.firmware) || 'generic',
-            vehicleType: (prof && prof.profileType) || '',
+            vehicleType: (prof && (prof.vehicleFamily || prof.profileType)) || '',
             dialect: currentDialect().dialect
           };
           if (currentDialect().customDialectPath) {

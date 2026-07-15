@@ -34,14 +34,22 @@
     "outputs": 1,
     "x": 150,
     "y": 120,
-    "wires": [["obs22_policy"]]
+    "wires": [
+      [
+        "obs22_policy"
+      ]
+    ]
   },
   {
     "id": "obs22_tick",
     "type": "inject",
     "z": "obs22_flow",
     "name": "Check stale heartbeats every second",
-    "props": [{"p":"payload"}],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "repeat": "1",
     "once": true,
     "onceDelay": 1,
@@ -50,7 +58,11 @@
     "payloadType": "json",
     "x": 180,
     "y": 180,
-    "wires": [["obs22_policy"]]
+    "wires": [
+      [
+        "obs22_policy"
+      ]
+    ]
   },
   {
     "id": "obs22_policy",
@@ -61,7 +73,17 @@
     "outputs": 3,
     "x": 450,
     "y": 150,
-    "wires": [["obs22_ok"],["obs22_warn"],["obs22_critical"]]
+    "wires": [
+      [
+        "obs22_ok"
+      ],
+      [
+        "obs22_warn"
+      ],
+      [
+        "obs22_critical"
+      ]
+    ]
   },
   {
     "id": "obs22_ok",
@@ -103,25 +125,30 @@
     "id": "obs22_profile",
     "type": "mavlink-ai-profile",
     "name": "Safety monitor GCS",
-    "profileType": "gcs",
     "firmware": "ardupilot",
     "dialectSource": "bundled",
     "dialect": "ardupilotmega",
     "customDialectPath": "",
     "mavlinkVersion": "auto",
-    "sourceSystemId": 255,
-    "sourceComponentId": 190,
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
     "defaultMissionType": "mission",
+    "debugProtocol": false,
+    "vehicleFamily": "generic"
+  },
+  {
+    "id": "obs22_profile__identity",
+    "type": "mavlink-ai-local-identity",
+    "name": "Safety monitor GCS GCS",
+    "role": "gcs",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
     "heartbeatType": "",
     "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
-    "debugProtocol": false,
     "signOutbound": false,
     "verifyInbound": false,
-    "requireSignature": false,
-    "signingLinkId": 0
+    "requireSignature": false
   },
   {
     "id": "obs22_conn",
@@ -141,6 +168,10 @@
     "acceptedCompids": "",
     "unmatchedPolicy": "default",
     "routeTable": "",
-    "outboundQueue": true
+    "outboundQueue": true,
+    "localIdentity": "obs22_profile__identity",
+    "allowMultipleIdentities": false,
+    "additionalIdentities": "",
+    "signingLinkId": 0
   }
 ]

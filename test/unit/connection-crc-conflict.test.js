@@ -46,10 +46,14 @@ function setup(routeProfiles) {
     dialect: 'common',
     mavlinkVersion: 'v2'
   });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c1',
     name: 'Routed',
     profile: 'p_default',
+    localIdentity: 'id1',
     transport: 'udp-peer',
     routingMode: 'routed',
     unmatchedPolicy: 'default',

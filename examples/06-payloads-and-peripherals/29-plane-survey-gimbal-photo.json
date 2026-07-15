@@ -4,26 +4,35 @@
     "type": "tab",
     "label": "MAVLink AI - 29 Plane Survey: Gimbal & Photo",
     "disabled": false,
-    "info": "Aerial survey/mapping payload on a fixed-wing: point a camera gimbal straight down, then capture photos. Uses the mavlink-ai-payload node for both the gimbal aim (DO_MOUNT_CONTROL, degrees) and the camera trigger (IMAGE_START_CAPTURE).\n\nThe camera is usually a separate MAVLink component, so the photo node targets component 100 (MAV_COMP_ID_CAMERA) — adjust to your camera. For real mapping you would trigger by distance rather than manually; MAV_CMD_DO_SET_CAM_TRIGG_DIST is tracked for a future payload-node release (see the roadmap). Debug-wired only; add a connection to actuate."
+    "info": "Aerial survey/mapping payload on a fixed-wing: point a camera gimbal straight down, then capture photos. Uses the mavlink-ai-payload node for both the gimbal aim (DO_MOUNT_CONTROL, degrees) and the camera trigger (IMAGE_START_CAPTURE).\n\nThe camera is usually a separate MAVLink component, so the photo node targets component 100 (MAV_COMP_ID_CAMERA) \u2014 adjust to your camera. For real mapping you would trigger by distance rather than manually; MAV_CMD_DO_SET_CAM_TRIGG_DIST is tracked for a future payload-node release (see the roadmap). Debug-wired only; add a connection to actuate."
   },
   {
     "id": "ai_profile_plane",
     "type": "mavlink-ai-profile",
     "name": "AI Profile - Plane",
-    "profileType": "plane",
     "firmware": "ardupilot",
     "dialect": "ardupilotmega",
     "customDialectPath": "",
     "mavlinkVersion": "auto",
-    "sourceSystemId": 255,
-    "sourceComponentId": 190,
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
     "defaultMissionType": "mission",
+    "debugProtocol": false,
+    "vehicleFamily": "plane"
+  },
+  {
+    "id": "ai_profile_plane__identity",
+    "type": "mavlink-ai-local-identity",
+    "name": "AI Profile - Plane Identity",
+    "role": "custom",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
     "heartbeatType": "",
     "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
-    "debugProtocol": false
+    "signOutbound": false,
+    "verifyInbound": false,
+    "requireSignature": false
   },
   {
     "id": "n29_note",

@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
+const { LinkState } = require('../../lib/protocol/link-state');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { fieldsSignature } = require('../../lib/util/fields-signature');
 const { nonFiniteFloatToString, parseFloatSentinel } = require('../../lib/util/float-sentinels');
@@ -29,9 +30,9 @@ const bundle = loadDialect('common');
  * @returns {object}
  */
 function roundTripFields(name, fields) {
-  const enc = new MavlinkCodec({ bundle, version: 'v2', sysid: 1, compid: 1 });
-  const buf = enc.encode(name, fields, {});
-  const dec = new MavlinkCodec({ bundle, version: 'v2', sysid: 9, compid: 1 });
+  const encCodec = new MavlinkCodec({ bundle, version: 'v2' });
+  const buf = encCodec.encode(name, fields, { sysid: 1, compid: 1, link: new LinkState() });
+  const dec = new MavlinkCodec({ bundle, version: 'v2' });
   let out = null;
   let err = null;
   const d = dec.createDecoder(

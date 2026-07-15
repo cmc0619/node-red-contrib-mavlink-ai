@@ -4,38 +4,55 @@
     "type": "tab",
     "label": "MAVLink AI - 15 Servo / Relay",
     "disabled": false,
-    "info": "Specialized command family example (issue #51): set a servo output and toggle a relay via raw MAV_CMDs. Channel and relay numbers are ENTIRELY vehicle-specific — servo 9 here is just a common aux-output choice, and driving the wrong channel can actuate a control surface or payload. Everything is wired to Debug only; check the built params before wiring an out node."
+    "info": "Specialized command family example (issue #51): set a servo output and toggle a relay via raw MAV_CMDs. Channel and relay numbers are ENTIRELY vehicle-specific \u2014 servo 9 here is just a common aux-output choice, and driving the wrong channel can actuate a control surface or payload. Everything is wired to Debug only; check the built params before wiring an out node."
   },
   {
     "id": "ai_profile_copter",
     "type": "mavlink-ai-profile",
     "name": "AI Profile - Copter",
-    "profileType": "copter",
     "firmware": "ardupilot",
     "dialect": "ardupilotmega",
     "customDialectPath": "",
     "mavlinkVersion": "auto",
-    "sourceSystemId": 255,
-    "sourceComponentId": 190,
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
     "defaultMissionType": "mission",
+    "debugProtocol": false,
+    "vehicleFamily": "copter"
+  },
+  {
+    "id": "ai_profile_copter__identity",
+    "type": "mavlink-ai-local-identity",
+    "name": "AI Profile - Copter Identity",
+    "role": "custom",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
     "heartbeatType": "",
     "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
-    "debugProtocol": false
+    "signOutbound": false,
+    "verifyInbound": false,
+    "requireSignature": false
   },
   {
     "id": "n15_i1",
     "type": "inject",
     "z": "flow15",
     "name": "Servo 9 -> 1500 us",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "payload": "{}",
     "payloadType": "json",
     "x": 160,
     "y": 100,
-    "wires": [["n15_servo"]]
+    "wires": [
+      [
+        "n15_servo"
+      ]
+    ]
   },
   {
     "id": "n15_servo",
@@ -52,19 +69,31 @@
     "presetFields": "",
     "x": 400,
     "y": 100,
-    "wires": [["n15_dbg"]]
+    "wires": [
+      [
+        "n15_dbg"
+      ]
+    ]
   },
   {
     "id": "n15_i2",
     "type": "inject",
     "z": "flow15",
     "name": "Relay 0 on",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "payload": "{}",
     "payloadType": "json",
     "x": 140,
     "y": 160,
-    "wires": [["n15_relay"]]
+    "wires": [
+      [
+        "n15_relay"
+      ]
+    ]
   },
   {
     "id": "n15_relay",
@@ -81,7 +110,11 @@
     "presetFields": "",
     "x": 400,
     "y": 160,
-    "wires": [["n15_dbg"]]
+    "wires": [
+      [
+        "n15_dbg"
+      ]
+    ]
   },
   {
     "id": "n15_dbg",
