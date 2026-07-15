@@ -56,6 +56,26 @@ module.exports = function registerMavlinkAiMove(RED) {
     /** True while a streamed setpoint send is in flight, so ticks don't pile up. */
     node._streamSending = false;
 
+    /**
+     * Stop-on-redeploy guard for the config-only case (#128): when only the
+     * referenced Profile/Connection config node is edited or deleted, Node-RED
+     * leaves this node in place and fires `flows:started` (which watchProfileBadge
+     * uses to re-resolve refs) — but never `close`. A running setpoint stream
+     * would otherwise keep commanding the vehicle with the old `_streamState`
+     * (and a possibly-destroyed connection) across that redeploy, contradicting
+     * the "torn down on redeploy" promise. Tear it down here too; the operator
+     * re-triggers to resume. The listener is removed on close.
+     */
+    if (RED.events && typeof RED.events.on === 'function') {
+      const stopOnRedeploy = function stopOnRedeploy() {
+        stopStream(node);
+      };
+      RED.events.on('flows:started', stopOnRedeploy);
+      node.on('close', function removeRedeployGuard() {
+        RED.events.removeListener('flows:started', stopOnRedeploy);
+      });
+    }
+
     node.on('input', async (msg, send, done) => {
       const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
 

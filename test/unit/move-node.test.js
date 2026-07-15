@@ -190,6 +190,22 @@ test('a slow send is not piled up — ticks are skipped while one is in flight (
   assert.strictEqual(sends, 1, 'no overlapping sends while one is in flight');
 });
 
+test('a config-only redeploy (flows:started) tears down a running stream (#128)', async (t) => {
+  const { RED, node } = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', stream: true, streamRateHz: 50 },
+    { withConnection: true }
+  );
+  t.after(() => RED.close(node));
+  await RED.inject(node, { payload: {} });
+  assert.ok(node._streamTimer, 'streaming before redeploy');
+
+  /** Only a referenced config node changed, so `close` never fires — but
+   * `flows:started` does, and the stream must not keep flying the vehicle. */
+  RED.events.emit('flows:started');
+  assert.strictEqual(node._streamTimer, null, 'flows:started stopped the stream');
+  assert.strictEqual(node._streamState, null, 'streamed setpoint cleared');
+});
+
 test('streaming without a connection is a structured error (#128)', async () => {
   const { RED, node } = setup({ coordinate: 'local', preset: 'velocity', stream: true });
   const { collected } = await RED.inject(node, { payload: {} });
