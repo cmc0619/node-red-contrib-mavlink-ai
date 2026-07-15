@@ -200,17 +200,17 @@ module.exports = function registerMavlinkAiMission(RED) {
           throw Object.assign(new Error(`Unsupported mission action '${action}'.`), { code: 'UNSUPPORTED_ACTION' });
         }
 
-        lock.release();
         if (closed) {
-          return done(); // aborted by close: no output from an obsolete node
+          /** Aborted by close: no output from an obsolete node. */
+          return done();
         }
         node.status({ fill: 'green', shape: 'dot', text: `${action} ok` });
         send([result, null, null]);
         done();
       } catch (err) {
-        lock.release();
         if (closed) {
-          return done(); // aborted by close: no output from an obsolete node
+          /** Aborted by close: no output from an obsolete node. */
+          return done();
         }
         const e = toMavlinkError(err, 'MISSION_FAILED');
         node.status({ fill: 'red', shape: 'ring', text: e.code });
@@ -221,6 +221,16 @@ module.exports = function registerMavlinkAiMission(RED) {
           message: e.message,
           context: e.context
         }));
+      } finally {
+        /**
+         * Exactly-once release on every path (#150). Releasing in both the
+         * success and catch branches risked a double free: if anything after
+         * the first release threw, the catch released again — and because the
+         * lock owner is the node id, that second release could free a lock a
+         * later message on the same node had just re-acquired, letting two
+         * workflows run concurrently. `finally` releases once, whatever happens.
+         */
+        lock.release();
       }
     });
 
