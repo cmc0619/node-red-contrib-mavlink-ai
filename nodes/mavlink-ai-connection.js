@@ -30,6 +30,21 @@ const HEARTBEAT_MIN_INTERVAL_MS = 1000;
 const KNOWN_INCOMPAT_FLAGS = 0x01;
 
 /**
+ * Stream key for transports that multiplex a single peer's byte stream (udp,
+ * serial, tcp-client). They share one decoder; only tcp-server hands out a
+ * per-client `clientId` so each client gets its own stream splitter (#147).
+ */
+const SHARED_STREAM_KEY = '__shared__';
+
+/**
+ * Ceiling on live per-client stream decoders. `peer-disconnect` evicts a
+ * client's decoder as soon as its socket closes, but this bounds memory if a
+ * burst of short-lived tcp-server clients ever churns faster than eviction
+ * (#147). Real deployments have a handful of GCS/bridge clients.
+ */
+const MAX_STREAM_DECODERS = 256;
+
+/**
  * Upper bound on how long the close handler waits for a transport stop() to
  * settle before signalling Node-RED anyway (issue #140). A socket or server
  * whose close() callback never fires would otherwise leave the deploy hung; a
@@ -94,7 +109,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node.statusDetail = '';
 
     node._heartbeatTimer = null;
-    node._decoder = null;
+    /**
+     * Stream decoders keyed by stream identity: `SHARED_STREAM_KEY` for
+     * single-peer transports, or a tcp-server client's `clientId` so two
+     * clients' interleaved bytes never corrupt each other's framing (#147).
+     */
+    node._decoders = new Map();
     node._transport = null;
     node._codec = null;
     node._router = null;
@@ -633,6 +653,20 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
+     * Destroy and drop every live stream decoder (single shared decoder, or one
+     * per tcp-server client). Used on teardown, deactivate, and profile reset so
+     * no decoder keeps splitting frames with a stale dialect (#147).
+     *
+     * @returns {void}
+     */
+    function destroyDecoders() {
+      for (const decoder of node._decoders.values()) {
+        decoder.destroy();
+      }
+      node._decoders.clear();
+    }
+
+    /**
      * Tear the connection down to a fail-closed, inactive state (#116). Used
      * when the required default profile has been deleted or become invalid: the
      * connection must stop decoding and commanding vehicles, and release its
@@ -671,10 +705,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       profileByName.clear();
       loggedRouteProblems.clear();
       node.locks.clear();
-      if (node._decoder) {
-        node._decoder.destroy();
-        node._decoder = null;
-      }
+      destroyDecoders();
       node.statusState = 'error';
       node.statusDetail = message;
       node.emitter.emit('status', node.getStatus());
@@ -1297,18 +1328,27 @@ module.exports = function registerMavlinkAiConnection(RED) {
       let decoderFatal = null;
 
       /**
-       * Create the decoder on first use, with the merged CRC table covering
-       * every routed profile's dialect. Built lazily on first data so route
-       * profiles registered after this connection during the same deploy
-       * still contribute their tables. A merge conflict makes the connection
-       * refuse to decode (an ambiguous splitter table must never pick a
-       * winner silently), sets the error status, and throws once.
+       * Return the decoder for one stream, creating it on first use with the
+       * merged CRC table covering every routed profile's dialect. Built lazily
+       * on first data so route profiles registered after this connection during
+       * the same deploy still contribute their tables. A merge conflict makes
+       * the connection refuse to decode (an ambiguous splitter table must never
+       * pick a winner silently), sets the error status, and throws once.
+       *
+       * TCP is a byte stream, so each server-mode client needs its own splitter:
+       * a shared decoder corrupts framing when client A's half-frame arrives
+       * with client B's bytes interleaved between the two `data` events (#147).
+       * Single-peer transports pass `SHARED_STREAM_KEY` and reuse one decoder.
+       *
+       * @param {string|number} streamKey
+       * @returns {object} the stream's decoder
        */
-      function ensureDecoder() {
+      function ensureDecoder(streamKey) {
         if (decoderFatal) {
           throw decoderFatal;
         }
-        if (!node._decoder) {
+        let decoder = node._decoders.get(streamKey);
+        if (!decoder) {
           let magicNumbers;
           try {
             magicNumbers = buildMergedMagic();
@@ -1317,38 +1357,56 @@ module.exports = function registerMavlinkAiConnection(RED) {
             setStatus('error', 'Routed dialects have conflicting message CRCs');
             throw decoderFatal;
           }
-          node._decoder = node._codec.createDecoder(
+          decoder = node._codec.createDecoder(
             onPacket,
             (err) => node.emitter.emit('error', toMavlinkError(err, 'DECODE_ERROR')),
             { magicNumbers }
           );
+          node._decoders.set(streamKey, decoder);
+          /**
+           * Backstop against unbounded growth if clients ever churn faster than
+           * `peer-disconnect` evicts them: drop the oldest decoder (Map keeps
+           * insertion order). The freshly-created one is newest, so it survives;
+           * an evicted-but-still-live client simply rebuilds lazily (#147).
+           */
+          if (node._decoders.size > MAX_STREAM_DECODERS) {
+            const oldestKey = node._decoders.keys().next().value;
+            const oldest = node._decoders.get(oldestKey);
+            node._decoders.delete(oldestKey);
+            oldest.destroy();
+          }
         }
-        return node._decoder;
+        return decoder;
       }
 
       let decoderFatalReported = false;
 
-      // Let a profile edit (applied on flows:started) drop the decoder that was
-      // built from the *old* dialect and clear the fatal latch, so the next
-      // inbound datagram rebuilds it lazily from the new default codec with a
-      // merged CRC table covering the new dialect. The transport/session — the
-      // bound UDP socket, learned peers, reconnect state — is left untouched.
+      /**
+       * Let a profile edit (applied on flows:started) drop the decoders built
+       * from the *old* dialect and clear the fatal latch, so the next inbound
+       * datagram rebuilds them lazily from the new default codec with a merged
+       * CRC table covering the new dialect. The transport/session — the bound
+       * UDP socket, learned peers, reconnect state — is left untouched.
+       */
       node._resetDecoder = () => {
-        if (node._decoder) {
-          node._decoder.destroy();
-          node._decoder = null;
-        }
+        destroyDecoders();
         decoderFatal = null;
         decoderFatalReported = false;
       };
 
-      node._transport.on('data', (buffer) => {
+      node._transport.on('data', (buffer, rinfo) => {
         if (decoderFatal) {
-          return; // fatal config error already surfaced; don't re-log per datagram
+          /** fatal config error already surfaced; don't re-log per datagram */
+          return;
         }
+        /**
+         * tcp-server stamps a per-client `clientId`; every other transport
+         * delivers a single peer's stream and shares one decoder (#147).
+         */
+        const streamKey = rinfo && rinfo.clientId != null ? rinfo.clientId : SHARED_STREAM_KEY;
         let decoder;
         try {
-          decoder = ensureDecoder();
+          decoder = ensureDecoder(streamKey);
         } catch (err) {
           if (!decoderFatalReported) {
             decoderFatalReported = true;
@@ -1360,6 +1418,22 @@ module.exports = function registerMavlinkAiConnection(RED) {
           decoder.write(buffer);
         } catch (err) {
           node.emitter.emit('error', toMavlinkError(err, 'DECODE_ERROR'));
+        }
+      });
+      /**
+       * When a tcp-server client disconnects, drop its stream decoder so a churn
+       * of clients can't leak decoders and any half-buffered frame from the dead
+       * link is discarded rather than corrupting a future client that reuses the
+       * same `clientId` (it won't — ids are monotonic) (#147).
+       */
+      node._transport.on('peer-disconnect', (rinfo) => {
+        if (!rinfo || rinfo.clientId == null) {
+          return;
+        }
+        const decoder = node._decoders.get(rinfo.clientId);
+        if (decoder) {
+          node._decoders.delete(rinfo.clientId);
+          decoder.destroy();
         }
       });
       node._transport.on('listening', (info) => {
@@ -1421,10 +1495,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
         if (node._queue) {
           node._queue.clear();
         }
-        if (node._decoder) {
-          node._decoder.destroy();
-          node._decoder = null;
-        }
+        destroyDecoders();
         node.emitter.removeAllListeners();
       } catch (err) {
         node.error(`Error tearing down connection on close: ${err && err.message ? err.message : err}`);

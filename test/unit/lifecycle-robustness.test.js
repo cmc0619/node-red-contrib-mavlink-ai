@@ -96,8 +96,9 @@ test('connection close completes (done) even when decoder teardown throws (#140)
   conn._transport.emit('data', hb);
 
   /** Force the synchronous teardown to throw; close must still release the transport and finish. */
-  assert.ok(conn._decoder, 'decoder exists before close');
-  conn._decoder.destroy = () => {
+  const decoder = [...conn._decoders.values()][0];
+  assert.ok(decoder, 'decoder exists before close');
+  decoder.destroy = () => {
     throw new Error('decoder destroy blew up');
   };
 

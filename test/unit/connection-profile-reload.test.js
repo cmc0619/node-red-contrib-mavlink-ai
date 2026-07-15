@@ -126,7 +126,7 @@ test('an edited default profile that is now invalid fails the connection closed 
    */
   assert.strictEqual(conn._active, false);
   assert.strictEqual(conn._transport, null, 'transport was released');
-  assert.strictEqual(conn._decoder, null, 'decoder was destroyed');
+  assert.strictEqual(conn._decoders.size, 0, 'decoders were destroyed');
   assert.strictEqual(transport.socket, null, 'UDP socket was closed');
   assert.strictEqual(conn.statusState, 'error');
   const logged = conn.errors.map(String).join('\n');

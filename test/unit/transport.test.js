@@ -336,3 +336,118 @@ test('tcp-server listen failure is not terminal: it retries and listens once the
   const addr = await new Promise((resolve) => transport.on('listening', resolve));
   assert.strictEqual(addr.port, port);
 });
+
+test('tcp-server stamps a distinct clientId per client and emits peer-disconnect on close (#147)', async (t) => {
+  const transport = new TcpTransport({ mode: 'tcp-server', host: '127.0.0.1' });
+  transport.port = 0;
+  const addr = await new Promise((resolve) => {
+    transport.on('listening', resolve);
+    transport.start();
+  });
+  t.after(() => transport.stop());
+
+  const seen = [];
+  transport.on('data', (buf, rinfo) => seen.push(rinfo));
+
+  const c1 = net.connect(addr.port, '127.0.0.1');
+  await new Promise((r) => c1.on('connect', r));
+  const c2 = net.connect(addr.port, '127.0.0.1');
+  await new Promise((r) => c2.on('connect', r));
+  await waitFor(() => transport.sockets.size === 2);
+
+  c1.write(Buffer.from([0x01]));
+  c2.write(Buffer.from([0x02]));
+  await waitFor(() => new Set(seen.map((r) => r.clientId)).size === 2);
+
+  const ids = [...new Set(seen.map((r) => r.clientId))];
+  assert.ok(
+    ids.every((id) => Number.isInteger(id)) && ids[0] !== ids[1],
+    'each client stream carries a distinct integer clientId'
+  );
+
+  /** Closing one client fires peer-disconnect for that exact client's stream. */
+  const disconnect = new Promise((resolve) => transport.once('peer-disconnect', resolve));
+  c1.destroy();
+  const gone = await disconnect;
+  assert.ok(ids.includes(gone.clientId), 'peer-disconnect carries the disconnected client id');
+
+  c2.destroy();
+});
+
+test('tcp-server broadcast is not blocked by a stalled client, which is kicked (#147)', async (t) => {
+  /** Short write timeout so the stalled client is dropped quickly. */
+  const transport = new TcpTransport({ mode: 'tcp-server', writeTimeoutMs: 30 });
+  /** send()'s per-client timeout is unref'd; keep the loop alive so it fires. */
+  const keepAlive = setInterval(() => {}, 5);
+  t.after(() => clearInterval(keepAlive));
+  const errors = [];
+  transport.on('error', (e) => errors.push(e));
+
+  const healthy = {
+    destroyed: false,
+    writableLength: 0,
+    written: 0,
+    write(buf, cb) {
+      this.written += 1;
+      setImmediate(() => cb());
+    },
+    destroy() {
+      this.destroyed = true;
+    }
+  };
+  /** A client whose write callback never fires — a dead radio the kernel keeps alive. */
+  const stalled = {
+    destroyed: false,
+    writableLength: 0,
+    write() {},
+    destroy() {
+      this.destroyed = true;
+    }
+  };
+  transport.sockets.add(healthy);
+  transport.sockets.add(stalled);
+
+  await transport.send(Buffer.from([1, 2, 3]));
+
+  assert.strictEqual(healthy.written, 1, 'the healthy client received the broadcast');
+  assert.strictEqual(stalled.destroyed, true, 'the stalled client was kicked');
+  assert.ok(errors.some((e) => e.code === 'TCP_SEND_TIMEOUT'), 'the stall was surfaced');
+});
+
+test('tcp-server drops a client already backed up past the backlog cap without waiting (#147)', async () => {
+  const transport = new TcpTransport({ mode: 'tcp-server' });
+  const errors = [];
+  transport.on('error', (e) => errors.push(e));
+
+  const healthy = {
+    destroyed: false,
+    writableLength: 0,
+    written: 0,
+    write(buf, cb) {
+      this.written += 1;
+      setImmediate(() => cb());
+    },
+    destroy() {
+      this.destroyed = true;
+    }
+  };
+  /** Backlog over the 1 MiB cap: dropped immediately, not after the write timeout. */
+  const backedUp = {
+    destroyed: false,
+    writableLength: (1 << 20) + 1,
+    write() {
+      throw new Error('write must not be attempted on a client over the backlog cap');
+    },
+    destroy() {
+      this.destroyed = true;
+    }
+  };
+  transport.sockets.add(healthy);
+  transport.sockets.add(backedUp);
+
+  await transport.send(Buffer.from([9]));
+
+  assert.strictEqual(healthy.written, 1, 'the healthy client still got the bytes');
+  assert.strictEqual(backedUp.destroyed, true, 'the backed-up client was dropped');
+  assert.ok(errors.some((e) => e.code === 'TCP_CLIENT_BACKPRESSURE'), 'backpressure was surfaced');
+});
