@@ -416,6 +416,26 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
+     * Routed mode with an empty route table and the default 'reject' policy
+     * rejects every inbound packet (#150) — correct fail-closed behavior, but
+     * silent per-packet, so it looks like a dead link (no messages, not even
+     * heartbeats) with no error. Warn once at deploy so the misconfiguration is
+     * diagnosable. (unmatched: 'default' still decodes with the default profile,
+     * so it is not warned.)
+     */
+    if (
+      node._router.mode === 'routed' &&
+      node._router.routeTable.size === 0 &&
+      node._router.unmatched !== 'default'
+    ) {
+      node.warn(
+        'Routing mode is "routed" but no routes are configured and the unmatched policy is "reject": ' +
+          'every inbound packet will be rejected (no decoded messages, including heartbeats). Add a route, ' +
+          'switch routing mode to "single-profile", or set the unmatched policy to "default".'
+      );
+    }
+
+    /**
      * Build the merged CRC-extra (magic number) table covering every routed
      * profile's dialect. The splitter validates CRC against this table before
      * routing, so it must know message ids defined only by a routed (e.g.
