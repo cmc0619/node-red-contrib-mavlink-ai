@@ -42,6 +42,9 @@ module.exports = function registerMavlinkAiMove(RED) {
     node.velNorth = config.velNorth;
     node.velEast = config.velEast;
     node.climb = config.climb;
+    node.accelNorth = config.accelNorth;
+    node.accelEast = config.accelEast;
+    node.accelUp = config.accelUp;
     node.yaw = config.yaw;
     node.yawRate = config.yawRate;
 
@@ -90,6 +93,9 @@ module.exports = function registerMavlinkAiMove(RED) {
           velNorth: toNum(firstDefined(payload.velNorth, node.velNorth), undefined),
           velEast: toNum(firstDefined(payload.velEast, node.velEast), undefined),
           climb: toNum(firstDefined(payload.climb, node.climb), undefined),
+          accelNorth: toNum(firstDefined(payload.accelNorth, node.accelNorth), undefined),
+          accelEast: toNum(firstDefined(payload.accelEast, node.accelEast), undefined),
+          accelUp: toNum(firstDefined(payload.accelUp, node.accelUp), undefined),
           yaw: toNum(firstDefined(payload.yaw, node.yaw), undefined),
           yawRate: toNum(firstDefined(payload.yawRate, node.yawRate), undefined),
           timeBootMs: toNum(firstDefined(payload.time_boot_ms, 0), 0),

@@ -51,6 +51,28 @@ test('local position build-only emits mavlink/send with negated z', async () => 
   assert.strictEqual(out.target_system, 1);
 });
 
+test('acceleration preset passes the af vector through the node (#128)', async () => {
+  const { RED, node } = setup({
+    coordinate: 'local',
+    preset: 'acceleration',
+    frame: 'MAV_FRAME_LOCAL_NED',
+    accelNorth: '1.5',
+    accelUp: '2'
+  });
+  const { collected } = await RED.inject(node, { payload: {} });
+  const out = collected[0].payload;
+  assert.strictEqual(out.fields.afx, 1.5);
+  assert.strictEqual(out.fields.afz, -2);
+});
+
+test('force preset via msg.payload sets the force bit (#128)', async () => {
+  const { RED, node } = setup({ coordinate: 'local', preset: 'position', frame: 'MAV_FRAME_LOCAL_NED' });
+  const { collected } = await RED.inject(node, { payload: { preset: 'force', accelNorth: 3 } });
+  const out = collected[0].payload;
+  assert.strictEqual(out.fields.afx, 3);
+  assert.strictEqual(out.fields.type_mask & 0b0000_0010_0000_0000, 0b0000_0010_0000_0000);
+});
+
 test('global coordinate builds SET_POSITION_TARGET_GLOBAL_INT with degE7', async () => {
   const { RED, node } = setup({
     coordinate: 'global',

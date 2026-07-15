@@ -8,7 +8,8 @@ const {
   resolveTypeMask,
   resolveFrame,
   buildSetpoint,
-  DIM_BITS
+  DIM_BITS,
+  FORCE_BIT
 } = require('../../lib/move/setpoint');
 
 const ALL_IGNORE = DIM_BITS.position | DIM_BITS.velocity | DIM_BITS.accel | DIM_BITS.yaw | DIM_BITS.yawRate;
@@ -30,6 +31,48 @@ test('preset masks resolve to the documented inverted values', () => {
   assert.strictEqual(resolveTypeMask('position_yaw'), 2552);
   assert.strictEqual(resolveTypeMask('yaw'), 2559);
   assert.strictEqual(resolveTypeMask('yaw_rate'), 1535);
+});
+
+test('acceleration presets clear the accel bits but leave the force bit unset (#128)', () => {
+  const accel = resolveTypeMask('acceleration');
+  assert.strictEqual(accel, ALL_IGNORE & ~DIM_BITS.accel);
+  assert.strictEqual(accel & FORCE_BIT, 0, 'acceleration is not a force');
+  assert.strictEqual(resolveTypeMask('acceleration_yaw'), ALL_IGNORE & ~DIM_BITS.accel & ~DIM_BITS.yaw);
+});
+
+test('force presets clear the accel bits and set the force mode bit (#128)', () => {
+  const force = resolveTypeMask('force');
+  assert.strictEqual(force, (ALL_IGNORE & ~DIM_BITS.accel) | FORCE_BIT);
+  assert.strictEqual(force & FORCE_BIT, FORCE_BIT, 'force sets bit 9');
+  assert.strictEqual(resolveTypeMask('force_yaw'), (ALL_IGNORE & ~DIM_BITS.accel & ~DIM_BITS.yaw) | FORCE_BIT);
+});
+
+test('buildSetpoint fills the af vector with up-positive accel mapped to -afz (#128)', () => {
+  const { fields } = buildSetpoint({
+    coordinate: 'local',
+    preset: 'acceleration',
+    frame: 'MAV_FRAME_LOCAL_NED',
+    accelNorth: 1.5,
+    accelEast: -0.5,
+    accelUp: 2
+  });
+  assert.strictEqual(fields.afx, 1.5);
+  assert.strictEqual(fields.afy, -0.5);
+  assert.strictEqual(fields.afz, -2);
+  assert.strictEqual(fields.type_mask & FORCE_BIT, 0);
+});
+
+test('a force setpoint sends the af inputs with the force bit set (#128)', () => {
+  const { fields } = buildSetpoint({
+    coordinate: 'local',
+    preset: 'force',
+    frame: 'MAV_FRAME_LOCAL_NED',
+    accelNorth: 3,
+    accelUp: 1
+  });
+  assert.strictEqual(fields.afx, 3);
+  assert.strictEqual(fields.afz, -1);
+  assert.strictEqual(fields.type_mask & FORCE_BIT, FORCE_BIT);
 });
 
 test('custom preset takes the raw mask and rejects out-of-range values', () => {
