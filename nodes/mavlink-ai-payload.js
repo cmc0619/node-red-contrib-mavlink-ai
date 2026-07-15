@@ -157,6 +157,21 @@ module.exports = function registerMavlinkAiPayload(RED) {
       }
 
       /**
+       * Await-ack needs a Connection to receive the COMMAND_ACK. Without one the
+       * request would silently fall through to the fire-and-forget `mavlink/send`
+       * path below, giving the operator no ack and no error — so reject loudly
+       * instead (only for the COMMAND_LONG verbs that can be acked).
+       */
+      if (node.awaitAck && built.name === 'COMMAND_LONG' && !node.connection) {
+        node.status({ fill: 'red', shape: 'ring', text: 'NO_CONNECTION' });
+        return finishError(node, send, done, errorPayload({
+          node: 'mavlink-ai-payload',
+          code: 'NO_CONNECTION',
+          message: 'Await-ack requires a Connection to receive the COMMAND_ACK.'
+        }));
+      }
+
+      /**
        * With a connection the node sends the command directly; without one it
        * hands the built COMMAND_LONG to a downstream mavlink-ai-out node.
        */

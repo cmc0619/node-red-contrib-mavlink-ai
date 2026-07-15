@@ -72,7 +72,8 @@
       winchAction: { value: 'relax' },
       length: { value: '' },
       rate: { value: '' },
-      parachuteAction: { value: 'release' },
+      /** Default to the non-destructive 'disable'; the operator must consciously pick 'release'. */
+      parachuteAction: { value: 'disable' },
       period: { value: '' },
       /** Optional COMMAND_ACK wait for the command-type verbs (#129). */
       awaitAck: { value: false },
@@ -306,9 +307,9 @@
   <div class="form-row mav-payload-field" data-field="parachuteAction">
     <label for="node-input-parachuteAction">Parachute</label>
     <select id="node-input-parachuteAction">
-      <option value="release">Release</option>
-      <option value="enable">Enable</option>
       <option value="disable">Disable</option>
+      <option value="enable">Enable</option>
+      <option value="release">Release (deploys chute + kills motors)</option>
     </select>
   </div>
   <div class="form-row mav-payload-field" data-field="period">

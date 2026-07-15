@@ -198,6 +198,12 @@ test('winch / parachute map friendly actions and reject unknown ones (#129)', ()
   assert.throws(() => buildPayload('parachute', { enums, parachuteAction: 'bogus' }), (e) => e.code === 'BAD_PARACHUTE_ACTION');
 });
 
+test('parachute requires an explicit action — a missing one does not default to release (#129)', () => {
+  /** PARACHUTE_RELEASE deploys the chute and kills the motors, so a bare
+   * parachute payload must fail loudly rather than silently release. */
+  assert.throws(() => buildPayload('parachute', { enums, targetSystem: 1, targetComponent: 1 }), (e) => e.code === 'BAD_PARACHUTE_ACTION');
+});
+
 test('repeat_servo pulses count/period and rejects a missing PWM; repeat_relay omits PWM (#129)', () => {
   const servo = buildPayload('repeat_servo', { enums, instance: 2, pwm: 1800, count: 4, period: 2, targetSystem: 1, targetComponent: 1 });
   assert.strictEqual(servo.fields.param1, 2);
@@ -238,6 +244,13 @@ test('await-ack surfaces a rejected command as a structured error (#129)', async
   const { collected } = await injected;
   assert.strictEqual(collected[0].topic, 'mavlink/error');
   assert.strictEqual(collected[0].payload.code, 'COMMAND_REJECTED');
+});
+
+test('await-ack without a connection is a structured NO_CONNECTION error, not fire-and-forget (#129)', async () => {
+  const { RED, node } = setup({ action: 'gripper', gripAction: 'grab', awaitAck: true });
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'NO_CONNECTION');
 });
 
 test('await-ack is skipped for a message verb (gimbal-manager stays fire-and-forget) (#129)', async () => {
