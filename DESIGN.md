@@ -911,6 +911,19 @@ losslessly into an outbound message: the builder accepts decimal strings, safe
 integers, or `BigInt` for these fields. 64-bit values are never routed through
 `Number`, where precision above 2^53 would be silently lost.
 
+**Non-finite float fields.** MAVLink `float` / `double` fields legitimately
+carry the non-finite IEEE-754 values — `NaN` is the protocol's "ignore this
+field" sentinel on setpoint, gimbal-rate and similar messages, and `±Infinity`
+can appear as an out-of-range marker. `JSON.stringify` turns all of these into
+`null`, which loses the sentinel and collapses `NaN`, `Infinity` and
+`-Infinity` (and a genuine `null`) into one indistinguishable value. For the
+same reasons as the 64-bit fields, the decoded payload represents them as the
+strings `"NaN"`, `"Infinity"`, and `"-Infinity"` — e.g. `afx: "NaN"`. This
+survives `JSON.stringify()`, keeps the three values distinct for changed-only
+comparison, and feeds back losslessly into an outbound message: the builder
+accepts those strings (case-insensitively, plus the `inf` abbreviation) on
+`float`/`double` fields. Finite values remain plain numbers.
+
 ### 14.2 Outbound MAVLink Message
 
 ```js

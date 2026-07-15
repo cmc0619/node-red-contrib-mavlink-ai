@@ -180,9 +180,22 @@ test('encode accepts a decimal string on a float field but rejects it on an inte
     () => codec.encode('COMMAND_LONG', { command: 'MAV_CMD_COMPONENT_ARM_DISARM', target_system: '1.5', target_component: 1 }),
     (e) => e.code === 'UNRESOLVED_FIELD_VALUE'
   );
-  /** "NaN"/"Infinity" strings are not finite values and stay rejected on floats. */
+  /**
+   * "NaN"/"Infinity"/"-Infinity" are the reversible sentinels for the non-finite
+   * float values MAVLink uses (NaN = "ignore this field") — accepted on a float
+   * field so a decoded sentinel round-trips (#153).
+   */
+  assert.strictEqual((await roundTrip(codec, 'COMMAND_LONG', {
+    command: 'MAV_CMD_COMPONENT_ARM_DISARM', target_system: 1, target_component: 1, param1: 'NaN'
+  })).fields.param1, 'NaN');
+  /** A genuine typo on a float field (not a sentinel) still fails loudly. */
   assert.throws(
-    () => codec.encode('COMMAND_LONG', { command: 'MAV_CMD_COMPONENT_ARM_DISARM', target_system: 1, target_component: 1, param1: 'NaN' }),
+    () => codec.encode('COMMAND_LONG', { command: 'MAV_CMD_COMPONENT_ARM_DISARM', target_system: 1, target_component: 1, param1: 'NAM' }),
+    (e) => e.code === 'UNRESOLVED_FIELD_VALUE'
+  );
+  /** On an integer field the sentinel is meaningless and stays a typo. */
+  assert.throws(
+    () => codec.encode('COMMAND_LONG', { command: 'MAV_CMD_COMPONENT_ARM_DISARM', target_system: 'NaN', target_component: 1 }),
     (e) => e.code === 'UNRESOLVED_FIELD_VALUE'
   );
   /** A blank/whitespace string must fail, not silently become 0 (a missing value). */
