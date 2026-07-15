@@ -53,12 +53,24 @@ module.exports = function registerMavlinkAiMove(RED) {
     node._streamTimer = null;
     node._streamState = null;
     node._streamErrored = false;
+    /** True while a streamed setpoint send is in flight, so ticks don't pile up. */
+    node._streamSending = false;
 
     node.on('input', async (msg, send, done) => {
       const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
 
+      /**
+       * Tri-state stream override carried on the message: true / false when the
+       * flag is present, undefined when the message omits it. The value is
+       * coerced through toBool so a string `'false'`/`'0'` (from a Change / HTTP
+       * / MQTT path) still counts — a strict `=== false` check would let those
+       * fall through and silently leave a running stream commanding the vehicle.
+       */
+      const hasStreamFlag = payload.stream !== undefined && payload.stream !== null && payload.stream !== '';
+      const streamOverride = hasStreamFlag ? toBool(payload.stream, false) : undefined;
+
       /** An explicit `stream: false` stops a running stream and sends nothing. */
-      if (payload.stream === false) {
+      if (streamOverride === false) {
         const wasStreaming = !!node._streamTimer;
         stopStream(node);
         node.status(wasStreaming ? { fill: 'grey', shape: 'ring', text: 'stream stopped' } : {});
@@ -135,7 +147,7 @@ module.exports = function registerMavlinkAiMove(RED) {
        * leave a setpoint stream flying the vehicle.
        */
       const streaming =
-        payload.stream === true || (payload.stream === undefined && (node.stream || !!node._streamTimer));
+        streamOverride === true || (streamOverride === undefined && (node.stream || !!node._streamTimer));
       if (streaming) {
         if (!node.connection) {
           return finishError(node, send, done, errorPayload({
@@ -232,9 +244,17 @@ function clampStreamRate(hz) {
  */
 function streamTick(node) {
   const s = node._streamState;
-  if (!s || !node.connection) {
+  /**
+   * Skip this tick while a previous send is still in flight. On a transport
+   * slower than the stream rate (serial/TCP backpressure) unconditional sends
+   * would pile stale setpoints into the shared outbound queue, and the close
+   * guard — which only stops future ticks — could then drain that backlog after
+   * the node is gone. One in-flight send at a time keeps stopStream authoritative.
+   */
+  if (!s || !node.connection || node._streamSending) {
     return;
   }
+  node._streamSending = true;
   node.connection
     .send({ name: s.name, profile: s.profile, fields: s.fields }, {})
     .then(() => {
@@ -259,6 +279,9 @@ function streamTick(node) {
           })
         });
       }
+    })
+    .finally(() => {
+      node._streamSending = false;
     });
 }
 
@@ -296,6 +319,7 @@ function stopStream(node) {
   }
   node._streamState = null;
   node._streamErrored = false;
+  node._streamSending = false;
 }
 
 /**
