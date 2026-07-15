@@ -29,6 +29,17 @@
    */
   const MAV_PAYLOAD_MESSAGE_VERBS = ['gimbal_manager_aim', 'gimbal_manager_attitude'];
 
+  /**
+   * Verbs that address a camera or a gimbal/mount, used to show a device-aware
+   * Component hint. The runtime source of truth for the well-known component ids
+   * is lib/payload/components.js (MAV_COMP_ID); mirrored here for the editor.
+   */
+  const MAV_PAYLOAD_CAMERA_VERBS = [
+    'camera_photo', 'camera_video_start', 'camera_video_stop', 'camera_mode',
+    'camera_zoom', 'camera_focus', 'cam_trigger_distance'
+  ];
+  const MAV_PAYLOAD_GIMBAL_VERBS = ['gimbal_aim', 'gimbal_manager_aim', 'gimbal_manager_attitude'];
+
   RED.nodes.registerType('mavlink-ai-payload', {
     category: 'MAVLink AI',
     paletteLabel: 'MAVLink Payload',
@@ -121,6 +132,20 @@
         const showAckOpts = isCommandVerb && $('#node-input-awaitAck').is(':checked');
         $('.mav-payload-ack-opts').toggle(showAckOpts);
 
+        /**
+         * Device-aware Component hint: make the addressing choice deliberate.
+         * Blank uses the profile default (the autopilot component, which
+         * ArduPilot's onboard camera/gimbal driver answers) — a standalone
+         * MAVLink camera is 100, a gimbal 154, and must be set explicitly (#155).
+         */
+        let hint = 'Blank uses the profile\'s Default target component.';
+        if (MAV_PAYLOAD_CAMERA_VERBS.indexOf(action) !== -1) {
+          hint = 'Camera command. Blank uses the profile\'s Default target component (autopilot <b>1</b> unless the profile sets it otherwise — ArduPilot\'s onboard camera driver answers there); a standalone MAVLink camera is <b>100</b> (MAV_COMP_ID_CAMERA).';
+        } else if (MAV_PAYLOAD_GIMBAL_VERBS.indexOf(action) !== -1) {
+          hint = 'Gimbal/mount command. Blank uses the profile\'s Default target component (autopilot <b>1</b> unless the profile sets it otherwise — ArduPilot\'s onboard mount answers there); a standalone MAVLink gimbal is <b>154</b> (MAV_COMP_ID_GIMBAL).';
+        }
+        $('#mav-payload-component-hint').html(hint);
+
         $('#node-input-pwm').trigger('change');
       }
 
@@ -179,8 +204,14 @@
   </div>
   <div class="form-row">
     <label for="node-input-targetComponent">Component</label>
-    <input type="number" id="node-input-targetComponent" min="0" max="255" step="1" placeholder="blank = autopilot; e.g. 100 for a camera">
+    <input type="number" id="node-input-targetComponent" min="0" max="255" step="1" list="mav-payload-components" placeholder="blank = autopilot 1; 100 camera; 154 gimbal">
+    <datalist id="mav-payload-components">
+      <option value="1">Autopilot (MAV_COMP_ID_AUTOPILOT1)</option>
+      <option value="100">Camera (MAV_COMP_ID_CAMERA)</option>
+      <option value="154">Gimbal (MAV_COMP_ID_GIMBAL)</option>
+    </datalist>
   </div>
+  <div class="form-tips" id="mav-payload-component-hint" style="margin: -6px 0 8px 105px; width: 70%;"></div>
 
   <div class="form-row mav-payload-field" data-field="interval">
     <label for="node-input-interval">Interval (s)</label>
@@ -337,7 +368,8 @@
   <h3>Sending</h3>
   <p>With a <b>Connection</b> the node sends the command directly; without one it emits a <code>mavlink/send</code> message to wire into a <b>mavlink-ai-out</b> node. A <b>Profile</b> is always required for encoding.</p>
   <h3>Component</h3>
-  <p>Payload devices are often separate MAVLink components. Set <b>Component</b> to the device's component id (e.g. <code>100</code> for a camera); leave it blank to address the profile's default component.</p>
+  <p>Payload devices are often separate MAVLink components, so <b>which</b> component a command is addressed to matters. Leaving <b>Component</b> blank uses the <b>profile's Default target component</b>, which is the <b>autopilot</b> (<code>MAV_COMP_ID_AUTOPILOT1</code> = <code>1</code>) unless the profile has been set otherwise. Defaulting to the autopilot is deliberate, not an accident: on ArduPilot the camera and gimbal are driven by the flight controller itself, so their commands are answered by the autopilot component. (If a profile's Default target component points at a specific device, blank addresses that instead.)</p>
+  <p>A <b>standalone MAVLink camera</b> announces itself on <code>MAV_COMP_ID_CAMERA</code> (<code>100</code>) and a <b>standalone gimbal</b> on <code>MAV_COMP_ID_GIMBAL</code> (<code>154</code>). Commands sent to the autopilot component are silently ignored by such a device, so set <b>Component</b> to its id (the field offers these as suggestions, and shows a hint for camera/gimbal actions). Per message, <code>msg.payload.target_component</code> overrides the editor value.</p>
   <h3>Actions</h3>
   <ul>
     <li><b>Take Photo / Start Video / Stop Video</b> — <code>IMAGE_START_CAPTURE</code> / <code>VIDEO_START_CAPTURE</code> / <code>VIDEO_STOP_CAPTURE</code>.</li>
