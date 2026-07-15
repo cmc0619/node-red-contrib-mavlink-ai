@@ -17,6 +17,29 @@
     icon: 'font-awesome/fa-map',
     label: function () {
       return this.name || 'mavlink ai mission';
+    },
+    oneditprepare: function () {
+      /**
+       * Fold the optional Profile override under an Advanced disclosure so the
+       * common case (the Connection carries a default profile) stays uncluttered
+       * (#127). Expand it automatically when a profile is already set, so an
+       * existing override is never hidden.
+       *
+       * The section is NOT hidden in the markup: Node-RED builds the config-node
+       * picker (replacing the Profile input with a select) before oneditprepare,
+       * sizing it from the input's width — inside a display:none parent that
+       * width is 0 and the picker renders unusably narrow. So it starts visible
+       * and this initial call hides it after the picker is built (#127).
+       */
+      function toggleAdvanced(show) {
+        $('.mav-advanced').toggle(show);
+        $('#node-mav-advanced-toggle i').toggleClass('fa-caret-right', !show).toggleClass('fa-caret-down', show);
+      }
+      $('#node-mav-advanced-toggle').on('click', function (e) {
+        e.preventDefault();
+        toggleAdvanced(!$('.mav-advanced').is(':visible'));
+      });
+      toggleAdvanced(!!$('#node-input-profile').val());
     }
   });
 </script>
@@ -31,8 +54,16 @@
     <input type="text" id="node-input-connection">
   </div>
   <div class="form-row">
-    <label for="node-input-profile">Profile</label>
-    <input type="text" id="node-input-profile">
+    <a href="#" id="node-mav-advanced-toggle" style="color: inherit;"><i class="fa fa-caret-right"></i> Advanced</a>
+  </div>
+  <div class="mav-advanced">
+    <div class="form-row">
+      <label for="node-input-profile">Profile</label>
+      <input type="text" id="node-input-profile">
+    </div>
+    <div class="form-tips" style="margin: -6px 0 8px 105px; width: 70%;">
+      Optional — pins the workflow to a specific profile, overriding the connection's routed/default profile. Leave blank for the usual case.
+    </div>
   </div>
   <div class="form-row">
     <label for="node-input-action">Action</label>
