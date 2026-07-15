@@ -187,6 +187,23 @@ test('msg.payload.stream=true streams even from a one-shot node and each input r
   assert.ok(node._streamTimer, 'still a single running stream');
 });
 
+test('a plain input keeps a payload-started stream alive and refreshes it (not one-shot) (#128)', async (t) => {
+  const { RED, node, conn } = setup(
+    { coordinate: 'local', preset: 'position', altitude: '5', streamRateHz: 50 },
+    { withConnection: true }
+  );
+  t.after(() => RED.close(node));
+  await RED.inject(node, { payload: { stream: true } });
+  assert.ok(node._streamTimer, 'stream started from payload');
+
+  /** A later message with no `stream` flag must refresh the running stream, not
+   * fall through to a one-shot send that leaves the timer orphaned with stale state. */
+  const { collected } = await RED.inject(node, { payload: { altitude: 9 } });
+  assert.strictEqual(collected.length, 0, 'no one-shot emit');
+  assert.ok(node._streamTimer, 'stream still running');
+  assert.strictEqual(node._streamState.fields.z, -9, 'stream refreshed to the new setpoint');
+});
+
 test('missing profile emits MISSING_PROFILE', async () => {
   const RED = new MockRED().loadNodes();
   const node = RED.create('mavlink-ai-move', { id: 'm2', preset: 'position' });

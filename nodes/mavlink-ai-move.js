@@ -134,7 +134,8 @@ module.exports = function registerMavlinkAiMove(RED) {
        * the stream is torn down on redeploy/close so a partial deploy can never
        * leave a setpoint stream flying the vehicle.
        */
-      const streaming = payload.stream === true || (payload.stream === undefined && node.stream);
+      const streaming =
+        payload.stream === true || (payload.stream === undefined && (node.stream || !!node._streamTimer));
       if (streaming) {
         if (!node.connection) {
           return finishError(node, send, done, errorPayload({
