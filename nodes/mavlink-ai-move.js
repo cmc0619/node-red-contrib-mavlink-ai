@@ -1,7 +1,7 @@
 'use strict';
 
 const { buildSetpoint } = require('../lib/move/setpoint');
-const { toNum, firstDefined } = require('../lib/util/validation');
+const { toNum, toBool, firstDefined } = require('../lib/util/validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { watchProfileBadge } = require('../lib/util/node-lifecycle');
@@ -47,9 +47,77 @@ module.exports = function registerMavlinkAiMove(RED) {
     node.accelUp = config.accelUp;
     node.yaw = config.yaw;
     node.yawRate = config.yawRate;
+    /** Optional continuous streaming (#128): resend the setpoint at a fixed rate. */
+    node.stream = toBool(config.stream, false);
+    node.streamRateHz = clampStreamRate(Number(config.streamRateHz));
+    node._streamTimer = null;
+    node._streamState = null;
+    node._streamErrored = false;
+    /** True while a streamed setpoint send is in flight, so ticks don't pile up. */
+    node._streamSending = false;
+    /**
+     * Bumped by stopStream. A send captures the current generation and, on
+     * settle, ignores its result if the generation moved on — so a stop
+     * (stream:false / dep redeploy / close) that lands while a send is pending
+     * can't later flip the status to error or emit a stale `mavlink/error`
+     * (possibly from an already-closed node).
+     */
+    node._streamGen = 0;
+
+    /**
+     * Stop-on-redeploy guard for the config-only case (#128): when the referenced
+     * Profile/Connection config node is edited or deleted, Node-RED leaves this
+     * node in place and fires `flows:started` (which watchProfileBadge uses to
+     * re-resolve refs) — but never `close`. A running setpoint stream would
+     * otherwise keep commanding the vehicle with the old `_streamState` and a
+     * possibly-destroyed connection.
+     *
+     * The stop is gated on one of *this* node's referenced config nodes actually
+     * changing identity — an unrelated deploy (another tab/node, no change to
+     * this node's Profile/Connection) must NOT stop an active stream, or the
+     * vehicle could drop out of OFFBOARD. The connection ref is refreshed here so
+     * a redeployed connection is picked up. The listener is removed on close.
+     */
+    if (RED.events && typeof RED.events.on === 'function') {
+      let lastProfile = node.profile;
+      let lastConnection = node.connection;
+      const stopStreamIfDepsChanged = function stopStreamIfDepsChanged() {
+        const curProfile = RED.nodes.getNode(config.profile);
+        const curConnection = config.connection ? RED.nodes.getNode(config.connection) : null;
+        const changed = curProfile !== lastProfile || curConnection !== lastConnection;
+        lastProfile = curProfile;
+        lastConnection = curConnection;
+        node.connection = curConnection;
+        if (changed) {
+          stopStream(node);
+        }
+      };
+      RED.events.on('flows:started', stopStreamIfDepsChanged);
+      node.on('close', function removeRedeployGuard() {
+        RED.events.removeListener('flows:started', stopStreamIfDepsChanged);
+      });
+    }
 
     node.on('input', async (msg, send, done) => {
       const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
+
+      /**
+       * Tri-state stream override carried on the message: true / false when the
+       * flag is present, undefined when the message omits it. The value is
+       * coerced through toBool so a string `'false'`/`'0'` (from a Change / HTTP
+       * / MQTT path) still counts — a strict `=== false` check would let those
+       * fall through and silently leave a running stream commanding the vehicle.
+       */
+      const hasStreamFlag = payload.stream !== undefined && payload.stream !== null && payload.stream !== '';
+      const streamOverride = hasStreamFlag ? toBool(payload.stream, false) : undefined;
+
+      /** An explicit `stream: false` stops a running stream and sends nothing. */
+      if (streamOverride === false) {
+        const wasStreaming = !!node._streamTimer;
+        stopStream(node);
+        node.status(wasStreaming ? { fill: 'grey', shape: 'ring', text: 'stream stopped' } : {});
+        return done();
+      }
 
       if (!node.profile || !node.profile.isValid || !node.profile.isValid()) {
         return finishError(node, send, done, errorPayload({
@@ -114,13 +182,41 @@ module.exports = function registerMavlinkAiMove(RED) {
       }
 
       /**
-       * With a connection the node is the sender (setpoints are fire-and-forget,
-       * so there is no ack to await); without one it hands the built message to
-       * a downstream mavlink-ai-out node.
+       * Streaming mode (#128): resend this setpoint continuously at the node
+       * rate until stopped. Each input refreshes the streamed setpoint. Requires
+       * a Connection (there is nowhere to stream a build-only message to), and
+       * the stream is torn down on redeploy/close so a partial deploy can never
+       * leave a setpoint stream flying the vehicle.
        */
-      if (node.connection) {
+      const streaming =
+        streamOverride === true || (streamOverride === undefined && (node.stream || !!node._streamTimer));
+      if (streaming) {
+        if (!node.connection) {
+          return finishError(node, send, done, errorPayload({
+            node: 'mavlink-ai-move',
+            code: 'STREAM_NEEDS_CONNECTION',
+            message: 'Streaming requires a Connection to send setpoints continuously.'
+          }));
+        }
+        node._streamState = { name: built.name, profile: node.profile.id, fields: built.fields };
+        startStream(node);
+        node.status({ fill: 'green', shape: 'dot', text: `streaming ${labelFor(built.name)} @ ${node.streamRateHz} Hz` });
+        return done();
+      }
+
+      /**
+       * One-shot: with a connection the node is the sender (setpoints are
+       * fire-and-forget, so there is no ack to await); without one it hands the
+       * built message to a downstream mavlink-ai-out node. The connection is
+       * captured before the await — the flows:started redeploy guard can null or
+       * replace `node.connection` while the send is in flight, and the catch
+       * path must still name the connection it actually sent on rather than
+       * throw a TypeError that leaves done() uncalled.
+       */
+      const connection = node.connection;
+      if (connection) {
         try {
-          await node.connection.send({ name: built.name, profile: node.profile.id, fields: built.fields }, { msg });
+          await connection.send({ name: built.name, profile: node.profile.id, fields: built.fields }, { msg });
           node.status({ fill: 'green', shape: 'dot', text: `sent ${labelFor(built.name)}` });
           return done();
         } catch (err) {
@@ -128,7 +224,7 @@ module.exports = function registerMavlinkAiMove(RED) {
           node.status({ fill: 'red', shape: 'ring', text: e.code });
           return finishError(node, send, done, errorPayload({
             node: 'mavlink-ai-move',
-            connection: node.connection.name,
+            connection: connection.name,
             code: e.code,
             message: e.message,
             context: e.context
@@ -149,10 +245,150 @@ module.exports = function registerMavlinkAiMove(RED) {
       send(msg);
       done();
     });
+
+    /**
+     * Stop-on-deploy/close guard (#128): a redeploy or flow stop must never
+     * leave a setpoint stream running — that would keep commanding the vehicle
+     * with no node in control. Tear the timer down synchronously on close.
+     */
+    node.on('close', function closeMove(done) {
+      stopStream(node);
+      done();
+    });
   }
 
   RED.nodes.registerType('mavlink-ai-move', MavlinkAiMoveNode);
 };
+
+/** Streaming rate bounds. PX4 OFFBOARD needs >= ~2 Hz; cap the top end so a bad
+ * rate can't spin a tight send loop. */
+const DEFAULT_STREAM_RATE_HZ = 5;
+const MIN_STREAM_RATE_HZ = 0.2;
+const MAX_STREAM_RATE_HZ = 50;
+
+/**
+ * Clamp a configured stream rate into the supported band, defaulting a
+ * missing/invalid value.
+ *
+ * @param {number} hz
+ * @returns {number}
+ */
+function clampStreamRate(hz) {
+  if (!Number.isFinite(hz) || hz <= 0) {
+    return DEFAULT_STREAM_RATE_HZ;
+  }
+  return Math.min(MAX_STREAM_RATE_HZ, Math.max(MIN_STREAM_RATE_HZ, hz));
+}
+
+/**
+ * Send the currently streamed setpoint once. Best-effort: a transient send
+ * failure (e.g. no learned UDP peer yet) surfaces once per failure streak and
+ * keeps the stream running so it recovers on its own, rather than flooding the
+ * error output at the stream rate or tearing the stream down.
+ *
+ * @param {object} node
+ * @returns {void}
+ */
+function streamTick(node) {
+  const s = node._streamState;
+  /**
+   * Skip this tick while a previous send is still in flight. On a transport
+   * slower than the stream rate (serial/TCP backpressure) unconditional sends
+   * would pile stale setpoints into the shared outbound queue, and the close
+   * guard — which only stops future ticks — could then drain that backlog after
+   * the node is gone. One in-flight send at a time keeps stopStream authoritative.
+   */
+  if (!s || !node.connection || node._streamSending) {
+    return;
+  }
+  node._streamSending = true;
+  /**
+   * Capture the connection and stream generation at send time. If the stream is
+   * stopped (stream:false / dep redeploy / close all bump `_streamGen` via
+   * stopStream) while this send is pending, its settle is stale — skip the
+   * status/error update so a stop can't surface a false failure or emit from an
+   * already-torn-down node.
+   */
+  const connection = node.connection;
+  const gen = node._streamGen;
+  connection
+    .send({ name: s.name, profile: s.profile, fields: s.fields }, {})
+    .then(() => {
+      if (node._streamGen !== gen) {
+        return;
+      }
+      if (node._streamErrored) {
+        node._streamErrored = false;
+        node.status({ fill: 'green', shape: 'dot', text: `streaming @ ${node.streamRateHz} Hz` });
+      }
+    })
+    .catch((err) => {
+      if (node._streamGen !== gen) {
+        return;
+      }
+      const e = toMavlinkError(err, 'SEND_FAILED');
+      node.status({ fill: 'yellow', shape: 'ring', text: `stream: ${e.code}` });
+      if (!node._streamErrored) {
+        node._streamErrored = true;
+        node.send({
+          topic: 'mavlink/error',
+          payload: errorPayload({
+            node: 'mavlink-ai-move',
+            connection: connection.name,
+            code: e.code,
+            message: e.message,
+            context: e.context
+          })
+        });
+      }
+    })
+    .finally(() => {
+      /** Only the current generation owns `_streamSending`; a stale send that
+       * outlived a stop must not clear a fresh stream's in-flight flag. */
+      if (node._streamGen === gen) {
+        node._streamSending = false;
+      }
+    });
+}
+
+/**
+ * Ensure the repeat timer is running for the streamed setpoint. Only the initial
+ * start forces an immediate send; a refresh on an already-running stream just
+ * updates `_streamState` (done by the caller) and lets the next scheduled tick
+ * pick it up, so a burst of inputs can't outrun the configured rate. The timer
+ * is unref'd so it never holds the process open.
+ *
+ * @param {object} node
+ * @returns {void}
+ */
+function startStream(node) {
+  if (node._streamTimer) {
+    return;
+  }
+  streamTick(node);
+  node._streamTimer = setInterval(() => streamTick(node), Math.round(1000 / node.streamRateHz));
+  if (typeof node._streamTimer.unref === 'function') {
+    node._streamTimer.unref();
+  }
+}
+
+/**
+ * Stop any running setpoint stream and clear its state.
+ *
+ * @param {object} node
+ * @returns {void}
+ */
+function stopStream(node) {
+  if (node._streamTimer) {
+    clearInterval(node._streamTimer);
+    node._streamTimer = null;
+  }
+  node._streamState = null;
+  node._streamErrored = false;
+  node._streamSending = false;
+  /** Invalidate any in-flight send's settle so it can't report after the stop. */
+  node._streamGen = (node._streamGen || 0) + 1;
+}
 
 /**
  * Default coordinate frame for a coordinate kind.
