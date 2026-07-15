@@ -25,7 +25,7 @@
       ['MAV_FRAME_LOCAL_NED', 'Local NED (world)'],
       ['MAV_FRAME_LOCAL_OFFSET_NED', 'Offset from current (NED)'],
       ['MAV_FRAME_BODY_OFFSET_NED', 'Body offset (ArduPilot)'],
-      ['MAV_FRAME_BODY_FRD', 'Body FRD (PX4)']
+      ['MAV_FRAME_BODY_NED', 'Body NED (PX4)']
     ],
     global: [
       ['MAV_FRAME_GLOBAL_RELATIVE_ALT_INT', 'Global, relative altitude'],
@@ -280,8 +280,8 @@
   <h3>Setpoint presets</h3>
   <p>The <b>Setpoint</b> selector builds the correct <code>type_mask</code> for you. Because a set mask bit means <i>ignore</i> that dimension, "Position" is encoded as "ignore everything except position". <b>Acceleration</b> drives the <code>af</code> vector as an acceleration; <b>Force</b> sends the same <code>af</code> inputs but sets the force bit (bit 9) so the autopilot treats them as a force. Pick <b>Custom</b> to enter a raw 0..65535 mask.</p>
   <h3>Frames &amp; axes</h3>
-  <p>Vertical inputs are <b>up-positive</b>. For a <b>Local</b> coordinate the <code>Altitude</code> maps to a negative <code>z</code> and <code>Climb</code> to a negative <code>vz</code> — this holds for every offered local frame, because NED, the OFFSET variants, and body <b>FRD</b> are all down-positive on <code>z</code>. For a <b>Global</b> coordinate the altitude is up-positive metres and is sent as-is; latitude/longitude are entered in degrees and converted to <code>1e7</code> integers. Yaw and yaw-rate are entered in degrees and sent in radians.</p>
-  <p>Body-relative frames differ per firmware: ArduPilot GUIDED uses <b>Body offset</b> (<code>MAV_FRAME_BODY_OFFSET_NED</code>), PX4 OFFBOARD uses <b>Body FRD</b> (<code>MAV_FRAME_BODY_FRD</code>). Both are forward / right / down relative to the vehicle's heading.</p>
+  <p>Vertical inputs are <b>up-positive</b>. For a <b>Local</b> coordinate the <code>Altitude</code> maps to a negative <code>z</code> and <code>Climb</code> to a negative <code>vz</code> — this holds for every offered local frame, because NED, the OFFSET variants, and body NED are all down-positive on <code>z</code>. For a <b>Global</b> coordinate the altitude is up-positive metres and is sent as-is; latitude/longitude are entered in degrees and converted to <code>1e7</code> integers. Yaw and yaw-rate are entered in degrees and sent in radians.</p>
+  <p>Body-relative frames differ per firmware: ArduPilot GUIDED uses <b>Body offset</b> (<code>MAV_FRAME_BODY_OFFSET_NED</code>), PX4 OFFBOARD uses <b>Body NED</b> (<code>MAV_FRAME_BODY_NED</code>). Both are forward / right / down relative to the vehicle's heading. (<code>MAV_FRAME_BODY_FRD</code> is <i>not</i> a valid frame for the position-target message and is deliberately not offered.)</p>
   <h3>Firmware advisories</h3>
   <p>Combinations a firmware won't honor fail <i>silently</i> on the vehicle, so the node raises a Node-RED <b>warning</b> (the setpoint is still sent) when the profile's firmware is ArduPilot or PX4 and the request looks unsupported: <b>Force</b> setpoints (neither firmware honors bit 9), <b>Acceleration</b> on older ArduPilot GUIDED, PX4 with a terrain-altitude target, or PX4 with an OFFSET frame.</p>
   <h3>Streaming</h3>
