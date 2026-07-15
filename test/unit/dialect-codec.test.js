@@ -185,6 +185,13 @@ test('encode accepts a decimal string on a float field but rejects it on an inte
     () => codec.encode('COMMAND_LONG', { command: 'MAV_CMD_COMPONENT_ARM_DISARM', target_system: 1, target_component: 1, param1: 'NaN' }),
     (e) => e.code === 'UNRESOLVED_FIELD_VALUE'
   );
+  /** A blank/whitespace string must fail, not silently become 0 (a missing value). */
+  for (const blank of ['', '   ']) {
+    assert.throws(
+      () => codec.encode('COMMAND_LONG', { command: 'MAV_CMD_COMPONENT_ARM_DISARM', target_system: 1, target_component: 1, param1: blank }),
+      (e) => e.code === 'UNRESOLVED_FIELD_VALUE'
+    );
+  }
 });
 
 /**
