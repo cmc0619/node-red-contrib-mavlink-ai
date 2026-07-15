@@ -195,7 +195,7 @@ test('the merged CRC table and decoder reset when a routed dialect set changes (
    * Feed an ATTITUDE frame first to force the lazy decoder build.
    */
   conn._transport.emit('data', attitudeFrom(1));
-  const decoder1 = conn._decoder;
+  const decoder1 = [...conn._decoders.values()][0];
   assert.ok(decoder1, 'decoder built lazily on first data');
 
   /**
@@ -205,7 +205,7 @@ test('the merged CRC table and decoder reset when a routed dialect set changes (
    */
   profile(RED, 'pa', 'A', 'development');
   RED.events.emit('flows:started');
-  assert.strictEqual(conn._decoder, null, 'decoder reset when routed dialect set changed');
+  assert.strictEqual(conn._decoders.size, 0, 'decoder reset when routed dialect set changed');
 
   /** Now id 441 from sysid 1 survives the splitter and decodes as GNSS_INTEGRITY. */
   const msg = nextEvent(conn.emitter, 'message');
@@ -213,7 +213,7 @@ test('the merged CRC table and decoder reset when a routed dialect set changes (
   const decoded = await msg;
   assert.strictEqual(decoded.payload.name, 'GNSS_INTEGRITY');
   assert.strictEqual(decoded.payload.profile, 'A');
-  assert.notStrictEqual(conn._decoder, decoder1, 'a fresh decoder was built');
+  assert.notStrictEqual([...conn._decoders.values()][0], decoder1, 'a fresh decoder was built');
 });
 
 test('a deleted profile stops resolving by legacy name after deploy (#118)', (t) => {
