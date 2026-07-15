@@ -247,6 +247,51 @@ test('agePromotionMs Infinity disables aging (strict priority)', async () => {
   await hb;
 });
 
+test('age promotion never lets an aged low-priority send outrank a later emergency send', async () => {
+  /**
+   * Aging bounds a low-priority item's wait but must not breach the emergency
+   * band (0): an arm/mode/emergency command must cut through a backlog, not
+   * queue behind a stale normal send that merely waited a long time. Without the
+   * clamp, a priority-2 send aged many bands would reach an effective priority
+   * below 0 and be written ahead of a later priority-0 command.
+   */
+  let clock = 0;
+  const written = [];
+  let resolveWrite;
+  const release = () => resolveWrite();
+  const queue = new OutboundQueue(
+    (buf) => {
+      written.push(buf[0]);
+      return new Promise((r) => {
+        resolveWrite = r;
+      });
+    },
+    { agePromotionMs: 1000, now: () => clock }
+  );
+
+  /** Filler holds the in-flight slot; a priority-2 normal send queues at t=0 and ages. */
+  queue.enqueue(Buffer.from([1]), 2).catch(() => {});
+  const normal = queue.enqueue(Buffer.from([50]), 2);
+
+  /** Age the normal send far past its own band — enough to drive it below 0 unclamped. */
+  clock += 10000;
+
+  /** A priority-0 emergency arrives now, long after the normal send; it must still go first. */
+  const emergency = queue.enqueue(Buffer.from([9]), 0);
+
+  release();
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(written[written.length - 1], 9, 'emergency must preempt the aged normal send');
+
+  release();
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(written[written.length - 1], 50, 'aged normal send drains after the emergency');
+
+  /** Release the now-in-flight normal send so no promise dangles. */
+  release();
+  await Promise.all([normal, emergency]);
+});
+
 test('coalescing reclaims a full queue slot instead of rejecting', async () => {
   let release;
   const gate = new Promise((r) => (release = r));
