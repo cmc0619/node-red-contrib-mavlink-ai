@@ -204,3 +204,32 @@ test('an addressed message still routes to its target via the profile default (#
   assert.strictEqual(sent.length, 1);
   assert.strictEqual(sent[0].meta.targetSystem, 7, 'addressed message keeps its routing target');
 });
+
+test('under auto version, a broadcast is framed with the connection default, not the routing target peer (#148)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-profile', {
+    id: 'pa', name: 'Auto', dialect: 'common', mavlinkVersion: 'auto',
+    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 7, defaultTargetComponent: 3
+  });
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'ca', name: 'CA', profile: 'pa', transport: 'udp-peer',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
+  });
+  const sent = [];
+  conn._queue = { enqueue(buffer, priority, meta) { sent.push({ buffer, meta }); return Promise.resolve(); }, clear() {} };
+  t.after(() => RED.close(conn));
+
+  /** The default target sysid 7 speaks v2, but the connection's last-detected
+   * default is v1. A broadcast must use the connection default, not sysid 7's. */
+  conn._codec.noteInboundMagic(0xfd, 7);
+  conn._codec.noteInboundMagic(0xfe, 9);
+
+  await conn.send({ name: 'HEARTBEAT', fields: { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 } });
+  assert.strictEqual(sent[sent.length - 1].meta.targetSystem, undefined);
+  assert.strictEqual(sent[sent.length - 1].buffer[0], 0xfe, 'broadcast framed with the connection default (v1), not sysid 7 (v2)');
+
+  /** An addressed message to sysid 7 still uses that peer's detected v2 (0xfd). */
+  await conn.send({ name: 'COMMAND_LONG', fields: { command: 512, confirmation: 0, target_system: 7 } });
+  assert.strictEqual(sent[sent.length - 1].meta.targetSystem, 7);
+  assert.strictEqual(sent[sent.length - 1].buffer[0], 0xfd, 'addressed message uses the target sysid detected version (v2)');
+});

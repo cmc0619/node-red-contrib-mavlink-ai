@@ -1020,21 +1020,28 @@ module.exports = function registerMavlinkAiConnection(RED) {
       } catch (err) {
         return Promise.reject(toMavlinkError(err, 'PROFILE_INVALID'));
       }
+      /**
+       * A message with no target_system field is a broadcast (#148) and must not
+       * be framed for one specific peer. The target is gated on `addressesTarget`
+       * for *both* the encoder and the routing metadata:
+       *   - routing: an addressed packet goes to that sysid's udp-peer endpoint
+       *     (#21); a broadcast fans out to every learned peer instead of
+       *     unicasting to the profile default.
+       *   - encoding: under `mavlinkVersion: 'auto'`, `effectiveVersion` picks
+       *     the wire version from the target sysid, so passing the profile
+       *     default target would frame an untargeted HEARTBEAT as that peer's
+       *     version (e.g. v2) and a learned v1-only vehicle would miss it. With
+       *     no target the encoder uses the connection's own detected default.
+       * (A genuinely mixed v1/v2 fleet still can't be reached by a single
+       * broadcast frame — that's inherent to MAVLink versioning, not this path.)
+       */
+      const routingTargetSystem = codec.addressesTarget(message.name) ? targetSystem : undefined;
       let buffer;
       try {
-        buffer = codec.encode(message.name, fields, { targetSystem, targetComponent });
+        buffer = codec.encode(message.name, fields, { targetSystem: routingTargetSystem, targetComponent });
       } catch (err) {
         return Promise.reject(toMavlinkError(err, 'ENCODE_FAILED'));
       }
-      /**
-       * The addressed sysid rides along so a udp-peer transport can route the
-       * packet to that vehicle's endpoint instead of the last sender (#21).
-       * Only messages that actually carry a target_system field are addressed;
-       * a broadcast message (HEARTBEAT, ...) must not inherit the profile's
-       * default target as routing metadata, or a udp-peer transport would
-       * unicast it to that one vehicle instead of fanning it out to all (#148).
-       */
-      const routingTargetSystem = codec.addressesTarget(message.name) ? targetSystem : undefined;
       return node._queue.enqueue(buffer, options.priority, { targetSystem: routingTargetSystem });
     };
 
