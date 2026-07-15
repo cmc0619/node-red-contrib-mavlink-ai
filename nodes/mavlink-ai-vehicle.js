@@ -8,7 +8,7 @@ const { MavlinkError } = require('../lib/util/errors');
 const { registerEditorApi } = require('../lib/editor-api');
 
 /**
- * mavlink-ai-profile — the target-facing **Vehicle Profile** (issue #228).
+ * mavlink-ai-vehicle — the target-facing **Vehicle Profile** (issue #228).
  *
  * A Vehicle Profile describes the vehicle being addressed and how its protocol
  * metadata is interpreted: dialect, firmware, MAVLink version preference,
@@ -231,5 +231,5 @@ module.exports = function registerMavlinkAiProfile(RED) {
     };
   }
 
-  RED.nodes.registerType('mavlink-ai-profile', MavlinkAiProfileNode);
+  RED.nodes.registerType('mavlink-ai-vehicle', MavlinkAiProfileNode);
 };

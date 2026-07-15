@@ -14,7 +14,7 @@
     };
   }
 
-  RED.nodes.registerType('mavlink-ai-profile', {
+  RED.nodes.registerType('mavlink-ai-vehicle', {
     category: 'config',
     defaults: {
       name: { value: '' },
@@ -244,7 +244,7 @@
   });
 </script>
 
-<script type="text/html" data-template-name="mavlink-ai-profile">
+<script type="text/html" data-template-name="mavlink-ai-vehicle">
   <div class="form-row">
     <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
     <input type="text" id="node-config-input-name" placeholder="SITL Copter">
@@ -346,7 +346,7 @@
   </div>
 </script>
 
-<script type="text/html" data-help-name="mavlink-ai-profile">
+<script type="text/html" data-help-name="mavlink-ai-vehicle">
   <p>Shared MAVLink <b>Vehicle Profile</b>: the target-facing half of the configuration. It owns the
   dialect, firmware, MAVLink version preference, default target ids, vehicle family (for mode tables
   and parameter metadata), and mission preferences. It does not own a transport.</p>

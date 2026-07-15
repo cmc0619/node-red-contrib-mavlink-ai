@@ -123,7 +123,7 @@
   },
   {
     "id": "obs22_profile",
-    "type": "mavlink-ai-profile",
+    "type": "mavlink-ai-vehicle",
     "name": "Safety monitor GCS",
     "firmware": "ardupilot",
     "dialectSource": "bundled",

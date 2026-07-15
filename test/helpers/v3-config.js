@@ -51,7 +51,7 @@ function makeIdentity(RED, config = {}) {
  */
 function makeProfile(RED, config = {}) {
   return RED.create(
-    'mavlink-ai-profile',
+    'mavlink-ai-vehicle',
     Object.assign(
       {
         id: uid('p'),

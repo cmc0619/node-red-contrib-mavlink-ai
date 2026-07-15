@@ -6,7 +6,7 @@ const dgram = require('dgram');
 
 const helper = require('node-red-node-test-helper');
 const connectionNode = require('../../nodes/mavlink-ai-connection.js');
-const profileNode = require('../../nodes/mavlink-ai-profile.js');
+const profileNode = require('../../nodes/mavlink-ai-vehicle.js');
 const identityNode = require('../../nodes/mavlink-ai-local-identity.js');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
@@ -80,7 +80,7 @@ async function assertBound(port) {
 
 const profileConfig = (id, name, dialect, extra = {}) => ({
   id,
-  type: 'mavlink-ai-profile',
+  type: 'mavlink-ai-vehicle',
   name,
   vehicleFamily: 'generic',
   dialect,

@@ -259,7 +259,7 @@
   },
   {
     "id": "obs25_profile",
-    "type": "mavlink-ai-profile",
+    "type": "mavlink-ai-vehicle",
     "name": "Recorder GCS",
     "firmware": "ardupilot",
     "dialectSource": "bundled",

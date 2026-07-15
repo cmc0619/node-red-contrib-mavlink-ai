@@ -24,7 +24,7 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function setup() {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'P', dialect: 'common', mavlinkVersion: 'auto',
     defaultTargetSystem: 7, defaultTargetComponent: 3
   });

@@ -82,7 +82,7 @@ node-red-contrib-mavlink-ai
 Internal Node-RED type names:
 
 ```text
-mavlink-ai-profile
+mavlink-ai-vehicle
 mavlink-ai-connection
 mavlink-ai-in
 mavlink-ai-out
@@ -95,7 +95,7 @@ mavlink-ai-mission
 Palette display names:
 
 ```text
-MAVLink AI Profile
+MAVLink AI Vehicle Profile
 MAVLink AI Connection
 MAVLink AI In
 MAVLink AI Out
@@ -123,7 +123,7 @@ Node-RED config nodes are reusable shared configuration objects. Users can creat
 This module should use two config-node layers:
 
 ```text
-mavlink-ai-profile
+mavlink-ai-vehicle
 mavlink-ai-connection
 ```
 
@@ -206,7 +206,7 @@ config nodes so each question has one owner.
 | Concern | Config node | Owns |
 | --- | --- | --- |
 | Who Node-RED **is** on the wire | `mavlink-ai-local-identity` | source SysID/CompID, role preset (GCS / companion / custom), HEARTBEAT identity (`MAV_TYPE`, autopilot, base_mode/status defaults), signing credential + sign/verify/require **policy** |
-| What vehicle is **addressed** | `mavlink-ai-profile` (Vehicle Profile) | dialect, firmware, MAVLink version preference, default target SysID/CompID, vehicle family (mode tables + parameter metadata), mission preferences |
+| What vehicle is **addressed** | `mavlink-ai-vehicle` (Vehicle Profile) | dialect, firmware, MAVLink version preference, default target SysID/CompID, vehicle family (mode tables + parameter metadata), mission preferences |
 | How traffic **moves** | `mavlink-ai-connection` | transport/session, routing, outbound queue, mission locks, heartbeat scheduling, **signing link id**, and all per-link channel state (sequence numbers, monotonic signing timestamps, inbound replay memory, detected peer wire versions) |
 
 A Vehicle Profile must **never** determine or change the local source identity.
@@ -218,7 +218,7 @@ dialect codec (this satisfies #192).
 ### 5.5.2 Config-node relationship
 
 ```text
-mavlink-ai-local-identity        mavlink-ai-profile (Vehicle Profile)
+mavlink-ai-local-identity        mavlink-ai-vehicle (Vehicle Profile)
    (source ids, heartbeat,           (dialect, targets, vehicle family,
     signing policy/key)               firmware, mission prefs)
           \                                   /
@@ -377,7 +377,7 @@ to create a Local Identity from the old profile's source ids.
 ## 6. Profile Config Node
 
 > **v3 (#228):** this section describes the pre-v3 combined profile. In v3 the
-> `mavlink-ai-profile` is a **Vehicle Profile** that owns only target-facing
+> `mavlink-ai-vehicle` is a **Vehicle Profile** that owns only target-facing
 > metadata (dialect, firmware, version, target ids, vehicle family, mission
 > prefs). Source identity, heartbeat identity, and signing moved to
 > `mavlink-ai-local-identity`; the signing link id moved to the Connection. See
@@ -390,7 +390,7 @@ It does **not** own sockets, serial ports, TCP listeners, UDP ports, mission loc
 Type:
 
 ```text
-mavlink-ai-profile
+mavlink-ai-vehicle
 ```
 
 Responsibilities:
@@ -737,7 +737,7 @@ routed mode: reject unmatched and emit warning/status event
 Simple architecture:
 
 ```text
-[mavlink-ai-profile: Copter]
+[mavlink-ai-vehicle: Copter]
           ^
           |
 [mavlink-ai-connection: Copter UDP]
@@ -754,9 +754,9 @@ Simple architecture:
 Routed architecture:
 
 ```text
-[mavlink-ai-profile: Copter] <--- route 1:*
-[mavlink-ai-profile: Rover]  <--- route 2:*
-[mavlink-ai-profile: Plane]  <--- route 3:*
+[mavlink-ai-vehicle: Copter] <--- route 1:*
+[mavlink-ai-vehicle: Rover]  <--- route 2:*
+[mavlink-ai-vehicle: Plane]  <--- route 3:*
 
 [mavlink-ai-connection: UDP 14550]
           |
@@ -1659,7 +1659,7 @@ Good error:
 {
   topic: "mavlink/error",
   payload: {
-    node: "mavlink-ai-profile",
+    node: "mavlink-ai-vehicle",
     code: "DIALECT_LOAD_FAILED",
     message: "Unable to load dialect ardupilotmega",
     context: {
@@ -1714,8 +1714,8 @@ Suggested repo layout:
 
 ```text
 nodes/
-  mavlink-ai-profile.js
-  mavlink-ai-profile.html
+  mavlink-ai-vehicle.js
+  mavlink-ai-vehicle.html
   mavlink-ai-connection.js
   mavlink-ai-connection.html
   mavlink-ai-in.js
@@ -1906,7 +1906,7 @@ Build in this order:
 
 ```text
 1. package.json and Node-RED node registration skeleton
-2. mavlink-ai-profile config node
+2. mavlink-ai-vehicle config node
 3. dialect loader and protocol wrapper
 4. mavlink-ai-connection config node
 5. UDP transport
@@ -1958,7 +1958,7 @@ mavlink-ai-connection owns dialect.
 Better:
 
 ```text
-mavlink-ai-profile owns dialect.
+mavlink-ai-vehicle owns dialect.
 mavlink-ai-connection references profile(s).
 ```
 

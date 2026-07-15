@@ -107,7 +107,7 @@
   },
   {
     "id": "obs26_profile",
-    "type": "mavlink-ai-profile",
+    "type": "mavlink-ai-vehicle",
     "name": "Geofence monitor GCS",
     "firmware": "ardupilot",
     "dialectSource": "bundled",

@@ -175,7 +175,7 @@ a Connection uses exactly one as its required default.
 - HEARTBEAT identity (`MAV_TYPE`, autopilot)
 - MAVLink 2 signing credential + policy (sign / verify / require)
 
-### `mavlink-ai-profile` — Vehicle Profile (config)
+### `mavlink-ai-vehicle` — Vehicle Profile (config)
 
 What vehicle is being addressed and how its protocol metadata is interpreted.
 Target-facing only; it owns no local identity, heartbeat, or signing.

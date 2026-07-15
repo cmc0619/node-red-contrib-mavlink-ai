@@ -4,6 +4,28 @@ All notable changes to `node-red-contrib-mavlink-ai` are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-07-15
+
+### Changed
+
+- **Renamed the Vehicle Profile config node type `mavlink-ai-profile` →
+  `mavlink-ai-vehicle`.** The node has been target-facing ("Vehicle Profile")
+  since 0.3.0; the type string now matches, alongside its
+  `mavlink-ai-local-identity` sibling. The palette display name stays "MAVLink
+  Vehicle Profile" and every field/behavior is unchanged — only the persisted
+  `type` string differs.
+- Bundled examples, docs, and help text updated to the new type.
+
+### Migration
+
+- **Breaking (pre-1.0), clean rename with no compatibility alias.** A flow that
+  still contains a `mavlink-ai-profile` node will not load that node; re-create
+  it as a **MAVLink Vehicle Profile** (`mavlink-ai-vehicle`) with the same
+  fields, or bulk-replace `"type": "mavlink-ai-profile"` with
+  `"type": "mavlink-ai-vehicle"` in the exported flow JSON. Connections and
+  action nodes reference the Vehicle Profile the same way (their `profile`
+  config property is unchanged); only the config node's own type moved.
+
 ## [0.3.0] - 2026-07-15
 
 Architecture reset (issue #228): the combined `mavlink-ai-profile` was split

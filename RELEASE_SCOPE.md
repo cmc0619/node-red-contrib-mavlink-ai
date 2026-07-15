@@ -102,7 +102,7 @@ That is compact, but it mixes concerns.
 The v2 model separates concerns:
 
 ```text
-mavlink-ai-profile     config: protocol identity and defaults
+mavlink-ai-vehicle     config: protocol identity and defaults
 mavlink-ai-connection  config: transport/session/resource owner
 mavlink-ai-in          visible: subscribe/receive decoded messages
 mavlink-ai-out         visible: send normalized/raw messages

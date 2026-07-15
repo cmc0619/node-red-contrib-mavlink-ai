@@ -15,7 +15,7 @@ const { MockRED } = require('../helpers/mock-red');
 
 function setup() {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1',
     name: 'P',
     dialect: 'common',
@@ -209,7 +209,7 @@ test('an addressed message still routes to its target via the profile default (#
 
 test('under auto version, a broadcast is framed with the connection default, not the routing target peer (#148)', async (t) => {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'pa', name: 'Auto', dialect: 'common', mavlinkVersion: 'auto',
     defaultTargetSystem: 7, defaultTargetComponent: 3
   });

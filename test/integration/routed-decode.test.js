@@ -48,24 +48,24 @@ const until = (attach, sendOnce, label) =>
 test('routed connection decodes with the matched profile dialect', async (t) => {
   const RED = new MockRED().loadNodes();
 
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_min', name: 'Min', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_ardu', name: 'Ardu', vehicleFamily: 'copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   // A second minimal profile, distinct from the default, to prove routed decode
   // uses the *matched route's* profile rather than the default.
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_min2', name: 'Min2', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   // A runtime-compiled custom-XML profile. Its message ids exist in no bundled
   // dialect, so this exercises the merged splitter CRC table: without it the
   // packet would be dropped silently before routing.
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_custom', name: 'Custom', vehicleFamily: 'generic', dialect: 'custom',
     customDialectPath: CUSTOM_XML, mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
@@ -154,7 +154,7 @@ test('routed connection decodes with the matched profile dialect', async (t) => 
  */
 test('outbound send transmits as the selected Local Identity, not a profile', async (t) => {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_def', name: 'Def', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
@@ -213,11 +213,11 @@ test('outbound send transmits as the selected Local Identity, not a profile', as
  */
 test('route entries resolve legacy unique profile names to the real profile', async (t) => {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_min', name: 'Min', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_ardu', name: 'Ardu', vehicleFamily: 'copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
@@ -263,16 +263,16 @@ test('a route naming an unknown profile rejects its packets and reports loudly',
   const RED = new MockRED().loadNodes();
   // The default profile's dialect COULD decode ATTITUDE — silent fallback
   // would be invisible here, which is exactly the bug this guards against.
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_def', name: 'Def', vehicleFamily: 'generic', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   // Two profiles sharing one name make that name ambiguous as a reference.
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_dup1', name: 'Dup', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_dup2', name: 'Dup', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
@@ -342,7 +342,7 @@ test('a route naming an unknown profile rejects its packets and reports loudly',
  */
 test('fixing a broken route table on redeploy clears the stale error status', async (t) => {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_def', name: 'Def', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
@@ -366,7 +366,7 @@ test('fixing a broken route table on redeploy clears the stale error status', as
 
   // "Partial redeploy" adds the missing profile; the connection instance
   // persists and the next flows:started re-validates cleanly.
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_late', name: 'Late', vehicleFamily: 'copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
@@ -387,11 +387,11 @@ test('fixing a broken route table on redeploy clears the stale error status', as
  */
 test('outbound send resolves profile names, keeps source identity, and rejects unknown profiles', async (t) => {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_def', name: 'Def', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_alt', name: 'Alt', vehicleFamily: 'generic', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
     defaultTargetSystem: 7, defaultTargetComponent: 1
   });

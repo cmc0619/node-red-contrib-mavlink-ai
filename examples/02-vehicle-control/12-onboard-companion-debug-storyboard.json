@@ -8,7 +8,7 @@
   },
   {
     "id": "ai_profile_onboard_preview",
-    "type": "mavlink-ai-profile",
+    "type": "mavlink-ai-vehicle",
     "name": "AI Profile - Onboard Preview",
     "dialectSource": "bundled",
     "dialect": "ardupilotmega",

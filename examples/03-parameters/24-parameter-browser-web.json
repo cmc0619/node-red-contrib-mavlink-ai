@@ -266,7 +266,7 @@
   },
   {
     "id": "param24_profile",
-    "type": "mavlink-ai-profile",
+    "type": "mavlink-ai-vehicle",
     "name": "Parameter GCS",
     "firmware": "ardupilot",
     "dialectSource": "bundled",
