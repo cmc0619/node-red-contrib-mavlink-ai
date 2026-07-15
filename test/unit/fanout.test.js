@@ -98,8 +98,13 @@ test('non-numeric params and coordinates fail fast instead of emitting NaN (#46)
     () => buildFanout({ command: 'MAV_CMD_DO_SET_MODE', targets: [{ sysid: 1, param2: 'GUIDED-ish' }] }),
     (e) => e.code === 'BAD_PARAM' && /param2/.test(e.message)
   );
+  /**
+   * A non-numeric garbage param still fails. (An explicit NaN param is now a
+   * legal "keep current" value and is exercised in the #142 test, so it is no
+   * longer rejected here.)
+   */
   assert.throws(
-    () => buildFanout({ command: 'MAV_CMD_DO_SET_MODE', targets: [1], base: { param1: NaN } }),
+    () => buildFanout({ command: 'MAV_CMD_DO_SET_MODE', targets: [1], base: { param1: 'not-a-number' } }),
     (e) => e.code === 'BAD_PARAM'
   );
   assert.throws(
@@ -124,6 +129,22 @@ test('non-numeric params and coordinates fail fast instead of emitting NaN (#46)
     () => buildFanout({ command: 'MAV_CMD_DO_REPOSITION', useInt: true, targets: [{ sysid: 1, x: null, y: 1 }] }),
     (e) => e.code === 'BAD_PARAM'
   );
+});
+
+test('fan-out carries an explicit NaN command param (PX4 keep-current), not 0 or an error (#142)', () => {
+  const messages = buildFanout({
+    command: 'MAV_CMD_DO_REPOSITION',
+    targets: [
+      { sysid: 1, param4: NaN },
+      { sysid: 2, param4: 'NaN' },
+      { sysid: 3, param4: null }
+    ]
+  });
+  assert.ok(Number.isNaN(messages[0].fields.param4), 'numeric NaN is preserved on the wire');
+  assert.ok(Number.isNaN(messages[1].fields.param4), '"NaN" string resolves to NaN');
+  assert.ok(Number.isNaN(messages[2].fields.param4), 'null resolves to NaN');
+  /** Unspecified params still default to 0; explicit numbers stay numeric. */
+  assert.strictEqual(messages[0].fields.param1, 0);
 });
 
 test('fan-out rejects an out-of-range target latitude (#55)', () => {

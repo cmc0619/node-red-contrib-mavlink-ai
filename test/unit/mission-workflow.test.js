@@ -287,6 +287,19 @@ test('upload/download reject mission_type "all" (255) — only clear-all may use
   await assert.rejects(up.run(), (e) => e.code === 'BAD_MISSION_TYPE');
 });
 
+test('buildItemFields preserves an explicit NaN item param (PX4 keep-current), not 0 (#142)', () => {
+  const nanNum = buildItemFields({ command: 16, lat: 1, lon: 2, param4: NaN }, 0, true);
+  assert.ok(Number.isNaN(nanNum.param4), 'numeric NaN is preserved');
+  const nanStr = buildItemFields({ command: 16, lat: 1, lon: 2, param4: 'NaN' }, 0, true);
+  assert.ok(Number.isNaN(nanStr.param4), '"NaN" string resolves to NaN');
+  const nanNull = buildItemFields({ command: 16, lat: 1, lon: 2, param4: null }, 0, true);
+  assert.ok(Number.isNaN(nanNull.param4), 'null resolves to NaN');
+  /** ArduPilot-style explicit numeric params and unspecified defaults unchanged. */
+  const numeric = buildItemFields({ command: 16, lat: 1, lon: 2, param1: 5 }, 0, true);
+  assert.strictEqual(numeric.param1, 5);
+  assert.strictEqual(numeric.param2, 0);
+});
+
 // --- #58: mission timeout default ------------------------------------------
 
 test('mission workflow default timeout is 10s (#58)', () => {
