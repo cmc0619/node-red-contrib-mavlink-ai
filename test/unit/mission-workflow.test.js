@@ -225,6 +225,34 @@ test('upload ignores a premature ACCEPTED before any item was requested (#145)',
   assert.strictEqual(res.payload.count, 1);
 });
 
+test('upload ignores a mid-transfer ACCEPTED before the final item is sent (#145)', async () => {
+  const conn = new FakeConnection();
+  const wf = new MissionUpload(
+    downloadOpts(conn, {
+      timeoutMs: 1000,
+      maxRetries: 0,
+      items: [
+        { command: 16, lat: 1, lon: 2 },
+        { command: 16, lat: 3, lon: 4 }
+      ]
+    })
+  );
+  const p = wf.run();
+  await delay(0);
+  conn.deliver('MISSION_REQUEST_INT', { seq: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  await delay(0);
+  /** A duplicate ACCEPTED after only item 0 must not complete a 2-item upload. */
+  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  await delay(5);
+  assert.strictEqual(wf.state, 'waiting_request');
+  /** The final item is requested and sent, then the real ACCEPTED completes. */
+  conn.deliver('MISSION_REQUEST_INT', { seq: 1, mission_type: 0, target_system: 255, target_component: 190 });
+  await delay(0);
+  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  const res = await p;
+  assert.strictEqual(res.payload.count, 2);
+});
+
 test('upload still completes an empty-mission clear on an immediate ACCEPTED (#145)', async () => {
   const conn = new FakeConnection();
   const wf = new MissionUpload(downloadOpts(conn, { timeoutMs: 1000, maxRetries: 0, items: [] }));
