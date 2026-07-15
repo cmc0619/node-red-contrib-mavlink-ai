@@ -37,9 +37,9 @@ class FakeConnection {
     return Promise.resolve();
   }
 
-  deliver(name, fields, sysid = 1) {
+  deliver(name, fields, sysid = 1, compid = 1) {
     for (const { cb } of this._subs.values()) {
-      cb({ topic: `mavlink/${name}`, payload: { name, sysid, compid: 1, fields } });
+      cb({ topic: `mavlink/${name}`, payload: { name, sysid, compid, fields } });
     }
   }
 }
@@ -158,6 +158,133 @@ test('upload rejection reports the MAV_MISSION_RESULT name (#24)', async () => {
     assert.match(String(e.context.result_name), /INVALID_SEQUENCE/);
     return true;
   });
+});
+
+/** --- #145: mission protocol robustness --- */
+
+test('download fails fast on an error MISSION_ACK instead of timing out (#145)', async () => {
+  const conn = new FakeConnection();
+  const enums = loadDialect('ardupilotmega').enums;
+  const wf = new MissionDownload(downloadOpts(conn, { enums, timeoutMs: 1000, maxRetries: 3 }));
+  const p = wf.run();
+  await delay(0);
+  /** The vehicle denies the download (another transfer in progress). */
+  conn.deliver('MISSION_ACK', { type: 13, mission_type: 0, target_system: 255, target_component: 190 });
+  await assert.rejects(p, (e) => {
+    assert.strictEqual(e.code, 'MISSION_REJECTED');
+    assert.match(e.message, /INVALID_SEQUENCE/);
+    assert.strictEqual(e.context.result, 13);
+    return true;
+  });
+});
+
+test('download falls back to MISSION_REQUEST when REQUEST_INT goes unanswered (#145)', async () => {
+  const conn = new FakeConnection();
+  const wf = new MissionDownload(downloadOpts(conn, { timeoutMs: 20, maxRetries: 3 }));
+  const keepAlive = setInterval(() => {}, 5); /** workflow timers are unref'd */
+  try {
+    const p = wf.run();
+    await delay(0);
+    conn.deliver('MISSION_COUNT', { count: 1, mission_type: 0, target_system: 255, target_component: 190 });
+    await delay(0);
+    /** First item request is the _INT variant. */
+    assert.ok(conn.sent.some((m) => m.name === 'MISSION_REQUEST_INT'));
+    assert.ok(!conn.sent.some((m) => m.name === 'MISSION_REQUEST'));
+    /** Let the _INT request time out once; the retry downgrades to plain. */
+    await delay(30);
+    assert.ok(conn.sent.some((m) => m.name === 'MISSION_REQUEST'), 'expected a downgraded MISSION_REQUEST');
+    /** A plain MISSION_ITEM now completes the download. */
+    conn.deliver(
+      'MISSION_ITEM',
+      { seq: 0, frame: 3, command: 16, x: 1, y: 2, z: 3, mission_type: 0, target_system: 255, target_component: 190 }
+    );
+    const res = await p;
+    assert.strictEqual(res.payload.count, 1);
+    assert.strictEqual(res.payload.items[0].wire_message, 'MISSION_ITEM');
+  } finally {
+    clearInterval(keepAlive);
+  }
+});
+
+test('upload ignores a premature ACCEPTED before any item was requested (#145)', async () => {
+  const conn = new FakeConnection();
+  const wf = new MissionUpload(
+    downloadOpts(conn, { timeoutMs: 1000, maxRetries: 0, items: [{ command: 16, lat: 1, lon: 2 }] })
+  );
+  const p = wf.run();
+  await delay(0);
+  /** Stale ACCEPTED arriving right after MISSION_COUNT — must not complete. */
+  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  await delay(5);
+  assert.strictEqual(wf.state, 'waiting_request');
+  /** The real transfer still proceeds and completes on the genuine ACCEPTED. */
+  conn.deliver('MISSION_REQUEST_INT', { seq: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  await delay(0);
+  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  const res = await p;
+  assert.strictEqual(res.payload.count, 1);
+});
+
+test('upload ignores a mid-transfer ACCEPTED before the final item is sent (#145)', async () => {
+  const conn = new FakeConnection();
+  const wf = new MissionUpload(
+    downloadOpts(conn, {
+      timeoutMs: 1000,
+      maxRetries: 0,
+      items: [
+        { command: 16, lat: 1, lon: 2 },
+        { command: 16, lat: 3, lon: 4 }
+      ]
+    })
+  );
+  const p = wf.run();
+  await delay(0);
+  conn.deliver('MISSION_REQUEST_INT', { seq: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  await delay(0);
+  /** A duplicate ACCEPTED after only item 0 must not complete a 2-item upload. */
+  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  await delay(5);
+  assert.strictEqual(wf.state, 'waiting_request');
+  /** The final item is requested and sent, then the real ACCEPTED completes. */
+  conn.deliver('MISSION_REQUEST_INT', { seq: 1, mission_type: 0, target_system: 255, target_component: 190 });
+  await delay(0);
+  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  const res = await p;
+  assert.strictEqual(res.payload.count, 2);
+});
+
+test('upload still completes an empty-mission clear on an immediate ACCEPTED (#145)', async () => {
+  const conn = new FakeConnection();
+  const wf = new MissionUpload(downloadOpts(conn, { timeoutMs: 1000, maxRetries: 0, items: [] }));
+  const p = wf.run();
+  await delay(0);
+  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  const res = await p;
+  assert.strictEqual(res.payload.count, 0);
+});
+
+test('mission workflows ignore traffic from a non-matching source component (#145)', async () => {
+  const conn = new FakeConnection();
+  const wf = new MissionDownload(downloadOpts(conn, { timeoutMs: 1000, maxRetries: 0, targetComponent: 1 }));
+  const p = wf.run();
+  await delay(0);
+  /** A camera (compid 100) on the same system must not advance our download. */
+  conn.deliver('MISSION_COUNT', { count: 1, mission_type: 0, target_system: 255, target_component: 190 }, 1, 100);
+  assert.strictEqual(wf.count, 0);
+  /** The addressed autopilot component (compid 1) does. */
+  conn.deliver('MISSION_COUNT', { count: 0, mission_type: 0, target_system: 255, target_component: 190 }, 1, 1);
+  const res = await p;
+  assert.strictEqual(res.payload.count, 0);
+});
+
+test('upload/download reject mission_type "all" (255) — only clear-all may use it (#145)', async () => {
+  const conn = new FakeConnection();
+  const dl = new MissionDownload(downloadOpts(conn, { missionType: 'all', timeoutMs: 1000, maxRetries: 0 }));
+  await assert.rejects(dl.run(), (e) => e.code === 'BAD_MISSION_TYPE');
+  const up = new MissionUpload(
+    downloadOpts(conn, { missionType: 255, timeoutMs: 1000, maxRetries: 0, items: [{ command: 16 }] })
+  );
+  await assert.rejects(up.run(), (e) => e.code === 'BAD_MISSION_TYPE');
 });
 
 // --- #58: mission timeout default ------------------------------------------
