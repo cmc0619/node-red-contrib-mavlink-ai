@@ -7,6 +7,8 @@ const test = require('node:test');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const EXAMPLES = path.join(ROOT, 'examples');
+/** Web assets and fixtures live outside examples/ so Import → Examples lists only flows (#151). */
+const RESOURCES = path.join(ROOT, 'resources');
 
 /**
  * @param {string} dir
@@ -54,7 +56,7 @@ test('all Function-node bodies in examples are syntactically valid', () => {
 
 test('web assets and telemetry replay fixture are packaged and valid', () => {
   for (const asset of ['vehicle-status-dashboard.html', 'parameter-browser.html']) {
-    const content = fs.readFileSync(path.join(EXAMPLES, 'assets', asset), 'utf8');
+    const content = fs.readFileSync(path.join(RESOURCES, 'assets', asset), 'utf8');
     assert.match(content, /<!doctype html>/i);
     const scripts = [...content.matchAll(/<script>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
     assert.ok(scripts.length, `${asset} must contain its browser logic`);
@@ -63,7 +65,7 @@ test('web assets and telemetry replay fixture are packaged and valid', () => {
     }
   }
 
-  const fixture = fs.readFileSync(path.join(EXAMPLES, 'fixtures', 'vehicle-status-demo.jsonl'), 'utf8');
+  const fixture = fs.readFileSync(path.join(RESOURCES, 'fixtures', 'vehicle-status-demo.jsonl'), 'utf8');
   const records = fixture.trim().split(/\r?\n/).map((line) => JSON.parse(line));
   assert.ok(records.length >= 6);
   assert.deepStrictEqual(records.map((record) => record.recordedAt), records.map((record) => record.recordedAt).sort((a, b) => a - b));
