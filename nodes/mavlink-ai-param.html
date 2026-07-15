@@ -459,6 +459,22 @@
       $('#node-input-profile').on('change', onContextChange);
       $('#mav-param-catalog-load').on('click', loadCatalog);
 
+      /**
+       * Fold the optional Profile override under an Advanced disclosure so the
+       * common case (the Connection carries a default profile) stays uncluttered
+       * (#127). Expand it automatically when a profile is already set, so an
+       * existing override is never hidden.
+       */
+      function toggleAdvanced(show) {
+        $('.mav-advanced').toggle(show);
+        $('#node-mav-advanced-toggle i').toggleClass('fa-caret-right', !show).toggleClass('fa-caret-down', show);
+      }
+      $('#node-mav-advanced-toggle').on('click', function (e) {
+        e.preventDefault();
+        toggleAdvanced(!$('.mav-advanced').is(':visible'));
+      });
+      toggleAdvanced(!!$('#node-input-profile').val());
+
       loadCatalogStatus();
       loadParamList();
       refresh();
@@ -476,11 +492,16 @@
     <input type="text" id="node-input-connection">
   </div>
   <div class="form-row">
-    <label for="node-input-profile">Profile</label>
-    <input type="text" id="node-input-profile">
+    <a href="#" id="node-mav-advanced-toggle" style="color: inherit;"><i class="fa fa-caret-right"></i> Advanced</a>
   </div>
-  <div class="form-tips" style="margin: -6px 0 8px 105px; width: 70%;">
-    Optional — <b>overrides</b> the connection's profile. Leave blank to use the target's routed profile, falling back to the connection's own profile.
+  <div class="mav-advanced" style="display: none;">
+    <div class="form-row">
+      <label for="node-input-profile">Profile</label>
+      <input type="text" id="node-input-profile">
+    </div>
+    <div class="form-tips" style="margin: -6px 0 8px 105px; width: 70%;">
+      Optional — <b>overrides</b> the connection's profile. Leave blank to use the target's routed profile, falling back to the connection's own profile.
+    </div>
   </div>
   <div class="form-row">
     <label for="node-input-action">Action</label>

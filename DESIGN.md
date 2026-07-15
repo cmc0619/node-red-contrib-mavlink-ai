@@ -616,6 +616,29 @@ Mission workflow code should live in `lib/mission`, not directly in the Node-RED
 
 ## 13. Regular Nodes
 
+### 13.0 Connection vs. Profile: which is required (#127)
+
+The nodes deliberately split on which config node is required, and it is not an
+inconsistency to reconcile away — it follows from what each node *does*:
+
+- **Message-building nodes require a Profile, Connection optional.**
+  `mavlink-ai-command`, `mavlink-ai-build`, `mavlink-ai-fanout`, `mavlink-ai-move`,
+  and `mavlink-ai-payload` construct a message. That needs a dialect/encoding
+  identity (the Profile) but not a live link — they can build offline and either
+  send through an optional Connection or emit a `mavlink/send` message for a
+  downstream `mavlink-ai-out`.
+- **Protocol/traffic nodes require a Connection, Profile optional.**
+  `mavlink-ai-param`, `mavlink-ai-mission`, `mavlink-ai-in`, `mavlink-ai-out`,
+  and `mavlink-ai-swarm` run a live exchange or ride the wire, so they need the
+  Connection; the Profile is an optional override (and `in`/`out`/`swarm` carry
+  no Profile config reference at all — only an optional profile *filter*).
+
+The rule of thumb: **need a dialect to build a message → Profile required; need
+the live link → Connection required.** On the nodes where the Profile is the
+optional one (`param`, `mission`), it is presented under an **Advanced** section
+so the common case (the Connection already carries a default profile) isn't
+cluttered by a field most flows never set.
+
 ### 13.1 `mavlink-ai-in`
 
 Receives decoded MAVLink messages from a shared connection.
