@@ -52,7 +52,7 @@ function gnssIntegrityFrom(sysid) {
 }
 
 /**
- * Create a mavlink-ai-profile config node with the common identity fields.
+ * Create a mavlink-ai-vehicle config node with the common identity fields.
  *
  * @param {MockRED} RED  the mock runtime
  * @param {string} id  config-node id
@@ -62,7 +62,7 @@ function gnssIntegrityFrom(sysid) {
  * @returns {object} the profile node
  */
 function profile(RED, id, name, dialect, extra = {}) {
-  return RED.create('mavlink-ai-profile', {
+  return RED.create('mavlink-ai-vehicle', {
     id,
     name,
     dialect,

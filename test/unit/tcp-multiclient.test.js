@@ -38,7 +38,7 @@ function heartbeatFrom(sysid) {
  * @returns {object} the connection node
  */
 function tcpServerConnection(RED) {
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });

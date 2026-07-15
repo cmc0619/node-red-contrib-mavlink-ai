@@ -14,7 +14,7 @@ const { LockManager } = require('../../lib/runtime/lock-manager');
  */
 function setup() {
   const RED = new MockRED().loadNodes();
-  const profile = RED.create('mavlink-ai-profile', {
+  const profile = RED.create('mavlink-ai-vehicle', {
     id: 'p1',
     name: 'Copter',
     dialect: 'ardupilotmega',

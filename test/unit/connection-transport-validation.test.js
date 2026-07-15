@@ -16,7 +16,7 @@ const { MockRED } = require('../helpers/mock-red');
 
 function withProfile() {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_default',
     name: 'Default',
     dialect: 'common',

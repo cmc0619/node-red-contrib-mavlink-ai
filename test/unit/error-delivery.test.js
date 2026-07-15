@@ -17,7 +17,7 @@ const { fakeIdentity } = require('../helpers/v3-config');
 
 function setup({ sendError } = {}) {
   const RED = new MockRED().loadNodes();
-  const profile = RED.create('mavlink-ai-profile', {
+  const profile = RED.create('mavlink-ai-vehicle', {
     id: 'p1',
     name: 'Copter',
     dialect: 'ardupilotmega',

@@ -309,7 +309,7 @@ function probeAckConnection(RED, id, ackDelayMs) {
  */
 function setupProbe(extraConfig, ackDelayMs) {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1',
     name: 'Copter',
     dialect: 'ardupilotmega',
@@ -324,7 +324,7 @@ function setupProbe(extraConfig, ackDelayMs) {
 
 function setup(extraConfig, script) {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1',
     name: 'Copter',
     dialect: 'ardupilotmega',

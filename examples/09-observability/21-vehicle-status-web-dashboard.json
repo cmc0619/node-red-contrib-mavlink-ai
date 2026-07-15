@@ -197,7 +197,7 @@
   },
   {
     "id": "obs21_profile",
-    "type": "mavlink-ai-profile",
+    "type": "mavlink-ai-vehicle",
     "name": "Dashboard GCS profile",
     "firmware": "ardupilot",
     "dialectSource": "bundled",

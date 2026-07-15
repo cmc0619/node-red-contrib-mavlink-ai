@@ -32,7 +32,7 @@ const HEARTBEAT = {
 test('connection verifies inbound signatures per the identity policy', async (t) => {
   const RED = new MockRED().loadNodes();
 
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_sign',
     name: 'Signed',
     vehicleFamily: 'generic',
@@ -152,7 +152,7 @@ test('connection verifies inbound signatures per the identity policy', async (t)
 test('routed connection verifies signed frames against the default identity key', async (t) => {
   const RED = new MockRED().loadNodes();
 
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_default',
     name: 'Default',
     vehicleFamily: 'generic',
@@ -161,7 +161,7 @@ test('routed connection verifies signed frames against the default identity key'
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   });
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_routed',
     name: 'Routed',
     vehicleFamily: 'copter',
@@ -270,7 +270,7 @@ test('routed connection verifies signed frames against the default identity key'
 test('connection rejects a replayed signed frame', async (t) => {
   const RED = new MockRED().loadNodes();
 
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_replay',
     name: 'Replay',
     vehicleFamily: 'generic',

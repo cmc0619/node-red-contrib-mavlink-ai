@@ -1,6 +1,6 @@
 {
   "name": "node-red-contrib-mavlink-ai",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A Node-RED MAVLink module built around local identities, vehicle profiles, connections, routing, and reusable action nodes.",
   "author": {
     "name": "cmc0619",
@@ -52,7 +52,7 @@
     "version": ">=4.0.0",
     "nodes": {
       "mavlink-ai-local-identity": "nodes/mavlink-ai-local-identity.js",
-      "mavlink-ai-profile": "nodes/mavlink-ai-profile.js",
+      "mavlink-ai-vehicle": "nodes/mavlink-ai-vehicle.js",
       "mavlink-ai-connection": "nodes/mavlink-ai-connection.js",
       "mavlink-ai-in": "nodes/mavlink-ai-in.js",
       "mavlink-ai-out": "nodes/mavlink-ai-out.js",

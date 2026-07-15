@@ -22,7 +22,7 @@ const HB = { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status:
 
 function setup() {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'P', dialect: 'common', mavlinkVersion: 'v2',
     defaultTargetSystem: 7, defaultTargetComponent: 3
   });

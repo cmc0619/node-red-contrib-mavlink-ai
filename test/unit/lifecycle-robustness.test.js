@@ -80,7 +80,7 @@ test('mavlink-ai-out close still signals done when the connection dereference th
 
 test('connection close completes (done) even when decoder teardown throws (#140)', async (t) => {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });

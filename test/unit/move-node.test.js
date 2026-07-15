@@ -16,7 +16,7 @@ function fakeConnection() {
 
 function setup(moveConfig, { withConnection = false } = {}) {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1',
     name: 'Copter',
     dialect: 'ardupilotmega',
@@ -240,7 +240,7 @@ test('redeploying the referenced profile (flows:started, new config node) tears 
   /** Re-creating the profile with the same id replaces it with a new object —
    * i.e. this node's referenced config was redeployed. `close` never fires, but
    * the stream must not keep flying with the stale state. */
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'Copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
     sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
   });
@@ -346,7 +346,7 @@ test('a firmware-unsupported setpoint raises an advisory warning but still sends
   /** The ardupilotmega test profile reports no firmware field by default, so
    * pass it explicitly: ArduPilot + force preset must warn. */
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'Copter', dialect: 'ardupilotmega', firmware: 'ardupilot', mavlinkVersion: 'v2',
     sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
   });
@@ -391,7 +391,7 @@ test('move node clears a stale "invalid profile" badge when the profile is fixed
   assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid profile' });
   assert.ok(!node.profile);
 
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'Copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
     sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
   });

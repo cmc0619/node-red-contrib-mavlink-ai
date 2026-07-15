@@ -118,7 +118,7 @@
       category: 'config',
       defaults: {
         name: { value: '' },
-        profile: { value: '', type: 'mavlink-ai-profile', required: true },
+        profile: { value: '', type: 'mavlink-ai-vehicle', required: true },
         // Who this Node-RED runtime is on this link (#228). Required: every
         // transmitted message must resolve to exactly one permitted identity.
         localIdentity: { value: '', type: 'mavlink-ai-local-identity', required: true },
@@ -217,7 +217,7 @@
         // Local Identity config nodes available as additional bindings (#228).
         const identities = [];
         RED.nodes.eachConfig(function (n) {
-          if (n.type === 'mavlink-ai-profile') {
+          if (n.type === 'mavlink-ai-vehicle') {
             profiles.push({ id: n.id, name: n.name || n.id });
           }
           if (n.type === 'mavlink-ai-local-identity') {

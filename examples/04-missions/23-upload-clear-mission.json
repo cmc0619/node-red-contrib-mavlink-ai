@@ -186,7 +186,7 @@
   },
   {
     "id": "mission23_profile",
-    "type": "mavlink-ai-profile",
+    "type": "mavlink-ai-vehicle",
     "name": "Mission GCS",
     "firmware": "ardupilot",
     "dialectSource": "bundled",

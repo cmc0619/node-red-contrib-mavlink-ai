@@ -66,7 +66,7 @@ function isIdentityNode(n) {
 }
 
 /**
- * True if a resolved reference is a mavlink-ai-profile (Vehicle Profile)
+ * True if a resolved reference is a mavlink-ai-vehicle (Vehicle Profile)
  * config node.
  *
  * @param {*} n
@@ -803,7 +803,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
         }
         throw new MavlinkError(
           'PROFILE_UNRESOLVED',
-          `Vehicle Profile reference ${JSON.stringify(ref && ref.name ? ref.name : ref)} is not a mavlink-ai-profile config node.`
+          `Vehicle Profile reference ${JSON.stringify(ref && ref.name ? ref.name : ref)} is not a mavlink-ai-vehicle config node.`
         );
       }
       const byId = RED.nodes.getNode(ref);
@@ -829,7 +829,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       const matchIds = [];
       if (typeof RED.nodes.eachNode === 'function') {
         RED.nodes.eachNode((n) => {
-          if (n.type === 'mavlink-ai-profile' && n.name === ref) {
+          if (n.type === 'mavlink-ai-vehicle' && n.name === ref) {
             matchIds.push(n.id);
           }
         });
@@ -849,7 +849,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       }
       throw new MavlinkError(
         'PROFILE_UNRESOLVED',
-        `Vehicle Profile '${ref}' does not match any mavlink-ai-profile config node (by id or unique name).`
+        `Vehicle Profile '${ref}' does not match any mavlink-ai-vehicle config node (by id or unique name).`
       );
     };
 

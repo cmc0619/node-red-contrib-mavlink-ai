@@ -41,7 +41,7 @@ test('editing a profile dialect updates a running connection on redeploy (messag
   const RED = new MockRED().loadNodes();
 
   /** Start on `common`. */
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
@@ -73,7 +73,7 @@ test('editing a profile dialect updates a running connection on redeploy (messag
    * recreates the profile config node under the same id; the connection node is
    * left running (its own config is unchanged).
    */
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'Vehicle', dialect: 'development', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
@@ -98,7 +98,7 @@ test('editing a profile dialect updates a running connection on redeploy (messag
 test('an edited default profile that is now invalid fails the connection closed and releases the transport (#116)', async (t) => {
   const RED = new MockRED().loadNodes();
 
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
@@ -119,7 +119,7 @@ test('an edited default profile that is now invalid fails the connection closed 
    * default profile that becomes invalid must NOT keep running on the stale
    * dialect (#116): the connection fails closed and releases the socket.
    */
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'Vehicle', dialect: 'nonexistent-dialect', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
@@ -150,7 +150,7 @@ test('an edited default profile that is now invalid fails the connection closed 
 test('deleting the default profile deactivates the connection and releases the transport (#116)', async (t) => {
   const RED = new MockRED().loadNodes();
 
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
@@ -191,7 +191,7 @@ test('deleting the default profile deactivates the connection and releases the t
 test('restoring a valid default profile reactivates a deactivated connection (#116)', async (t) => {
   const RED = new MockRED().loadNodes();
 
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
@@ -212,7 +212,7 @@ test('restoring a valid default profile reactivates a deactivated connection (#1
   assert.strictEqual(conn._active, false);
 
   /** Re-create the profile under the same id on a later deploy -> reactivate. */
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'Vehicle', dialect: 'development', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
@@ -241,7 +241,7 @@ test('restoring a valid default profile reactivates a deactivated connection (#1
 test('rebuilding the profile preserves the codec learned per-peer wire version (#69)', async (t) => {
   const RED = new MockRED().loadNodes();
 
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'auto',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
@@ -266,7 +266,7 @@ test('rebuilding the profile preserves the codec learned per-peer wire version (
   assert.strictEqual(link.effectiveVersion('auto', 7), 'v1');
 
   /** Edit the profile (still `auto`) and redeploy without a transport restart. */
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'Vehicle', dialect: 'development', mavlinkVersion: 'auto',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
