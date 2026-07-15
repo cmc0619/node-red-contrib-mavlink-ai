@@ -59,6 +59,17 @@ function loadSerialPort() {
 }
 ```
 
+## Pull request review workflow
+
+Automated reviewers (Codex, CodeRabbit) review on PR open, ready-for-review, or
+an explicit re-review command — a plain push does **not** re-trigger them. After
+pushing fixes that address an automated reviewer's findings, always request a
+fresh pass so the reviewer can confirm the fixes against the new commit:
+
+- Codex: comment `@codex review` on the PR.
+
+Do this automatically after each fix push; do not wait to be asked.
+
 ## Test expectation
 
 At minimum, keep this passing:
