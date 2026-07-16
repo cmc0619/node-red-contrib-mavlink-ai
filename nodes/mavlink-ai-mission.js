@@ -180,7 +180,7 @@ module.exports = function registerMavlinkAiMission(RED) {
           const allowEmpty =
             typeof rawAllowEmpty === 'boolean' || typeof rawAllowEmpty === 'string' ? toBool(rawAllowEmpty, false) : false;
           resolveUploadItems(payload, { allowEmpty });
-          uploadItems = validateMissionItems(normalizeUploadItems(payload));
+          uploadItems = validateMissionItems(normalizeUploadItems(payload), bundle ? bundle.enums : null);
         } catch (err) {
           const e = toMavlinkError(err, 'INVALID_FIELD');
           node.status({ fill: 'red', shape: 'ring', text: e.code });

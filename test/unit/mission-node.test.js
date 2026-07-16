@@ -93,6 +93,17 @@ test('mission upload with a malformed item field fails before locking (#236)', a
   assert.strictEqual(collected[0][2].payload.context.field, 'param1');
 });
 
+test('mission upload with an unknown MAV_CMD name fails before locking (#236)', async () => {
+  /** A typoed command resolves against the profile's dialect and fails here,
+   * before MISSION_COUNT is sent — not mid-transfer in codec.encode. */
+  const { RED, node } = setup();
+  const { collected } = await RED.inject(node, {
+    payload: { action: 'upload', items: [{ command: 'MAV_CMD_NAV_WAYPONT', lat: 1, lon: 2 }] }
+  });
+  assert.strictEqual(collected[0][2].payload.code, 'INVALID_FIELD');
+  assert.strictEqual(collected[0][2].payload.context.field, 'command');
+});
+
 // Workflow profile propagation (#81): the mission node resolves one effective
 // profile — explicit override, or the target's routed profile — and uses it
 // for defaults, the lock key, and the profile reference on every send.

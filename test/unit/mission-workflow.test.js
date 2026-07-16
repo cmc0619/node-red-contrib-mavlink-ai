@@ -468,6 +468,23 @@ test('validateMissionItems rejects non-numeric garbage but preserves NaN sentine
   );
 });
 
+test('validateMissionItems rejects an unknown MAV_CMD name against the dialect (#236)', () => {
+  /**
+   * A typoed command name must fail before the transfer, not later in
+   * codec.encode after MISSION_COUNT has gone out and the vehicle is mid-upload.
+   * The dialect enums resolve the name; an unknown one is rejected up front.
+   */
+  const enums = loadDialect('ardupilotmega').enums;
+  assert.doesNotThrow(() => validateMissionItems([{ command: 'MAV_CMD_NAV_WAYPOINT', lat: 1, lon: 2 }], enums));
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16 }], enums), 'a numeric id passes through');
+  assert.throws(
+    () => validateMissionItems([{ command: 'MAV_CMD_NAV_WAYPONT' }], enums),
+    (e) => e.code === 'INVALID_FIELD' && e.context.field === 'command' && /not a known MAV_CMD/.test(e.message)
+  );
+  /** Without enums the name is accepted (resolved downstream), unchanged behavior. */
+  assert.doesNotThrow(() => validateMissionItems([{ command: 'MAV_CMD_NAV_WAYPONT' }]));
+});
+
 test('MissionClear times out cleanly with no ACK (#59)', async () => {
   const conn = new FakeConnection();
   const wf = new MissionClear(downloadOpts(conn, { timeoutMs: 20, maxRetries: 0 }));
