@@ -164,3 +164,20 @@ test('out node surfaces a failed transport start (TRANSPORT_NOT_READY), not "wai
   assert.ok(err, 'a failed/absent transport surfaces via done(err)');
   assert.strictEqual(err.code, 'TRANSPORT_NOT_READY');
 });
+
+test('out node surfaces config-dependent link failures (TCP_NOT_CONNECTED / SERIAL_NOT_OPEN)', async () => {
+  /**
+   * A disconnected tcp-client or serial link only recovers when Reconnect is
+   * enabled; with reconnect off it is permanently down, so these must surface
+   * rather than be swallowed as "waiting" — a Catch node needs to see a link
+   * that can't recover on its own (Codex review).
+   */
+  for (const code of ['TCP_NOT_CONNECTED', 'SERIAL_NOT_OPEN']) {
+    const e = Object.assign(new Error(code), { code });
+    const { RED } = setup({ sendError: e });
+    const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
+    const { err } = await RED.inject(node, { topic: 'mavlink/send', payload: { name: 'HEARTBEAT', fields: {} } });
+    assert.ok(err, `${code} surfaces via done(err)`);
+    assert.strictEqual(err.code, code);
+  }
+});

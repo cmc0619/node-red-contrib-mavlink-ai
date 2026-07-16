@@ -104,12 +104,13 @@ module.exports = function registerMavlinkAiOut(RED) {
         done();
       } catch (err) {
         /**
-         * A transport that can't deliver yet — a udp-peer that hasn't learned a
-         * peer, a TCP server with no client, a serial port mid-open — is a normal
-         * transient state, not a send failure. Badge it as "waiting for link" and
-         * warn once (re-armed on the next successful send) instead of spamming the
-         * error output / Catch nodes on every send (#83 follow-up). The heartbeat
-         * scheduler already treats these codes as idle.
+         * A transport that is passively waiting for the other side — a udp-peer
+         * that hasn't learned a peer, a TCP server with no client connected yet —
+         * is a normal transient state, not a send failure. Badge it "waiting for
+         * link" and warn once (re-armed on the next successful send) instead of
+         * spamming the error output / Catch nodes on every send (#83 follow-up).
+         * Codes that may never recover (a not-connected client with reconnect
+         * off, a failed transport start) fall through to done(err) below.
          */
         if (err && TRANSPORT_WAITING_CODES.has(err.code)) {
           node.status({ fill: 'yellow', shape: 'ring', text: 'waiting for link' });
