@@ -1109,6 +1109,19 @@ The module needs stable message contracts. Do not let every node invent its own 
 }
 ```
 
+**Per-message endpoint (#239).** `transport.remoteAddress` / `remotePort` name
+the actual source of the transport read that carried *this* packet — the UDP
+datagram's sender, or the tcp-server client socket (which additionally stamps
+its per-client `clientId`) — not the connection's configured or fallback
+remote, so on a multi-peer link every decoded message says which endpoint sent
+it. The remaining `transport` fields (`name`, `type`, bind/remote config)
+describe the connection-wide link. The same context rides on rejected and
+decode-error diagnostics. Serial has no network endpoint, so these fields are
+absent there. Attribution rule: a packet belongs to the read that *completed*
+its frame — frames concatenated in one read share that read's endpoint, and a
+frame split across reads (abnormal for UDP, routine for TCP) reports the
+completing read's.
+
 **64-bit integer fields.** MAVLink `int64_t` / `uint64_t` fields (e.g.
 `time_usec`) carry more range than a JavaScript `Number` can hold without loss
 and decode natively as `BigInt`, which is not JSON-serializable. In the public
@@ -1345,6 +1358,15 @@ Likely default:
 ```text
 udp-peer learns remote endpoint per sysid, with manual remote host/port override available.
 ```
+
+Peer learning trust boundary (#85, #239): receiving a datagram commits
+nothing. The transport commits an endpoint (fallback peer / per-sysid mapping)
+only when the connection confirms it after the packet passes CRC/framing,
+route acceptance, and the signature policy — and the endpoint committed is the
+source of the datagram that carried that validated packet, delivered
+per-read through the decoder rather than looked up from a mutable
+latest-claimant table, so a forged datagram racing a genuine one can never be
+the endpoint promoted.
 
 ### 17.2 Serial
 

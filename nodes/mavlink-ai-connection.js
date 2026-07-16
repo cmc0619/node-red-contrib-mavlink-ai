@@ -1750,14 +1750,32 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
+     * Rejected-event payload: the frame's identity and reason, plus the source
+     * endpoint of the read that carried it where the transport provides one
+     * (#239), so an operator can tell *which* endpoint sent rejected traffic.
+     *
+     * @param {object} header  packet header (sysid/compid)
+     * @param {string} reason
+     * @param {?object} origin  per-read source context, or null
+     * @returns {object}
+     */
+    function rejectedInfo(header, reason, origin) {
+      return Object.assign({ sysid: header.sysid, compid: header.compid, reason }, origin);
+    }
+
+    /**
      * Route, decode, and distribute one inbound packet (DESIGN.md §4):
      * route on the header, decode with the matched profile's dialect, then
      * dispatch to subscribers or emit a structured decode error.
      *
      * @param {MavLinkPacket} packet
+     * @param {?object} origin  immutable source context of the transport read
+     *   that completed this frame (#239): { remoteAddress, remotePort,
+     *   clientId? }, or null when the transport has no network endpoint
+     *   (serial) or delivery was deferred past the read.
      * @returns {void}
      */
-    function onPacket(packet) {
+    function onPacket(packet, origin) {
       const header = packet.header;
       /**
        * Discard a frame carrying a MAVLink-2 incompatibility flag we don't
@@ -1770,11 +1788,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
        */
       const incompatFlags = Number(header.incompatibilityFlags) || 0;
       if (incompatFlags & ~KNOWN_INCOMPAT_FLAGS) {
-        node.emitter.emit('rejected', {
-          sysid: header.sysid,
-          compid: header.compid,
-          reason: 'incompat-unsupported'
-        });
+        node.emitter.emit('rejected', rejectedInfo(header, 'incompat-unsupported', origin));
         return;
       }
       /**
@@ -1789,30 +1803,44 @@ module.exports = function registerMavlinkAiConnection(RED) {
        */
       const wireMagic = packet.buffer && packet.buffer.length ? packet.buffer[0] : header.magic;
 
-      // 1. Route on the framed header (sysid/compid) before decoding. A
-      //    matched route whose profile cannot be resolved rejects the packet
-      //    (never falls back to the default dialect) and logs once per
-      //    identity so the broken route is loud without flooding at wire rate.
+      /**
+       * 1. Route on the framed header (sysid/compid) before decoding. A
+       * matched route whose profile cannot be resolved rejects the packet
+       * (never falls back to the default dialect) and logs once per identity
+       * so the broken route is loud without flooding at wire rate.
+       */
       const decision = node._router.route(header.sysid, header.compid);
       if (!decision.accepted) {
         if (decision.error) {
           logRouteProblemOnce(header, decision.error);
         }
-        node.emitter.emit('rejected', { sysid: header.sysid, compid: header.compid, reason: decision.reason });
+        node.emitter.emit('rejected', rejectedInfo(header, decision.reason, origin));
         return;
       }
       const profile = decision.profile || node.profile;
+      /**
+       * §14.1 per-message endpoint (#239): the descriptor reports the
+       * connection's configured view of the link; the origin carries the
+       * actual source of the read that completed this frame. Merging the
+       * origin last makes `remoteAddress`/`remotePort` (and `clientId` on
+       * tcp-server) per-message truth, so on a multi-peer link every decoded
+       * payload says which endpoint sent it rather than reporting the
+       * configured/fallback remote for all of them.
+       */
       const transportDescriptor = node._transport ? node._transport.descriptor : { type: node.transportType };
+      const messageTransport = origin ? Object.assign({}, transportDescriptor, origin) : transportDescriptor;
 
-      // 2. Decode with the matched profile's dialect (routed connections may
-      //    carry systems on different dialects). A matched profile whose
-      //    dialect/codec is unusable rejects the packet, same as above.
+      /**
+       * 2. Decode with the matched profile's dialect (routed connections may
+       * carry systems on different dialects). A matched profile whose
+       * dialect/codec is unusable rejects the packet, same as above.
+       */
       let codec;
       try {
         codec = getCodecForProfile(profile);
       } catch (err) {
         logRouteProblemOnce(header, err);
-        node.emitter.emit('rejected', { sysid: header.sysid, compid: header.compid, reason: 'profile-invalid' });
+        node.emitter.emit('rejected', rejectedInfo(header, 'profile-invalid', origin));
         return;
       }
 
@@ -1828,22 +1856,22 @@ module.exports = function registerMavlinkAiConnection(RED) {
        */
       const sigDecision = verifyInboundPacket(packet, inboundPolicy());
       if (sigDecision && !sigDecision.accepted) {
-        node.emitter.emit('rejected', {
-          sysid: header.sysid,
-          compid: header.compid,
-          reason: sigDecision.reason
-        });
+        node.emitter.emit('rejected', rejectedInfo(header, sigDecision.reason, origin));
         return;
       }
 
-      // Only now is the sender trusted enough to route replies to (#85): the
-      // frame passed CRC in the splitter, its identity passed routing, and it
-      // satisfied the signature policy. Tell a udp-peer transport to commit
-      // the observed endpoint for this sysid — malformed, route-rejected, or
-      // signature-rejected traffic never reaches here, so it can never
-      // redirect outbound packets.
-      if (node._transport && typeof node._transport.confirmPeer === 'function') {
-        node._transport.confirmPeer(header.sysid);
+      /**
+       * Only now is the sender trusted enough to route replies to (#85): the
+       * frame passed CRC in the splitter, its identity passed routing, and it
+       * satisfied the signature policy. Tell a udp-peer transport to commit
+       * this packet's OWN source endpoint for its sysid (#239) — malformed,
+       * route-rejected, or signature-rejected traffic never reaches here, and
+       * a racing datagram from another endpoint can no longer be the one
+       * promoted, because the endpoint travels with the validated packet
+       * instead of being looked up from a mutable latest-claimant table.
+       */
+      if (origin && node._transport && typeof node._transport.confirmPeer === 'function') {
+        node._transport.confirmPeer(header.sysid, { address: origin.remoteAddress, port: origin.remotePort });
       }
 
       /**
@@ -1862,7 +1890,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       //    decoding throws, emit a structured decode error with raw metadata
       //    instead of silently passing an undecodable packet.
       if (!codec.bundle.registry[header.msgid]) {
-        emitDecodeError(header, codec, profile, packet, 'No message definition for this id in the matched dialect.');
+        emitDecodeError(header, codec, profile, packet, 'No message definition for this id in the matched dialect.', origin);
         return;
       }
       let payload;
@@ -1870,21 +1898,27 @@ module.exports = function registerMavlinkAiConnection(RED) {
         payload = codec.decode(packet, {
           profile: profile ? profile.name : undefined,
           profile_id: profile ? profile.id : undefined,
-          transport: transportDescriptor
+          transport: messageTransport
         });
       } catch (err) {
-        emitDecodeError(header, codec, profile, packet, err.message);
+        emitDecodeError(header, codec, profile, packet, err.message, origin);
         return;
       }
 
-      // `_buffer` carries the original wire bytes for subscribers that opt into
-      // raw output. It is stripped before a decoded message leaves a node, so
-      // it never pollutes the §14.1 contract.
+      /**
+       * `_buffer` carries the original wire bytes for subscribers that opt
+       * into raw output. It is stripped before a decoded message leaves a
+       * node, so it never pollutes the §14.1 contract.
+       */
       const message = { topic: `mavlink/${payload.name}`, payload, _buffer: packet.buffer };
 
       node.subscriptions.dispatch(message);
       node.emitter.emit('message', message);
-      node.emitter.emit('raw', { topic: 'mavlink/raw', payload: packet.buffer });
+      const rawEvent = { topic: 'mavlink/raw', payload: packet.buffer };
+      if (origin) {
+        rawEvent.remote = origin;
+      }
+      node.emitter.emit('raw', rawEvent);
     }
 
     /**
@@ -1896,23 +1930,27 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * @param {object} profile  the matched profile
      * @param {MavLinkPacket} packet
      * @param {string} detail  human-readable cause
+     * @param {?object} origin  per-read source context, or null (#239)
      * @returns {void}
      */
-    function emitDecodeError(header, codec, profile, packet, detail) {
+    function emitDecodeError(header, codec, profile, packet, detail, origin) {
       const payload = errorPayload({
         node: 'mavlink-ai-connection',
         connection: node.name,
         code: 'DECODE_FAILED',
         message: `Unable to decode message id ${header.msgid} with dialect '${codec.bundle.name}': ${detail}`,
-        context: {
-          sysid: header.sysid,
-          compid: header.compid,
-          msgid: header.msgid,
-          dialect: codec.bundle.name,
-          profile: profile ? profile.name : undefined,
-          profile_id: profile ? profile.id : undefined,
-          raw: packet.buffer.toString('hex')
-        }
+        context: Object.assign(
+          {
+            sysid: header.sysid,
+            compid: header.compid,
+            msgid: header.msgid,
+            dialect: codec.bundle.name,
+            profile: profile ? profile.name : undefined,
+            profile_id: profile ? profile.id : undefined,
+            raw: packet.buffer.toString('hex')
+          },
+          origin
+        )
       });
       node.emitter.emit('decodeError', { topic: 'mavlink/error', payload });
     }
@@ -2194,7 +2232,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
           return;
         }
         try {
-          decoder.write(buffer);
+          decoder.write(buffer, packetOrigin(rinfo));
         } catch (err) {
           node.emitter.emit('error', toMavlinkError(err, 'DECODE_ERROR'));
         }
@@ -2510,6 +2548,30 @@ function describeListening(node, info) {
     return `Serial ${node.serialPath} @ ${node.serialBaud}`;
   }
   return `Connected to ${node.remoteHost}:${node.remotePort}`;
+}
+
+/**
+ * Immutable per-read source context (#239): the endpoint that produced one
+ * transport read, captured before framing so every packet completed by that
+ * read can carry it — through the decoded payload's `transport` (§14.1), the
+ * rejected/decode-error diagnostics, and the udp-peer confirmPeer trust
+ * commit. UDP supplies the datagram's sender, tcp-server the client socket
+ * (plus its per-client `clientId`), tcp-client the configured remote; serial
+ * has no network endpoint and yields null. Frozen so nothing downstream can
+ * mutate the shared reference after packets have been attributed to it.
+ *
+ * @param {?object} rinfo  the transport 'data' event's source info
+ * @returns {?object} { remoteAddress, remotePort, clientId? }, or null
+ */
+function packetOrigin(rinfo) {
+  if (!rinfo || rinfo.address == null) {
+    return null;
+  }
+  const origin = { remoteAddress: rinfo.address, remotePort: rinfo.port };
+  if (rinfo.clientId != null) {
+    origin.clientId = rinfo.clientId;
+  }
+  return Object.freeze(origin);
 }
 
 /**

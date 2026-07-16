@@ -92,6 +92,19 @@ test('tcp-server decodes two clients whose partial frames interleave (#147)', as
   const sysids = received.map((p) => p.sysid).sort((x, y) => x - y);
   assert.deepStrictEqual(sysids, [10, 20], 'both clients decoded cleanly');
   assert.ok(received.every((p) => p.name === 'HEARTBEAT'));
+
+  /**
+   * Per-message endpoint (#239): each decoded payload reports the client
+   * socket that actually sent it — address, source port, and the per-client
+   * clientId — not the server's listening endpoint.
+   */
+  const fromA = received.find((p) => p.sysid === 10);
+  const fromB = received.find((p) => p.sysid === 20);
+  assert.strictEqual(fromA.transport.remoteAddress, '127.0.0.1');
+  assert.strictEqual(fromA.transport.remotePort, 5001);
+  assert.strictEqual(fromA.transport.clientId, 1);
+  assert.strictEqual(fromB.transport.remotePort, 5002);
+  assert.strictEqual(fromB.transport.clientId, 2);
   t.diagnostic('two interleaved client streams decoded without cross-corruption');
 });
 
