@@ -2303,7 +2303,17 @@ module.exports = function registerMavlinkAiConnection(RED) {
     });
   }
 
-  RED.nodes.registerType('mavlink-ai-connection', MavlinkAiConnectionNode);
+  /**
+   * The signing passphrase is a credential so it lives in the encrypted
+   * credential store, never in exported flow JSON. Declaring it here is what
+   * makes the runtime populate node.credentials.signingPassphrase (the editor's
+   * credentials block alone is not enough).
+   */
+  RED.nodes.registerType('mavlink-ai-connection', MavlinkAiConnectionNode, {
+    credentials: {
+      signingPassphrase: { type: 'password' }
+    }
+  });
 };
 
 // --- helpers ----------------------------------------------------------------

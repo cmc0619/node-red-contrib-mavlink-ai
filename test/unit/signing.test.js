@@ -183,7 +183,33 @@ test('outbound signing timestamps are monotonic so same-ms bursts are not self-r
   assert.strictEqual(verifyInboundPacket(p2, p).reason, 'signature-valid');
 });
 
-// --- connection-owned signing (a link has one shared key) --------------------
+/** Connection-owned signing: a MAVLink link has exactly one shared key. */
+
+test('the connection declares its signing passphrase as a runtime credential (#245)', () => {
+  /**
+   * The editor's credentials block alone does not populate
+   * node.credentials.signingPassphrase — the runtime registerType must declare
+   * the credential too, or editor-configured signing silently fails closed with
+   * SIGNING_NO_PASSPHRASE. MockRED ignores the option, so assert the registration
+   * directly with a stub that captures it.
+   */
+  const registerConnection = require('../../nodes/mavlink-ai-connection');
+  let captured = null;
+  const stubRED = {
+    httpAdmin: null,
+    settings: {},
+    nodes: {
+      registerType: (type, ctor, opts) => {
+        if (type === 'mavlink-ai-connection') {
+          captured = opts;
+        }
+      }
+    }
+  };
+  registerConnection(stubRED);
+  assert.ok(captured && captured.credentials && captured.credentials.signingPassphrase, 'signingPassphrase credential is declared');
+  assert.strictEqual(captured.credentials.signingPassphrase.type, 'password');
+});
 
 test('connection exposes null signing policy when nothing is configured', async () => {
   const RED = new MockRED().loadNodes();

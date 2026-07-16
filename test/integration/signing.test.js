@@ -49,8 +49,10 @@ test('connection verifies inbound signatures per the identity policy', async (t)
     sourceComponentId: 190
   });
 
-  // Signing (key + policy + link id) belongs to the Connection: a link has one
-  // shared signing key.
+  /**
+   * Signing (key + policy + link id) belongs to the Connection: a link has one
+   * shared signing key.
+   */
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c_sign',
     name: 'Signed UDP',
