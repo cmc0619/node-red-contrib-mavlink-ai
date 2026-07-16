@@ -8,7 +8,7 @@
       connection: { value: '', type: 'mavlink-ai-connection', required: true },
       profile: { value: '', type: 'mavlink-ai-vehicle', required: false },
       action: { value: 'download', required: true },
-      missionType: { value: 'mission', required: true },
+      missionType: { value: 'mission' },
       timeoutMs: { value: 10000, validate: RED.validators.number() },
       maxRetries: { value: 3, validate: RED.validators.number() }
     },
