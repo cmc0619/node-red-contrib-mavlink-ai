@@ -7,7 +7,7 @@ const { MissionDownload, extractItem } = require('../../lib/mission/mission-down
 const { MissionUpload, buildItemFields } = require('../../lib/mission/mission-upload');
 const { MissionClear } = require('../../lib/mission/mission-clear');
 const { DEFAULT_TIMEOUT_MS } = require('../../lib/mission/mission-state-machine');
-const { topicAction, normalizeUploadItems, validateMissionItems } = require('../../lib/mission/upload-input');
+const { topicAction, normalizeUploadItems, resolveUploadItems, validateMissionItems } = require('../../lib/mission/upload-input');
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -425,6 +425,125 @@ test('validateMissionItems rejects a missing command and out-of-range coords (#5
     () => validateMissionItems([{ command: 16, lat: 200, lon: 2 }]),
     (e) => e.code === 'INVALID_FIELD' && e.context.field === 'lat'
   );
+});
+
+/** #236: upload gate + per-field validation. */
+
+test('resolveUploadItems rejects malformed/empty payloads that would implicitly clear (#236)', () => {
+  /** Missing items/waypoints is a wiring typo, not a clear — never MISSION_COUNT 0. */
+  assert.throws(() => resolveUploadItems({}), (e) => e.code === 'MISSION_NO_ITEMS');
+  assert.throws(() => resolveUploadItems({ items: 'nope' }), (e) => e.code === 'MISSION_ITEMS_NOT_ARRAY');
+  assert.throws(() => resolveUploadItems({ items: null }), (e) => e.code === 'MISSION_ITEMS_NOT_ARRAY');
+  /** An explicit empty array clears only with the documented confirmation flag. */
+  assert.throws(() => resolveUploadItems({ items: [] }), (e) => e.code === 'MISSION_EMPTY_UPLOAD');
+  assert.deepStrictEqual(resolveUploadItems({ items: [] }, { allowEmpty: true }), []);
+  /** A valid items/waypoints array passes through unchanged. */
+  const items = [{ command: 16, lat: 1, lon: 2 }];
+  assert.strictEqual(resolveUploadItems({ items }), items);
+  assert.deepStrictEqual(resolveUploadItems({ waypoints: [{ lat: 1, lon: 2 }] }), [{ lat: 1, lon: 2 }]);
+});
+
+test('validateMissionItems rejects non-numeric garbage but preserves NaN sentinels (#236)', () => {
+  /** A NaN sentinel on a float param that allows it is first-class "keep current". */
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, param4: NaN }]));
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, param4: 'NaN' }]));
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, param1: null }]));
+  /** Raw x/y are int32 on the MISSION_ITEM_INT path — a NaN sentinel can't encode
+   * there, so it is NOT allowed and must be caught before the transfer. */
+  assert.throws(() => validateMissionItems([{ command: 16, x: NaN }]), (e) => e.context.field === 'x');
+  assert.throws(() => validateMissionItems([{ command: 16, y: null }]), (e) => e.context.field === 'y');
+  /** ...and a finite-but-huge raw coordinate can't fit int32 either — bound it.
+   * Float degrees and degE7 values both fit comfortably. */
+  assert.throws(() => validateMissionItems([{ command: 16, x: 1e20 }]), (e) => e.context.field === 'x');
+  assert.throws(() => validateMissionItems([{ command: 16, y: -1e20 }]), (e) => e.context.field === 'y');
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, x: 473977420, y: 85455940 }]), 'degE7 fits');
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, x: 47.397742, y: 8.545594 }]), 'float degrees fit');
+  /** A sparse array (hole at seq 0) must fail preflight, not MISSION_BAD_SEQ
+   * mid-handshake — forEach would have skipped the hole. */
+  const sparse = [];
+  sparse[1] = { command: 16 };
+  assert.throws(() => validateMissionItems(sparse), (e) => e.code === 'INVALID_FIELD' && e.context.seq === 0);
+  /** Garbage that keepNanParam would silently default to 0 is rejected up front. */
+  for (const field of ['param1', 'x', 'y', 'z', 'alt']) {
+    assert.throws(
+      () => validateMissionItems([{ command: 16, [field]: 'oops' }]),
+      (e) => e.code === 'INVALID_FIELD' && e.context.field === field,
+      `${field} garbage rejected`
+    );
+  }
+  /** Flags are 0/1; frame is a number or name; command is a number or name. */
+  assert.throws(() => validateMissionItems([{ command: 16, current: 5 }]), (e) => e.context.field === 'current');
+  /** Natural JSON booleans on the flags are accepted — they predate this guard. */
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, current: true, autocontinue: false }]));
+  assert.throws(() => validateMissionItems([{ command: 16, frame: {} }]), (e) => e.context.field === 'frame');
+  assert.throws(() => validateMissionItems([{ command: {} }]), (e) => e.context.field === 'command');
+  /** A fully-specified valid item passes. */
+  assert.doesNotThrow(() =>
+    validateMissionItems([
+      { command: 'MAV_CMD_NAV_WAYPOINT', frame: 3, lat: 1, lon: 2, alt: 10, param1: 0, current: 1, autocontinue: 1 }
+    ])
+  );
+});
+
+test('validateMissionItems rejects an unknown MAV_CMD name against the dialect (#236)', () => {
+  /**
+   * A typoed command name must fail before the transfer, not later in
+   * codec.encode after MISSION_COUNT has gone out and the vehicle is mid-upload.
+   * The dialect enums resolve the name; an unknown one is rejected up front.
+   */
+  const enums = loadDialect('ardupilotmega').enums;
+  assert.doesNotThrow(() => validateMissionItems([{ command: 'MAV_CMD_NAV_WAYPOINT', lat: 1, lon: 2 }], enums));
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16 }], enums), 'a numeric id passes through');
+  assert.throws(
+    () => validateMissionItems([{ command: 'MAV_CMD_NAV_WAYPONT' }], enums),
+    (e) => e.code === 'INVALID_FIELD' && e.context.field === 'command' && /not a known MAV_CMD/.test(e.message)
+  );
+  /** A name from a *different* enum (a MAV_FRAME pasted as a command) must NOT
+   * resolve as a command via the global index — MavCmd-only resolution. */
+  assert.throws(
+    () => validateMissionItems([{ command: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT' }], enums),
+    (e) => e.code === 'INVALID_FIELD' && e.context.field === 'command'
+  );
+  /** Without enums the name is accepted (resolved downstream), unchanged behavior. */
+  assert.doesNotThrow(() => validateMissionItems([{ command: 'MAV_CMD_NAV_WAYPONT' }]));
+  /** A numeric id (number or numeric string) must fit the uint16 wire type —
+   * fractional or out-of-range ids fail preflight, with or without enums. */
+  for (const bad of [16.5, '16.5', 70000, -1]) {
+    assert.throws(() => validateMissionItems([{ command: bad }], enums), (e) => e.context.field === 'command', `command ${bad}`);
+    assert.throws(() => validateMissionItems([{ command: bad }]), (e) => e.context.field === 'command', `command ${bad} (no enums)`);
+  }
+});
+
+test('validateMissionItems rejects an unknown or non-integer frame against the dialect (#236)', () => {
+  /**
+   * frame is an int MAVLink enum: a typoed MAV_FRAME name or a fractional
+   * number must fail before MISSION_COUNT, not later when the encoder
+   * normalizes the item mid-handshake — same rule as the command check.
+   */
+  const enums = loadDialect('ardupilotmega').enums;
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT' }], enums));
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, frame: 3 }], enums), 'a numeric id passes through');
+  assert.throws(
+    () => validateMissionItems([{ command: 16, frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INTT' }], enums),
+    (e) => e.code === 'INVALID_FIELD' && e.context.field === 'frame' && /not a known MAV_FRAME/.test(e.message)
+  );
+  assert.throws(
+    () => validateMissionItems([{ command: 16, frame: 3.5 }], enums),
+    (e) => e.code === 'INVALID_FIELD' && e.context.field === 'frame'
+  );
+  /** A command name pasted into the frame field is cross-enum — rejected. */
+  assert.throws(
+    () => validateMissionItems([{ command: 16, frame: 'MAV_CMD_NAV_WAYPOINT' }], enums),
+    (e) => e.code === 'INVALID_FIELD' && e.context.field === 'frame'
+  );
+  /** Without enums: integers and non-blank names pass (resolved downstream), fractions fail. */
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INTT' }]));
+  assert.throws(() => validateMissionItems([{ command: 16, frame: 3.5 }]), (e) => e.context.field === 'frame');
+  /** A numeric id (number or numeric string) must fit the uint8 wire type. */
+  for (const bad of ['3.5', 300, -1]) {
+    assert.throws(() => validateMissionItems([{ command: 16, frame: bad }], enums), (e) => e.context.field === 'frame', `frame ${bad}`);
+    assert.throws(() => validateMissionItems([{ command: 16, frame: bad }]), (e) => e.context.field === 'frame', `frame ${bad} (no enums)`);
+  }
 });
 
 test('MissionClear times out cleanly with no ACK (#59)', async () => {

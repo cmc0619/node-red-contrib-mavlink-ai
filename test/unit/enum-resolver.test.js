@@ -61,3 +61,16 @@ test('digit-leading enum members keep their full source name — no double prefi
   /** and the index carries the single-prefix key for forward resolution */
   assert.strictEqual(enums.resolveEnumValue(bundle.enums, 'GPS_FIX_TYPE_2D_FIX'), 2);
 });
+
+test('resolveInEnum resolves against one enum only, unlike the global resolveEnumValue', () => {
+  /** Full name, bare member, and numeric/custom ids all resolve within MavCmd. */
+  assert.strictEqual(enums.resolveInEnum(bundle.enums, 'MavCmd', 'MAV_CMD_COMPONENT_ARM_DISARM'), 400);
+  assert.strictEqual(enums.resolveInEnum(bundle.enums, 'MavCmd', 'COMPONENT_ARM_DISARM'), 400);
+  assert.strictEqual(enums.resolveInEnum(bundle.enums, 'MavCmd', 16), 16);
+  assert.strictEqual(enums.resolveInEnum(bundle.enums, 'MavCmd', '16'), 16);
+  /** A name from a different enum resolves globally but NOT within MavCmd. */
+  assert.strictEqual(typeof enums.resolveEnumValue(bundle.enums, 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT'), 'number');
+  assert.strictEqual(enums.resolveInEnum(bundle.enums, 'MavCmd', 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT'), undefined);
+  /** A typo is unresolvable. */
+  assert.strictEqual(enums.resolveInEnum(bundle.enums, 'MavCmd', 'MAV_CMD_NAV_WAYPONT'), undefined);
+});

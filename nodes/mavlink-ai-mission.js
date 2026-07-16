@@ -4,7 +4,7 @@ const { MissionDownload } = require('../lib/mission/mission-download');
 const { MissionUpload } = require('../lib/mission/mission-upload');
 const { MissionClear } = require('../lib/mission/mission-clear');
 const { missionTypeToNumber } = require('../lib/mission/mission-state-machine');
-const { topicAction, normalizeUploadItems, validateMissionItems } = require('../lib/mission/upload-input');
+const { topicAction, normalizeUploadItems, resolveUploadItems, validateMissionItems } = require('../lib/mission/upload-input');
 const { toInt, toBool, firstDefined } = require('../lib/util/validation');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
@@ -157,6 +157,43 @@ module.exports = function registerMavlinkAiMission(RED) {
         }));
       }
 
+      /**
+       * Prepare upload items BEFORE the lock (#236). A missing or non-array
+       * items/waypoints payload must fail loudly rather than be uploaded as
+       * MISSION_COUNT 0 — which the mission spec treats as a clear, silently
+       * erasing the vehicle's mission on a wiring typo. An explicit empty upload
+       * clears only with an allow_empty confirmation (the separate `clear` action
+       * is the normal path). Every item field is validated against its wire type
+       * here too, so malformed input never occupies the lock or ships defaulted
+       * zeros.
+       */
+      let uploadItems;
+      if (action === 'upload') {
+        try {
+          /**
+           * Confirming an empty (destructive) upload requires an explicit
+           * boolean or true-string. A wrong-shaped upstream value ({}/[]) would
+           * otherwise be truthy through toBool's Boolean() fallback and silently
+           * reopen the empty-clear path this guard closes (Codex review).
+           */
+          const rawAllowEmpty = firstDefined(msg.allow_empty, payload.allow_empty);
+          const allowEmpty =
+            typeof rawAllowEmpty === 'boolean' || typeof rawAllowEmpty === 'string' ? toBool(rawAllowEmpty, false) : false;
+          resolveUploadItems(payload, { allowEmpty });
+          uploadItems = validateMissionItems(normalizeUploadItems(payload), bundle ? bundle.enums : null);
+        } catch (err) {
+          const e = toMavlinkError(err, 'INVALID_FIELD');
+          node.status({ fill: 'red', shape: 'ring', text: e.code });
+          return finishError(node, msg, send, done, errorPayload({
+            node: 'mavlink-ai-mission',
+            connection: node.connection.name,
+            code: e.code,
+            message: e.message,
+            context: e.context
+          }));
+        }
+      }
+
       const lockKey = `mission:${node.connection.id}:${profile ? profile.id : 'default'}:${missionTypeNum}`;
       let lock;
       try {
@@ -225,7 +262,7 @@ module.exports = function registerMavlinkAiMission(RED) {
         if (action === 'download') {
           result = await runTracked(new MissionDownload(opts));
         } else if (action === 'upload') {
-          opts.items = validateMissionItems(normalizeUploadItems(payload));
+          opts.items = uploadItems;
           result = await runTracked(new MissionUpload(opts));
         } else if (action === 'clear') {
           // Best-effort by default (resolve once sent); opt into waiting for a
