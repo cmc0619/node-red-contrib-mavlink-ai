@@ -149,3 +149,18 @@ test('out node still surfaces a permanent udp-out misconfiguration (UDP_NO_REMOT
   assert.ok(err, 'a permanent udp-out misconfiguration surfaces via done(err)');
   assert.strictEqual(err.code, 'UDP_NO_REMOTE');
 });
+
+test('out node surfaces a failed transport start (TRANSPORT_NOT_READY), not "waiting"', async () => {
+  /**
+   * TRANSPORT_NOT_READY means the transport is null — often a permanent failed
+   * start (unknown transport, a serial dependency that threw), not the transient
+   * "link coming up" the heartbeat silently retries. A fire-and-forget send must
+   * surface it so a Catch node sees the misconfiguration (Codex review).
+   */
+  const notStarted = Object.assign(new Error('Transport is not started.'), { code: 'TRANSPORT_NOT_READY' });
+  const { RED } = setup({ sendError: notStarted });
+  const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
+  const { err } = await RED.inject(node, { topic: 'mavlink/send', payload: { name: 'HEARTBEAT', fields: {} } });
+  assert.ok(err, 'a failed/absent transport surfaces via done(err)');
+  assert.strictEqual(err.code, 'TRANSPORT_NOT_READY');
+});

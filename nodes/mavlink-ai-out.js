@@ -2,7 +2,7 @@
 
 const { badgeForState } = require('../lib/util/status');
 const { safeDetach } = require('../lib/util/node-lifecycle');
-const { TRANSPORT_NOT_READY_CODES } = require('../lib/util/errors');
+const { TRANSPORT_WAITING_CODES } = require('../lib/util/errors');
 
 /**
  * mavlink-ai-out (DESIGN.md §13.2).
@@ -111,7 +111,7 @@ module.exports = function registerMavlinkAiOut(RED) {
          * error output / Catch nodes on every send (#83 follow-up). The heartbeat
          * scheduler already treats these codes as idle.
          */
-        if (err && TRANSPORT_NOT_READY_CODES.has(err.code)) {
+        if (err && TRANSPORT_WAITING_CODES.has(err.code)) {
           node.status({ fill: 'yellow', shape: 'ring', text: 'waiting for link' });
           if (!node._notReadyWarned) {
             node._notReadyWarned = true;
