@@ -412,3 +412,23 @@ test('clear() settles the in-flight item during a stalled write (#237)', async (
   completeWrite();
   await after;
 });
+
+test('onWrite does not fire for an in-flight item cleared mid-write', async () => {
+  /**
+   * clear() rejects the in-flight item on teardown, but its writer may resolve
+   * later. That late completion must not fire onWrite — the send was abandoned,
+   * and a stale post-teardown trace would contradict the onWrite contract.
+   */
+  let completeWrite;
+  const queue = new OutboundQueue(() => new Promise((resolve) => { completeWrite = resolve; }));
+  let wrote = 0;
+  const stalled = queue.enqueue(Buffer.from([1]), 2, undefined, { onWrite: () => (wrote += 1) });
+
+  queue.clear();
+  await assert.rejects(stalled, (e) => e.code === 'QUEUE_CLEARED');
+
+  /** Writer resolves after the clear — onWrite must stay silent. */
+  completeWrite();
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(wrote, 0, 'a cleared in-flight item must not fire onWrite when its write completes late');
+});
