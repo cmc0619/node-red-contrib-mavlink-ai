@@ -170,7 +170,15 @@ module.exports = function registerMavlinkAiMission(RED) {
       let uploadItems;
       if (action === 'upload') {
         try {
-          const allowEmpty = toBool(firstDefined(msg.allow_empty, payload.allow_empty), false);
+          /**
+           * Confirming an empty (destructive) upload requires an explicit
+           * boolean or true-string. A wrong-shaped upstream value ({}/[]) would
+           * otherwise be truthy through toBool's Boolean() fallback and silently
+           * reopen the empty-clear path this guard closes (Codex review).
+           */
+          const rawAllowEmpty = firstDefined(msg.allow_empty, payload.allow_empty);
+          const allowEmpty =
+            typeof rawAllowEmpty === 'boolean' || typeof rawAllowEmpty === 'string' ? toBool(rawAllowEmpty, false) : false;
           resolveUploadItems(payload, { allowEmpty });
           uploadItems = validateMissionItems(normalizeUploadItems(payload));
         } catch (err) {

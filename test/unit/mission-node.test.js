@@ -76,6 +76,16 @@ test('mission upload with an explicit empty array refuses to clear without allow
   assert.strictEqual(collected[0][2].payload.code, 'MISSION_EMPTY_UPLOAD');
 });
 
+test('a wrong-shaped allow_empty does not confirm a destructive empty upload (#236)', async () => {
+  /** {} / [] are truthy through toBool's Boolean() fallback; they must NOT
+   * reopen the empty-clear path — only an explicit boolean/string true does. */
+  const { RED, node } = setup();
+  for (const allow_empty of [{}, [], 1]) {
+    const { collected } = await RED.inject(node, { payload: { action: 'upload', items: [], allow_empty } });
+    assert.strictEqual(collected[0][2].payload.code, 'MISSION_EMPTY_UPLOAD', `allow_empty=${JSON.stringify(allow_empty)} is not a confirmation`);
+  }
+});
+
 test('mission upload with a malformed item field fails before locking (#236)', async () => {
   const { RED, node } = setup();
   const { collected } = await RED.inject(node, { payload: { action: 'upload', items: [{ command: 16, param1: 'oops' }] } });

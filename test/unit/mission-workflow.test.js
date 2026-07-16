@@ -427,7 +427,7 @@ test('validateMissionItems rejects a missing command and out-of-range coords (#5
   );
 });
 
-// --- #236: upload gate + per-field validation ------------------------------
+/** #236: upload gate + per-field validation. */
 
 test('resolveUploadItems rejects malformed/empty payloads that would implicitly clear (#236)', () => {
   /** Missing items/waypoints is a wiring typo, not a clear — never MISSION_COUNT 0. */
