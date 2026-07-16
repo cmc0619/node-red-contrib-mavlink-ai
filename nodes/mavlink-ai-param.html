@@ -351,6 +351,37 @@
       }
 
       /**
+       * Sources the automatic catalog load has already been attempted for in
+       * this dialog session (#246 follow-up). loadCatalogStatus re-runs on
+       * every action and profile change, so without this an uncached catalog
+       * (offline, or the published URL unreachable) re-fired the full download
+       * on every toggle — the documented contract is ONE automatic attempt,
+       * with the manual Load parameters button as the retry path.
+       */
+      const autoLoadAttempted = new Set();
+
+      /**
+       * Whether to fire the automatic catalog load for a status response:
+       * only for a source that publishes its own URL (ArduPilot — PX4 waits
+       * for a pasted one), only when the current action uses the catalog, and
+       * only once per source per dialog session. The attempt is consumed ONLY
+       * when firing, so a source first seen under a List action still gets
+       * its one automatic attempt after switching to Read/Set.
+       *
+       * @param {object} source  catalog source descriptor ({sourceKey, urlRequired})
+       * @param {boolean} relevant  whether the current action uses the catalog
+       * @param {Set<string>} attempted  sources already automatically attempted
+       * @returns {boolean}
+       */
+      function shouldAutoLoad(source, relevant, attempted) {
+        if (source.urlRequired || !relevant || attempted.has(source.sourceKey)) {
+          return false;
+        }
+        attempted.add(source.sourceKey);
+        return true;
+      }
+
+      /**
        * Refresh the catalog-source status line and the "Load parameters" button
        * visibility for the current firmware/vehicle.
        *
@@ -382,14 +413,15 @@
             }
             if (resp.cached) {
               $status.text('Catalog: ' + resp.cached.count + ' parameters cached (' + resp.source.sourceKey + ').');
-            } else if (!resp.source.urlRequired && catalogRelevant()) {
+            } else if (shouldAutoLoad(resp.source, catalogRelevant(), autoLoadAttempted)) {
               /**
                * Auto-load: a source with its own published URL (ArduPilot) needs
                * nothing from the user, so fetch it on open — the Param ID and
                * Value dropdowns then work without hunting for a button, which is
                * the whole point of configuring in a vacuum (no vehicle attached).
                * PX4 (urlRequired) still waits for a pasted URL, and a failed
-               * auto-load leaves the manual button for a retry.
+               * auto-load leaves the manual button for a retry (one automatic
+               * attempt per source per dialog session, see shouldAutoLoad).
                */
               $status.text('Loading parameter catalog…');
               loadCatalog();
@@ -427,6 +459,21 @@
         })
           .done(function (resp) {
             if (gen !== ctxRequestId) {
+              /**
+               * Stale generation: the action/profile changed while the
+               * download was in flight, so this handler must not write UI for
+               * the old context — but the download DID succeed and the cache
+               * now exists on disk. Without a nudge the dialog goes dead: the
+               * replacement status check already declined to auto-load again
+               * (one attempt per source, see shouldAutoLoad), so nothing
+               * would populate the controls until a manual click (Codex
+               * review). Re-drive the loaders against the CURRENT context —
+               * each is generation/request-guarded, and the status check now
+               * finds the fresh cache instead of starting a new download.
+               */
+              loadCatalogStatus();
+              loadParamList();
+              loadParamDetail();
               return;
             }
             $status.text('Loaded ' + resp.count + ' parameters (' + resp.sourceKey + ').');
@@ -435,6 +482,11 @@
           })
           .fail(function (xhr) {
             if (gen !== ctxRequestId) {
+              /**
+               * A stale failure needs no nudge: the replacement status check
+               * already rendered the accurate "no catalog cached — click Load
+               * parameters" state, which failing again wouldn't change.
+               */
               return;
             }
             const err = xhr && xhr.responseJSON ? xhr.responseJSON.error : 'download failed';
