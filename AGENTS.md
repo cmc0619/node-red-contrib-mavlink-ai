@@ -21,13 +21,13 @@ Follow `DESIGN.md` first. Do not recreate the old coupled architecture.
    schema*, e.g. keeping fields that still apply when switching transports, is
    fine and expected.)
 8. Keep node type names under the `mavlink-ai-*` prefix.
-9. Use JSDoc (`/** ... */`) in lieu of any other type of comment. Do not use `//`
-   line comments or plain `/* ... */` block comments for commentary; the only
-   non-JSDoc comments allowed are bare tooling directives (e.g.
-   `// eslint-disable-next-line`, coverage pragmas, shebangs). This rule applies
-   to new and modified code going forward — it was adopted mid-project, so
-   pre-existing `//` comments are grandfathered; convert them when you touch the
-   surrounding code, not in bulk sweeps. See DESIGN.md §27.1.
+9. Comments. Use JSDoc (`/** ... */`) to document what a reader needs in order to
+   *use* a thing — exported functions and classes, public runtime methods,
+   config/message schemas, non-obvious state machines, and safety-sensitive or
+   tricky MAVLink behavior. Ordinary `//` line comments are fine for short inline
+   notes explaining *why* a specific line is the way it is. Keep comments useful
+   and current; don't add empty boilerplate to trivial one-liners. See
+   DESIGN.md §27.1.
 
 ## Architecture
 
