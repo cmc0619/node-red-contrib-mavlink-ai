@@ -494,35 +494,83 @@
         $custom.appendTo($row);
       }
 
+      /**
+       * Unsigned 32-bit bitmask math (#242): byte-for-byte copies of
+       * lib/command/bitmask.js — the editor can't require it, and
+       * test/unit/bitmask-editor-spec.test.js runs the same acceptance matrix
+       * against both to guard drift. JS bitwise operators are signed 32-bit, so
+       * without `>>> 0` bit 31 flips values negative and the "other bits"
+       * residual can render as a negative number.
+       */
+      function parseBitmaskValue(v) {
+        var n;
+        if (typeof v === 'number') {
+          n = v;
+        } else if (typeof v === 'string' && v.trim() !== '') {
+          n = Number(v.trim());
+        } else {
+          return null;
+        }
+        return Number.isInteger(n) && n >= 0 && n <= 0xffffffff ? n : null;
+      }
+      function isSingleBit(v) {
+        var n = parseBitmaskValue(v);
+        return n !== null && n > 0 && ((n & (n - 1)) >>> 0) === 0;
+      }
+      function orBits(values) {
+        var acc = 0;
+        for (var i = 0; i < values.length; i++) {
+          acc = (acc | values[i]) >>> 0;
+        }
+        return acc;
+      }
+      function hasBit(mask, bit) {
+        return ((mask & bit) >>> 0) !== 0;
+      }
+      function residualBits(mask, known) {
+        return (mask & ~known) >>> 0;
+      }
+
       // Bitmask enum -> a checklist of single-bit flags plus an "other bits"
       // numeric for values the flag list can't express; the combined OR is the
-      // persisted wire value (#97).
+      // persisted wire value (#97). All math is unsigned 32-bit (#242) so
+      // bit-31 flags and unknown bits render and round-trip as non-negative
+      // values; unknown bits are preserved when known flags are toggled.
       function bitmaskControl(p, $row, $sink) {
         const members = (enumsByName[p.bitmask] || []).filter(function (m) {
-          return m.value > 0 && (m.value & (m.value - 1)) === 0; // single-bit flags only
+          return isSingleBit(m.value);
         });
-        const knownBits = members.reduce(function (acc, m) { return acc | m.value; }, 0);
-        const saved = Number($sink.val()) || 0;
+        const knownBits = orBits(members.map(function (m) { return m.value; }));
+        const saved = parseBitmaskValue($sink.val()) || 0;
         const $box = $('<div style="width:55%; display:inline-block; vertical-align:top;"></div>');
         const $checks = [];
         function recompute() {
-          let value = 0;
+          const bits = [];
           $checks.forEach(function (c) {
             if (c.$el.is(':checked')) {
-              value |= c.bit;
+              bits.push(c.bit);
             }
           });
-          const extra = parseInt($other.val(), 10);
-          if (Number.isFinite(extra)) {
-            value |= extra;
+          // Reject an invalid "other bits" entry (fractional/negative/>uint32)
+          // instead of silently truncating it into the persisted value.
+          const otherRaw = String($other.val() || '').trim();
+          const extra = parseBitmaskValue(otherRaw);
+          if (otherRaw !== '' && extra === null) {
+            $other.addClass('input-error');
+            return;
           }
-          $sink.val(value ? String(value >>> 0) : '');
+          $other.removeClass('input-error');
+          if (extra !== null) {
+            bits.push(extra);
+          }
+          const value = orBits(bits);
+          $sink.val(value ? String(value) : '');
         }
         members.forEach(function (m) {
           const $line = $('<div style="margin:1px 0;"></div>');
           const $cb = $('<input type="checkbox">')
             .css({ width: 'auto', 'vertical-align': 'middle', 'margin-right': '4px' })
-            .prop('checked', (saved & m.value) !== 0);
+            .prop('checked', hasBit(saved, m.value));
           $cb.on('change', recompute);
           $checks.push({ $el: $cb, bit: m.value });
           $cb.appendTo($line);
@@ -534,7 +582,7 @@
         const $other = $('<input type="number" step="1" min="0">')
           .css({ width: '40%' })
           .attr('placeholder', '0')
-          .val(saved & ~knownBits ? String(saved & ~knownBits) : '');
+          .val(residualBits(saved, knownBits) ? String(residualBits(saved, knownBits)) : '');
         $other.on('input change', recompute);
         $other.appendTo($otherLine);
         $otherLine.appendTo($box);
