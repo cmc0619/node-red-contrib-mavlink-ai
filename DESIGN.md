@@ -1328,6 +1328,20 @@ Responsibilities:
 
 Node files should not need to know the ugly details of `node-mavlink` usage. They should call wrapper methods.
 
+**Field-scoped enum resolution (#153).** The XML declares which enum backs each
+field; the compiled `mavlink-mappings` JS drops that association, but the
+package's shipped `.d.ts` declarations retain it as the property types of each
+message class, and the runtime XML compiler reads the `enum=` attribute
+directly. Encode-time name resolution uses that association: on a field with a
+declared enum, a name resolves against that enum only (a member of an
+unrelated enum fails with the expected enum named — it used to resolve
+globally, so `HEARTBEAT.type: 'MAV_STATE_ACTIVE'` silently encoded MavState 4
+as a MavType), and the command workflow resolves command names against MavCmd
+only. Fields with no declared enum — COMMAND_LONG's generic params
+legitimately receive mode/flag members — keep global resolution, as does any
+dialect whose association metadata is unavailable. Numbers and numeric strings
+always pass through, so raw and dialect-external ids stay usable.
+
 ## 17. Transport Handling
 
 Transport belongs to the connection layer.
