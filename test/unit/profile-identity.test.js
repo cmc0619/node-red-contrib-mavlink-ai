@@ -156,3 +156,14 @@ test('connection refuses to start with no default identity (#228)', async () => 
   await assert.rejects(connection.send({ name: 'HEARTBEAT', fields: {} }), (e) => e.code === 'CONNECTION_INVALID');
   await RED.close(connection);
 });
+
+test('connection refuses to start on a malformed accepted-id filter, not accept everything (#193)', async () => {
+  const RED = new MockRED().loadNodes();
+  const { connection } = makeConnection(RED, { id: 'c-badfilter', acceptedSysids: '1,2x' });
+  assert.ok(
+    connection.errors.some((e) => /ACCEPT_FILTER_INVALID/.test(String(e))),
+    'connection logged the accept-filter error'
+  );
+  await assert.rejects(connection.send({ name: 'HEARTBEAT', fields: {} }), (e) => e.code === 'CONNECTION_INVALID');
+  await RED.close(connection);
+});

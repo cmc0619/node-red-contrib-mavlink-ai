@@ -1,7 +1,7 @@
 'use strict';
 
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
-const { firstDefined, toInt, toBool } = require('../lib/util/validation');
+const { firstDefined, toInt, toBool, parseJsonObjectConfig } = require('../lib/util/validation');
 const { buildFanout } = require('../lib/swarm/fanout');
 const { CommandSend } = require('../lib/command/command-workflow');
 const { watchConfigBadge } = require('../lib/util/node-lifecycle');
@@ -55,13 +55,16 @@ module.exports = function registerMavlinkAiFanout(RED) {
      */
     node.concurrency = Math.max(1, toInt(config.concurrency, 1));
 
-    let configBase = {};
-    if (config.fields) {
-      try {
-        configBase = JSON.parse(config.fields);
-      } catch (e) {
-        node.warn(`mavlink-ai-fanout: invalid fields JSON, ignoring (${e.message})`);
-      }
+    /**
+     * Malformed static `fields` JSON invalidates the node instead of silently
+     * becoming `{}` and omitting intended shared params (#204). Blank stays the
+     * empty default; imported/API/hand-edited flows bypass the editor validator.
+     */
+    const parsedBase = parseJsonObjectConfig(config.fields, 'fields');
+    const configBase = parsedBase.value;
+    node._configError = parsedBase.error;
+    if (node._configError) {
+      node.status({ fill: 'red', shape: 'ring', text: 'invalid config' });
     }
 
     /** Emit a structured error and finish the handler. */
@@ -85,6 +88,9 @@ module.exports = function registerMavlinkAiFanout(RED) {
     let closed = false;
 
     node.on('input', async (msg, send, done) => {
+      if (node._configError) {
+        return sendError(msg, send, done, 'INVALID_CONFIG', `mavlink-ai-fanout: ${node._configError}`);
+      }
       const incoming = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
 
       if (!node.profile) {

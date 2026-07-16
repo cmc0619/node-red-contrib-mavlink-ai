@@ -1,6 +1,9 @@
 'use strict';
 
-const { parseList, parseIdList, toNum, toBool } = require('../lib/util/validation');
+const { parseList, parseIdListStrict, toNum, toBool } = require('../lib/util/validation');
+
+/** Inclusive max for a MAVLink 2 (24-bit) message id. */
+const MAX_MSG_ID = 0xffffff;
 const { badgeForState } = require('../lib/util/status');
 const { safeDetach } = require('../lib/util/node-lifecycle');
 
@@ -27,15 +30,24 @@ module.exports = function registerMavlinkAiIn(RED) {
     node.name = config.name;
     node.connection = null;
     node.messageNames = parseList(config.messageNames);
-    node.messageIds = parseIdList(config.messageIds);
     /**
      * Accept comma-separated id lists ("1,2,3") like the filter node, not just a
-     * single id (#154). parseIdList treats blank/"any"/"*" as no constraint and
-     * drops non-numeric entries, so a stray "1,2" no longer silently narrows to
-     * sysid 1.
+     * single id (#154), and parse them STRICTLY (#193): blank, "*", "any", or
+     * "all" means "accept everything", but a malformed token ("1O", "1,2x")
+     * fails the node closed instead of being silently dropped — which would
+     * widen a subscription filter to systems the operator meant to exclude.
      */
-    node.sysids = parseIdList(config.sysid);
-    node.compids = parseIdList(config.compid);
+    const idMsg = parseIdListStrict(config.messageIds, MAX_MSG_ID);
+    const idSys = parseIdListStrict(config.sysid);
+    const idComp = parseIdListStrict(config.compid);
+    node.messageIds = idMsg.ids;
+    node.sysids = idSys.ids;
+    node.compids = idComp.ids;
+    node._filterInvalid = [
+      ...idMsg.invalid.map((t) => `message id '${t}'`),
+      ...idSys.invalid.map((t) => `sysid '${t}'`),
+      ...idComp.invalid.map((t) => `compid '${t}'`)
+    ];
     node.profileFilter = config.profileFilter || '';
     /** toNum, not toInt: sub-1Hz rates like 0.5 are meaningful and truncation
      * would silently disable the limit. */
@@ -135,6 +147,18 @@ module.exports = function registerMavlinkAiIn(RED) {
      * node itself is manually redeployed.
      */
     function attach() {
+      /**
+       * Fail closed on a malformed id filter (#193): subscribe to nothing and
+       * show the error rather than deliver a silently-widened stream.
+       */
+      if (node._filterInvalid.length) {
+        node.status({ fill: 'red', shape: 'ring', text: 'invalid filter' });
+        node.error(
+          `mavlink-ai-in: invalid id filter (${node._filterInvalid.join(', ')}); ` +
+            'each must be blank/*/any/all or an integer in range. Not subscribing.'
+        );
+        return;
+      }
       const conn = RED.nodes.getNode(config.connection) || null;
       if (conn === attachedTo && conn === node.connection) {
         return;

@@ -10,7 +10,7 @@ const { SubscriptionRegistry } = require('../lib/runtime/subscription-registry')
 const { OutboundQueue } = require('../lib/runtime/outbound-queue');
 const { LockManager } = require('../lib/runtime/lock-manager');
 const { statusPayload } = require('../lib/util/status');
-const { toInt, toBool, parseIdList } = require('../lib/util/validation');
+const { toInt, toBool, parseIdListStrict } = require('../lib/util/validation');
 const { MavlinkError, toMavlinkError, errorPayload } = require('../lib/util/errors');
 
 /**
@@ -140,8 +140,20 @@ module.exports = function registerMavlinkAiConnection(RED) {
         `heartbeat interval ${requestedHeartbeatMs} ms is below the ${HEARTBEAT_MIN_INTERVAL_MS} ms minimum; clamping to ${HEARTBEAT_MIN_INTERVAL_MS} ms.`
       );
     }
-    node.acceptedSysids = parseIdList(config.acceptedSysids);
-    node.acceptedCompids = parseIdList(config.acceptedCompids);
+    /**
+     * Accept-filter ids are parsed strictly (#193): a typo like "1O" or a
+     * mixed "1,2x" must fail the connection closed, not silently widen the
+     * accept filter to everything (parseIdList drops bad tokens → []  = accept
+     * all). The fatal() below turns an invalid list into an inert connection.
+     */
+    const acceptedSysids = parseIdListStrict(config.acceptedSysids);
+    const acceptedCompids = parseIdListStrict(config.acceptedCompids);
+    node.acceptedSysids = acceptedSysids.ids;
+    node.acceptedCompids = acceptedCompids.ids;
+    node._acceptFilterInvalid =
+      acceptedSysids.invalid.length || acceptedCompids.invalid.length
+        ? [...acceptedSysids.invalid.map((t) => `sysid '${t}'`), ...acceptedCompids.invalid.map((t) => `compid '${t}'`)]
+        : null;
     node.unmatchedPolicy = config.unmatchedPolicy || (node.routingMode === 'routed' ? 'reject' : 'default');
 
     /**
@@ -272,6 +284,15 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     // --- required default profile / identity ---------------------------------
+    if (node._acceptFilterInvalid) {
+      fatal(
+        'ACCEPT_FILTER_INVALID',
+        `Accepted sysid/compid filter has invalid ids (${node._acceptFilterInvalid.join(', ')}); ` +
+          'each must be blank/*/any/all or an integer 0-255. Refusing to start rather than accept everything.'
+      );
+      registerNoop(node);
+      return;
+    }
     if (!node.profile) {
       fatal('NO_PROFILE', 'Connection has no Vehicle Profile configured.');
       registerNoop(node);

@@ -279,3 +279,12 @@ test('param node route-resolves the target to its profile when no override is se
   assert.strictEqual(conn.sent[0].vehicleProfile, 'p_routed');
   assert.strictEqual(conn.sent[0].fields.target_system, 2);
 });
+
+test('param node rejects a broadcast target_system before locking/sending (#197)', async () => {
+  const { conn, node } = setup({ action: 'read', paramId: 'RC1_MIN' });
+  const outputs = await run(node, { payload: { target_system: 0 } });
+  const error = outputs[0][2];
+  assert.strictEqual(error.topic, 'mavlink/error');
+  assert.strictEqual(error.payload.code, 'BROADCAST_NO_ACK');
+  assert.strictEqual(conn.sent.length, 0, 'no PARAM message was sent to the broadcast target');
+});

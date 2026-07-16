@@ -2,7 +2,7 @@
 
 const { VehicleRegistry } = require('../lib/swarm/vehicle-registry');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
-const { toInt, toBool } = require('../lib/util/validation');
+const { toInt, toBool, parseJsonObjectConfig } = require('../lib/util/validation');
 const { badgeForState } = require('../lib/util/status');
 const { safeDetach } = require('../lib/util/node-lifecycle');
 
@@ -40,13 +40,17 @@ module.exports = function registerMavlinkAiSwarm(RED) {
     node.intervalMs = toInt(config.intervalMs, 0);
     node.includeGcs = toBool(config.includeGcs, false);
 
-    let groups = {};
-    if (config.groups) {
-      try {
-        groups = JSON.parse(config.groups);
-      } catch (e) {
-        node.warn(`mavlink-ai-swarm: invalid groups JSON, ignoring (${e.message})`);
-      }
+    /**
+     * Malformed `groups` JSON makes the node invalid instead of silently
+     * becoming `{}` and erasing safety grouping — a group-filtered snapshot
+     * would otherwise return every vehicle (#204). Blank stays the empty
+     * default; imported/API/hand-edited flows bypass the editor validator.
+     */
+    const parsedGroups = parseJsonObjectConfig(config.groups, 'groups');
+    const groups = parsedGroups.value;
+    node._configError = parsedGroups.error;
+    if (node._configError) {
+      node.status({ fill: 'red', shape: 'ring', text: 'invalid config' });
     }
 
     /** Created on the first successful attach (needs the connection's profile). */
@@ -190,24 +194,33 @@ module.exports = function registerMavlinkAiSwarm(RED) {
       attachedTo = node.connection;
     }
 
-    attach();
-    if (RED.events && typeof RED.events.on === 'function') {
-      RED.events.on('flows:started', attach);
-      node.on('close', function removeAttachWatcher() {
-        RED.events.removeListener('flows:started', attach);
-      });
-    }
-
+    /**
+     * With a malformed `groups` config the node fails closed entirely (#204):
+     * it does not attach/subscribe and does not start the change/interval
+     * emit timers, so it can never auto-emit an ungrouped `swarm/vehicles`
+     * snapshot (which bypasses the input handler's guard) — a broken group
+     * config must not widen the output to every vehicle. The input handler
+     * still answers with INVALID_CONFIG.
+     */
     const timers = [];
-    if (node.emitOnChange) {
-      timers.push(setInterval(emitIfChanged, CHANGE_TICK_MS));
-    }
-    if (node.intervalMs > 0) {
-      timers.push(setInterval(() => emitSnapshot(), node.intervalMs));
-    }
-    for (const t of timers) {
-      if (typeof t.unref === 'function') {
-        t.unref();
+    if (!node._configError) {
+      attach();
+      if (RED.events && typeof RED.events.on === 'function') {
+        RED.events.on('flows:started', attach);
+        node.on('close', function removeAttachWatcher() {
+          RED.events.removeListener('flows:started', attach);
+        });
+      }
+      if (node.emitOnChange) {
+        timers.push(setInterval(emitIfChanged, CHANGE_TICK_MS));
+      }
+      if (node.intervalMs > 0) {
+        timers.push(setInterval(() => emitSnapshot(), node.intervalMs));
+      }
+      for (const t of timers) {
+        if (typeof t.unref === 'function') {
+          t.unref();
+        }
       }
     }
 
@@ -217,6 +230,16 @@ module.exports = function registerMavlinkAiSwarm(RED) {
      * filter yields a structured error message, not a crashed handler.
      */
     node.on('input', (msg, send, done) => {
+      if (node._configError) {
+        msg.topic = 'mavlink/error';
+        msg.payload = errorPayload({
+          node: 'mavlink-ai-swarm',
+          code: 'INVALID_CONFIG',
+          message: `mavlink-ai-swarm: ${node._configError}`
+        });
+        send(msg);
+        return done();
+      }
       if (!registry) {
         /**
          * No connection has ever resolved, so there is no registry to query —

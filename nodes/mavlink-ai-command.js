@@ -1,7 +1,7 @@
 'use strict';
 
 const { MavlinkError, errorPayload, toMavlinkError } = require('../lib/util/errors');
-const { firstDefined, toInt, toNum, toBool } = require('../lib/util/validation');
+const { firstDefined, toInt, toNum, toBool, parseJsonObjectConfig } = require('../lib/util/validation');
 const { registerEditorApi } = require('../lib/editor-api');
 const { resolveFlightMode, splitPx4CustomMode } = require('../lib/command/flight-modes');
 const { CommandSend } = require('../lib/command/command-workflow');
@@ -259,27 +259,24 @@ module.exports = function registerMavlinkAiCommand(RED) {
     node.timeoutMs = toInt(config.timeoutMs, 3000);
     node.maxRetries = toInt(config.maxRetries, 3);
 
-    // Static param values for a raw MAV_CMD selection (written by the editor).
-    let configParams = {};
-    if (config.fields) {
-      try {
-        configParams = JSON.parse(config.fields);
-      } catch (e) {
-        node.warn(`mavlink-ai-command: invalid fields JSON, ignoring (${e.message})`);
-      }
-    }
-
-    // Friendly preset parameters from the editor (#49): mode, altitude, force,
-    // message_id, rate_hz, angle, ... Stored separately from the raw paramN
-    // fields so switching between preset and raw selections cannot corrupt
-    // saved values. Runtime msg.payload values override these statics.
-    let presetParams = {};
-    if (config.presetFields) {
-      try {
-        presetParams = JSON.parse(config.presetFields);
-      } catch (e) {
-        node.warn(`mavlink-ai-command: invalid presetFields JSON, ignoring (${e.message})`);
-      }
+    /**
+     * Static param values for a raw MAV_CMD selection, plus the friendly preset
+     * parameters (#49: mode, altitude, force, message_id, rate_hz, angle, ...),
+     * both written by the editor. They are stored separately so switching
+     * between preset and raw selections cannot corrupt saved values; runtime
+     * msg.payload values override these statics.
+     *
+     * Malformed static JSON invalidates the node instead of silently becoming
+     * `{}` and omitting intended parameters (#204). Blank stays the empty
+     * default; imported/API/hand-edited flows bypass the editor validator.
+     */
+    const parsedParams = parseJsonObjectConfig(config.fields, 'fields');
+    const parsedPreset = parseJsonObjectConfig(config.presetFields, 'presetFields');
+    const configParams = parsedParams.value;
+    const presetParams = parsedPreset.value;
+    node._configError = parsedParams.error || parsedPreset.error;
+    if (node._configError) {
+      node.status({ fill: 'red', shape: 'ring', text: 'invalid config' });
     }
 
     // Active await-ack workflows, so a node close (partial deploy / delete)
@@ -308,6 +305,9 @@ module.exports = function registerMavlinkAiCommand(RED) {
     }
 
     node.on('input', (msg, send, done) => {
+      if (node._configError) {
+        return sendError(msg, send, done, 'INVALID_CONFIG', `mavlink-ai-command: ${node._configError}`);
+      }
       const incoming = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
       const selected = msg.command || incoming.command || node.command;
       const builder = COMMANDS[selected];
