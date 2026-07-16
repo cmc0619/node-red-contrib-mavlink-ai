@@ -7,7 +7,7 @@ const { MissionDownload, extractItem } = require('../../lib/mission/mission-down
 const { MissionUpload, buildItemFields } = require('../../lib/mission/mission-upload');
 const { MissionClear } = require('../../lib/mission/mission-clear');
 const { DEFAULT_TIMEOUT_MS } = require('../../lib/mission/mission-state-machine');
-const { topicAction, normalizeUploadItems, validateMissionItems } = require('../../lib/mission/upload-input');
+const { topicAction, normalizeUploadItems, resolveUploadItems, validateMissionItems } = require('../../lib/mission/upload-input');
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -424,6 +424,47 @@ test('validateMissionItems rejects a missing command and out-of-range coords (#5
   assert.throws(
     () => validateMissionItems([{ command: 16, lat: 200, lon: 2 }]),
     (e) => e.code === 'INVALID_FIELD' && e.context.field === 'lat'
+  );
+});
+
+// --- #236: upload gate + per-field validation ------------------------------
+
+test('resolveUploadItems rejects malformed/empty payloads that would implicitly clear (#236)', () => {
+  /** Missing items/waypoints is a wiring typo, not a clear — never MISSION_COUNT 0. */
+  assert.throws(() => resolveUploadItems({}), (e) => e.code === 'MISSION_NO_ITEMS');
+  assert.throws(() => resolveUploadItems({ items: 'nope' }), (e) => e.code === 'MISSION_ITEMS_NOT_ARRAY');
+  assert.throws(() => resolveUploadItems({ items: null }), (e) => e.code === 'MISSION_ITEMS_NOT_ARRAY');
+  /** An explicit empty array clears only with the documented confirmation flag. */
+  assert.throws(() => resolveUploadItems({ items: [] }), (e) => e.code === 'MISSION_EMPTY_UPLOAD');
+  assert.deepStrictEqual(resolveUploadItems({ items: [] }, { allowEmpty: true }), []);
+  /** A valid items/waypoints array passes through unchanged. */
+  const items = [{ command: 16, lat: 1, lon: 2 }];
+  assert.strictEqual(resolveUploadItems({ items }), items);
+  assert.deepStrictEqual(resolveUploadItems({ waypoints: [{ lat: 1, lon: 2 }] }), [{ lat: 1, lon: 2 }]);
+});
+
+test('validateMissionItems rejects non-numeric garbage but preserves NaN sentinels (#236)', () => {
+  /** A NaN sentinel on a param/coord that allows it is first-class "keep current". */
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, param4: NaN }]));
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, param4: 'NaN' }]));
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, param1: null }]));
+  /** Garbage that keepNanParam would silently default to 0 is rejected up front. */
+  for (const field of ['param1', 'x', 'y', 'z', 'alt']) {
+    assert.throws(
+      () => validateMissionItems([{ command: 16, [field]: 'oops' }]),
+      (e) => e.code === 'INVALID_FIELD' && e.context.field === field,
+      `${field} garbage rejected`
+    );
+  }
+  /** Flags are 0/1; frame is a number or name; command is a number or name. */
+  assert.throws(() => validateMissionItems([{ command: 16, current: 5 }]), (e) => e.context.field === 'current');
+  assert.throws(() => validateMissionItems([{ command: 16, frame: {} }]), (e) => e.context.field === 'frame');
+  assert.throws(() => validateMissionItems([{ command: {} }]), (e) => e.context.field === 'command');
+  /** A fully-specified valid item passes. */
+  assert.doesNotThrow(() =>
+    validateMissionItems([
+      { command: 'MAV_CMD_NAV_WAYPOINT', frame: 3, lat: 1, lon: 2, alt: 10, param1: 0, current: 1, autocontinue: 1 }
+    ])
   );
 });
 

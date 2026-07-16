@@ -53,6 +53,36 @@ test('mission node rejects an out-of-range target_component before locking (#74)
   assert.strictEqual(err.payload.context.field, 'target_component');
 });
 
+test('mission upload with missing items fails before locking, not an implicit clear (#236)', async () => {
+  /** The stub connection throws if acquireLock is reached, so a MISSION_NO_ITEMS
+   * error here proves the guard fired before the lock — a typo'd payload can't
+   * upload MISSION_COUNT 0 and silently erase the on-vehicle mission. */
+  const { RED, node } = setup();
+  const { collected } = await RED.inject(node, { payload: { action: 'upload' } });
+  const err = collected[0][2];
+  assert.strictEqual(err.topic, 'mavlink/error');
+  assert.strictEqual(err.payload.code, 'MISSION_NO_ITEMS');
+});
+
+test('mission upload with non-array items fails before locking (#236)', async () => {
+  const { RED, node } = setup();
+  const { collected } = await RED.inject(node, { payload: { action: 'upload', items: 'oops' } });
+  assert.strictEqual(collected[0][2].payload.code, 'MISSION_ITEMS_NOT_ARRAY');
+});
+
+test('mission upload with an explicit empty array refuses to clear without allow_empty (#236)', async () => {
+  const { RED, node } = setup();
+  const { collected } = await RED.inject(node, { payload: { action: 'upload', items: [] } });
+  assert.strictEqual(collected[0][2].payload.code, 'MISSION_EMPTY_UPLOAD');
+});
+
+test('mission upload with a malformed item field fails before locking (#236)', async () => {
+  const { RED, node } = setup();
+  const { collected } = await RED.inject(node, { payload: { action: 'upload', items: [{ command: 16, param1: 'oops' }] } });
+  assert.strictEqual(collected[0][2].payload.code, 'INVALID_FIELD');
+  assert.strictEqual(collected[0][2].payload.context.field, 'param1');
+});
+
 // Workflow profile propagation (#81): the mission node resolves one effective
 // profile — explicit override, or the target's routed profile — and uses it
 // for defaults, the lock key, and the profile reference on every send.
