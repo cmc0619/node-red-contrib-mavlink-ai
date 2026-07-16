@@ -152,6 +152,23 @@ test('a non-reposition command does not get reposition param defaults', async ()
   assert.strictEqual(f.param4, undefined);
 });
 
+test('dry_run is omitted unless enabled, so it cannot override a downstream fanout (#244 review)', async () => {
+  const RED = new MockRED().loadNodes();
+  const off = RED.create('mavlink-ai-formation', { id: 'fm1', shape: 'line', anchorMode: 'fixed', anchorLat: 39.1, anchorLon: -75.1, anchorAlt: 100 });
+  const a = await RED.inject(off, { payload: { sysids: [1] } });
+  assert.ok(!('dry_run' in a.collected[0].payload), 'dry_run is absent when the node has it off');
+  const on = RED.create('mavlink-ai-formation', { id: 'fm2', shape: 'line', anchorMode: 'fixed', anchorLat: 39.1, anchorLon: -75.1, anchorAlt: 100, dryRun: true });
+  const b = await RED.inject(on, { payload: { sysids: [1] } });
+  assert.strictEqual(b.collected[0].payload.dry_run, true);
+});
+
+test('an explicit localIdentity is preserved into the fanout payload (#244 review)', async () => {
+  const RED = new MockRED().loadNodes();
+  const node = RED.create('mavlink-ai-formation', { id: 'fm1', shape: 'line', anchorMode: 'fixed', anchorLat: 39.1, anchorLon: -75.1, anchorAlt: 100 });
+  const { collected } = await RED.inject(node, { payload: { sysids: [1], localIdentity: 'gcs-2' } });
+  assert.strictEqual(collected[0].payload.localIdentity, 'gcs-2');
+});
+
 /** Follow-leader: a live registry that tracks a leader and promotes a successor. */
 
 /** Follow-leader node with a controllable clock and a stub connection. */
@@ -210,8 +227,9 @@ test('leader going stale promotes the next present sysid (leader + 1)', async ()
   assert.strictEqual(node.sent[node.sent.length - 1].payload.leader, 1);
   /** Advance past staleMs and refresh only 2 and 3, so leader 1 is stale. */
   clock.now += 7000;
-  conn.deliver(heartbeat(2)); /** triggers succession 1 -> 2 (no emit) */
-  conn.deliver(heartbeat(3)); /** leader 2 is live -> emit */
+  conn.deliver(heartbeat(2)); /** triggers succession 1 -> 2 (no emit yet) */
+  conn.deliver(heartbeat(3));
+  conn.deliver(gpi(2, 39.1, -75.1, 100, 0)); /** leader 2 now has a FRESH fix -> emit */
   const last = node.sent[node.sent.length - 1];
   assert.strictEqual(last.payload.leader, 2);
   /** 1 is stale (excluded), 2 is the leader, so only 3 is a follower now. */
@@ -247,6 +265,20 @@ test('a new follower joining a stationary leader triggers a re-emit (#244 review
   assert.ok(node.sent.length > firstCount, 're-emitted on membership change despite a stationary leader');
   const last = node.sent[node.sent.length - 1];
   assert.deepStrictEqual(last.payload.targets.map((t) => t.sysid), [2, 3]);
+});
+
+test('a stale leader position blocks emission, even on a forced input (#244 review)', async () => {
+  const { conn, node, clock } = followSetup({ leaderSysid: 1, staleMs: 5000 });
+  conn.deliver(heartbeat(1));
+  conn.deliver(heartbeat(2));
+  conn.deliver(gpi(1, 39.1, -75.1, 100, 0)); /** fresh fix -> emits */
+  const before = node.sent.length;
+  assert.ok(before >= 1);
+  /** Leader keeps heartbeating, but its position feed goes silent for 7 s. */
+  clock.now += 7000;
+  conn.deliver(heartbeat(1)); /** heartbeat fresh (not stale), position is now 7 s old */
+  node._maybeEmit(true); /** a forced emit must NOT command around the stale fix */
+  assert.strictEqual(node.sent.length, before, 'no emit around a stale leader position');
 });
 
 test('stale action "hold" stops emitting and does not switch leader', async () => {

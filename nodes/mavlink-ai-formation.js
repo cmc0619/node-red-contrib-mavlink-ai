@@ -144,9 +144,18 @@ module.exports = function registerMavlinkAiFormation(RED) {
         command: node.command,
         command_int: node.sendAs === 'int',
         fields,
-        dry_run: node.dryRun,
         targets
       };
+      /**
+       * Only assert dry_run when THIS node explicitly asks for it. fanout prefers
+       * an incoming dry_run over its own config, so emitting `dry_run: false`
+       * unconditionally would force a downstream fanout that has Dry-run enabled
+       * to send real commands — overriding its safety setting (Codex review on
+       * #244). Omitting the field lets fanout keep its own dry-run choice.
+       */
+      if (node.dryRun) {
+        payload.dry_run = true;
+      }
       if (leader !== undefined) {
         payload.leader = leader;
       }
@@ -295,7 +304,14 @@ module.exports = function registerMavlinkAiFormation(RED) {
         return;
       }
       staleHandled = false;
-      if (!leader.position) {
+      /**
+       * Require a FRESH leader position, not just any position: the registry
+       * keeps the last fix while only HEARTBEATs keep arriving, and commanding
+       * followers around an arbitrarily old position — especially on a forced
+       * emit or membership change, which bypass the move gate — is unsafe (Codex
+       * review on #244). A missing or stale fix means "not ready": wait.
+       */
+      if (!leader.position || leader.positionStale) {
         node.status({ fill: 'grey', shape: 'dot', text: `leader ${currentLeader} (awaiting position)` });
         return;
       }
@@ -484,6 +500,14 @@ module.exports = function registerMavlinkAiFormation(RED) {
       }
       msg.topic = 'swarm/formation';
       msg.payload = fanoutPayload(targets, baseFields(p));
+      /**
+       * Preserve an explicit source-identity request: replacing msg.payload
+       * dropped msg.payload.localIdentity, so a multi-identity flow would
+       * silently transmit as fanout's default identity (Codex review on #244).
+       */
+      if (p.localIdentity !== undefined && p.localIdentity !== null && p.localIdentity !== '') {
+        msg.payload.localIdentity = p.localIdentity;
+      }
       node.status({ fill: 'green', shape: 'dot', text: `${geometry} ${targets.length}` });
       send(msg);
       done();
