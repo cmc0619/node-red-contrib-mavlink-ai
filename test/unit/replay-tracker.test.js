@@ -77,3 +77,38 @@ test('the freshness window catches a stale replay with no prior state (post-rest
   /** A fresh frame on the same stream is accepted. */
   assert.strictEqual(t.check(1, 1, 0, now, now).accepted, true);
 });
+
+test('an established stream is not re-checked against the freshness window (reference behavior)', () => {
+  const t = new ReplayTracker();
+  const now = 100_000_000;
+  /** stream B opens at a modest timestamp */
+  assert.strictEqual(t.check(2, 1, 0, now, now).accepted, true);
+  /** stream A runs 5 minutes ahead, advancing the shared reference */
+  assert.strictEqual(t.check(1, 1, 0, now + 30_000_000, now).accepted, true);
+  /**
+   * B advances monotonically but lags the reference by more than the window.
+   * The C/pymavlink references only freshness-check a stream when it is FIRST
+   * seen — re-checking every frame would permanently reject an authentic
+   * vehicle whose clock lags a faster peer's (no RTC/GPS lock).
+   */
+  assert.strictEqual(t.check(2, 1, 0, now + 100, now).accepted, true);
+});
+
+test('a stale capture cannot open a NEW stream (freshness applies on first-seen)', () => {
+  const t = new ReplayTracker();
+  const now = 100_000_000;
+  assert.strictEqual(t.check(1, 1, 0, now, now).accepted, true);
+  assert.strictEqual(t.check(3, 3, 0, now - FRESHNESS_WINDOW_UNITS - 1, now).reason, 'signature-replayed');
+});
+
+test('the signing-stream table is capped; known streams keep working at the cap', () => {
+  const t = new ReplayTracker();
+  const now = 100_000_000;
+  for (let compid = 0; compid < 256; compid += 1) {
+    assert.strictEqual(t.check(1, compid, 0, now, now).accepted, true);
+  }
+  /** table full: a 257th stream is rejected (reference reject-when-full) */
+  assert.strictEqual(t.check(2, 0, 0, now + 1, now).reason, 'signature-replayed');
+  /** existing streams are unaffected */
+  assert.strictEqual(t.check(1, 0, 0, now + 1, now).accepted, true);
+});

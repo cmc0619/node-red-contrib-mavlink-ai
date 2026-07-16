@@ -61,7 +61,9 @@
       const x=cx+east*scale,y=cy-north*scale;ctx.fillStyle=vehicle.geofenceBreach?'#ff6b6b':'#48d597';ctx.beginPath();ctx.arc(x,y,7,0,Math.PI*2);ctx.fill();ctx.fillText(`${Math.round(vehicle.distanceFromHome || 0)} m`,x+10,y+4);
     }
     function card(vehicle,index) {
-      const level=vehicle.alertLevel || 'ok';
+      /** Whitelist: level is interpolated into HTML (class + text), so an
+       * unexpected value from a hostile status.json must not reach the DOM. */
+      const level=['ok','warning','critical'].indexOf(vehicle.alertLevel)>=0?vehicle.alertLevel:'ok';
       const alerts=(vehicle.alerts||[]).map(a=>`<div class="alert ${a.level==='critical'?'critical':''}">${esc(a.message)}</div>`).join('');
       const p=vehicle.position||{}, b=vehicle.battery||{}, g=vehicle.gps||{}, f=vehicle.flight||{}, a=vehicle.attitude||{};
       return `<article class="card"><div class="card-head"><div><h2>System ${esc(vehicle.sysid)} / Component ${esc(vehicle.compid)}</h2><div class="muted">${esc(vehicle.profile_name || vehicle.profile_id || 'default profile')}</div></div><div class="pill ${level==='critical'?'bad':level==='warning'?'warn':'ok'}">${level.toUpperCase()}</div></div><div class="body"><div class="metrics">${metric('Armed',vehicle.armed?'YES':'NO')}${metric('Mode',esc(vehicle.mode ?? vehicle.custom_mode ?? '—'))}${metric('Last seen',fmt(vehicle.ageMs/1000,1,' s'))}${metric('Battery',fmt(b.remaining,0,'%'))}${metric('Voltage',fmt(b.voltage,2,' V'))}${metric('GPS',`${esc(g.fixLabel || g.fix_type || '—')} · ${esc(g.satellites ?? '—')} sats`)}${metric('Altitude',fmt(p.relative_alt,1,' m AGL'))}${metric('Ground speed',fmt(f.groundspeed,1,' m/s'))}${metric('Heading',fmt(f.heading ?? p.heading,0,'°'))}${metric('Climb',fmt(f.climb,1,' m/s'))}${metric('Roll',fmt(a.roll,1,'°'))}${metric('Pitch',fmt(a.pitch,1,'°'))}</div><canvas id="map-${index}"></canvas><div class="alerts">${alerts || '<div class="muted">No active alerts</div>'}</div></div></article>`;

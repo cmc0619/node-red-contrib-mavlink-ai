@@ -23,7 +23,7 @@ module.exports = function registerMavlinkAiIn(RED) {
     const node = this;
 
     node.name = config.name;
-    node.connection = RED.nodes.getNode(config.connection);
+    node.connection = null;
     node.messageNames = parseList(config.messageNames);
     node.messageIds = parseIdList(config.messageIds);
     /**
@@ -41,11 +41,6 @@ module.exports = function registerMavlinkAiIn(RED) {
     node.changedOnly = toBool(config.changedOnly, false);
     node.outputRaw = toBool(config.outputRaw, false);
     node.outputErrors = toBool(config.outputErrors, false);
-
-    if (!node.connection) {
-      node.status({ fill: 'red', shape: 'ring', text: 'missing connection' });
-      return;
-    }
 
     const filter = {
       messageNames: node.messageNames,
@@ -84,59 +79,135 @@ module.exports = function registerMavlinkAiIn(RED) {
 
     let count = 0;
     let lastStatusAt = 0;
-    const subId = node.connection.subscribe(filter, (message) => {
-      count += 1;
-      /**
-       * The connection decodes once and hands the SAME message/payload object to
-       * every subscriber (§20), so clone before forwarding into the flow (issue
-       * #141). Without this, a downstream Change/Function node mutating
-       * msg.payload.fields would corrupt the copy that other mavlink-ai-in nodes
-       * on this connection already forwarded, and the shared _buffer likewise.
-       */
-      const decoded = RED.util.cloneMessage({ topic: message.topic, payload: message.payload });
-      if (node.outputRaw) {
-        const raw = RED.util.cloneMessage({ topic: 'mavlink/raw', payload: message._buffer });
-        node.send([decoded, raw]);
-      } else {
-        node.send(decoded);
-      }
-      const now = Date.now();
-      if (now - lastStatusAt >= STATUS_UPDATE_MS) {
-        lastStatusAt = now;
-        node.status({ fill: 'green', shape: 'dot', text: `rx ${count}` });
-      }
-    });
+    /** True while the connection reports a usable link, so the rx badge and the
+     * connection-state badge stop overwriting each other (one badge, one truth):
+     * connected -> rx counter; anything else -> the connection state. */
+    let linkUp = false;
 
-    // Diagnostics output (#22): decode errors already arrive as mavlink/error
-    // envelopes; routing rejections are wrapped here. Without this output the
-    // connection's structured diagnostics have no consumer a flow can reach.
+    /**
+     * The connection instance the subscription/listeners are attached to.
+     * `undefined` = attach() has never run (so the first run always proceeds,
+     * even when the connection resolves to null); `null` = attached to nothing.
+     */
+    let attachedTo;
+    let subId = null;
     let onDecodeError = null;
     let onRejected = null;
-    if (node.outputErrors) {
-      onDecodeError = (message) =>
-        sendAt(errorIndex, RED.util.cloneMessage({ topic: message.topic, payload: message.payload }));
-      onRejected = (info) => sendAt(errorIndex, RED.util.cloneMessage({ topic: 'mavlink/rejected', payload: info }));
-      node.connection.emitter.on('decodeError', onDecodeError);
-      node.connection.emitter.on('rejected', onRejected);
+    let onStatus = null;
+
+    /** Drop the subscription and listeners from the attached connection. */
+    function detach() {
+      if (attachedTo) {
+        try {
+          if (subId != null) {
+            attachedTo.unsubscribe(subId);
+          }
+          if (onStatus) {
+            attachedTo.emitter.removeListener('status', onStatus);
+          }
+          if (onDecodeError) {
+            attachedTo.emitter.removeListener('decodeError', onDecodeError);
+          }
+          if (onRejected) {
+            attachedTo.emitter.removeListener('rejected', onRejected);
+          }
+        } catch (err) {
+          node.error(`Error detaching from connection: ${err && err.message ? err.message : err}`);
+        }
+      }
+      attachedTo = null;
+      subId = null;
+      onStatus = null;
+      onDecodeError = null;
+      onRejected = null;
     }
 
-    // Reflect connection status on the node badge.
-    /** @param {object} status  connection status payload */
-    const onStatus = (status) => node.status(badgeForState(status.state, status.state));
-    node.connection.emitter.on('status', onStatus);
-    node.status(badgeForState(node.connection.statusState, node.connection.statusState));
+    /**
+     * (Re-)resolve the connection and (re-)subscribe. Re-run on every
+     * `flows:started` (#164): a connection config node added/restored/
+     * re-created in a later deploy leaves this node in place, so a one-time
+     * constructor subscription would leave it dead (stale "missing connection"
+     * badge, or a subscription on a destroyed connection object) until the
+     * node itself is manually redeployed.
+     */
+    function attach() {
+      const conn = RED.nodes.getNode(config.connection) || null;
+      if (conn === attachedTo && conn === node.connection) {
+        return;
+      }
+      detach();
+      node.connection = conn;
+      if (!node.connection) {
+        node.status({ fill: 'red', shape: 'ring', text: 'missing connection' });
+        return;
+      }
 
-    node.on('close', function close(done) {
-      safeDetach(node, () => {
-        node.connection.unsubscribe(subId);
-        node.connection.emitter.removeListener('status', onStatus);
-        if (onDecodeError) {
-          node.connection.emitter.removeListener('decodeError', onDecodeError);
+      subId = node.connection.subscribe(filter, (message) => {
+        count += 1;
+        /**
+         * The connection decodes once and hands the SAME message/payload object to
+         * every subscriber (§20), so clone before forwarding into the flow (issue
+         * #141). Without this, a downstream Change/Function node mutating
+         * msg.payload.fields would corrupt the copy that other mavlink-ai-in nodes
+         * on this connection already forwarded, and the shared _buffer likewise.
+         */
+        const decoded = RED.util.cloneMessage({ topic: message.topic, payload: message.payload });
+        if (node.outputRaw) {
+          const raw = RED.util.cloneMessage({ topic: 'mavlink/raw', payload: message._buffer });
+          node.send([decoded, raw]);
+        } else {
+          node.send(decoded);
         }
-        if (onRejected) {
-          node.connection.emitter.removeListener('rejected', onRejected);
+        const now = Date.now();
+        if (linkUp && now - lastStatusAt >= STATUS_UPDATE_MS) {
+          lastStatusAt = now;
+          node.status({ fill: 'green', shape: 'dot', text: `rx ${count}` });
         }
       });
+
+      // Diagnostics output (#22): decode errors already arrive as mavlink/error
+      // envelopes; routing rejections are wrapped here. Without this output the
+      // connection's structured diagnostics have no consumer a flow can reach.
+      if (node.outputErrors) {
+        onDecodeError = (message) =>
+          sendAt(errorIndex, RED.util.cloneMessage({ topic: message.topic, payload: message.payload }));
+        onRejected = (info) => sendAt(errorIndex, RED.util.cloneMessage({ topic: 'mavlink/rejected', payload: info }));
+        node.connection.emitter.on('decodeError', onDecodeError);
+        node.connection.emitter.on('rejected', onRejected);
+      }
+
+      /**
+       * One badge, one meaning: while the link is up the badge carries the rx
+       * counter; on any other state it carries the connection state. Without
+       * the split the two writers fought and the badge flickered between "rx N"
+       * and "connected" at telemetry rates.
+       *
+       * @param {string} state  connection status state
+       */
+      const showState = (state) => {
+        linkUp = state === 'connected' || state === 'listening';
+        if (!linkUp) {
+          node.status(badgeForState(state, state));
+        } else if (count === 0) {
+          node.status(badgeForState(state, state));
+        }
+      };
+      onStatus = (status) => showState(status.state);
+      node.connection.emitter.on('status', onStatus);
+      showState(node.connection.statusState);
+      attachedTo = node.connection;
+    }
+
+    attach();
+    if (RED.events && typeof RED.events.on === 'function') {
+      RED.events.on('flows:started', attach);
+      node.on('close', function removeAttachWatcher() {
+        RED.events.removeListener('flows:started', attach);
+      });
+    }
+
+    node.on('close', function close(done) {
+      safeDetach(node, detach);
       done();
     });
   }

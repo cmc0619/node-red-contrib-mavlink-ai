@@ -334,3 +334,30 @@ test('clear rejects pending writes', async () => {
   ]);
   assert.strictEqual(state, 'pending');
 });
+
+test('teardown and overflow rejections carry stable codes (QUEUE_CLEARED / QUEUE_FULL)', async () => {
+  /**
+   * The connection's heartbeat catch filters expected teardown rejections by
+   * code; a codeless Error would be re-emitted on an emitter whose listeners
+   * close() already removed — an EventEmitter throw that kills the process.
+   */
+  const stalled = new OutboundQueue(() => new Promise(() => {}), { maxLength: 1 });
+  const first = stalled.enqueue(Buffer.from([1]));
+  const queued = stalled.enqueue(Buffer.from([2]));
+  const overflow = stalled.enqueue(Buffer.from([3]));
+  await assert.rejects(overflow, (e) => e.code === 'QUEUE_FULL');
+  stalled.clear();
+  await assert.rejects(queued, (e) => e.code === 'QUEUE_CLEARED');
+  first.catch(() => {});
+});
+
+test('a synchronously-throwing writer rejects (never throws) when the queue is disabled', async () => {
+  const q = new OutboundQueue(
+    () => {
+      throw new Error('sync boom');
+    },
+    { enabled: false }
+  );
+  /** must return a rejected promise, preserving the promise contract */
+  await assert.rejects(q.enqueue(Buffer.from([1])), /sync boom/);
+});

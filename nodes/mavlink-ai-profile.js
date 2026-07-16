@@ -91,7 +91,9 @@ module.exports = function registerMavlinkAiProfile(RED) {
     // but only when nothing is configured; an explicit value passes through as-is.
     const defaultSourceComponentId =
       SOURCE_COMPONENT_ID_BY_PROFILE[node.profileType] || DEFAULT_SOURCE_COMPONENT_ID;
-    node.sourceComponentId = identityUint8(config.sourceComponentId, 'Source component ID', defaultSourceComponentId, 0);
+    /** Source compid 0 is MAV_COMP_ID_ALL (the broadcast component address),
+     * never a valid sender id — same floor the codec enforces (#153). */
+    node.sourceComponentId = identityUint8(config.sourceComponentId, 'Source component ID', defaultSourceComponentId, 1);
     node.defaultTargetSystem = identityUint8(config.defaultTargetSystem, 'Default target system', 1, 0);
     node.defaultTargetComponent = identityUint8(config.defaultTargetComponent, 'Default target component', 1, 0);
     node.preferredMissionItemType = config.preferredMissionItemType || 'MISSION_ITEM_INT';

@@ -37,6 +37,22 @@ const KNOWN_INCOMPAT_FLAGS = 0x01;
 const SHARED_STREAM_KEY = '__shared__';
 
 /**
+ * Send-rejection codes the periodic heartbeat treats as normal idle/teardown
+ * states (see the heartbeat tick's catch): logged nowhere, retried silently on
+ * the next tick.
+ *
+ * @type {Set<string>}
+ */
+const HEARTBEAT_EXPECTED_IDLE_CODES = new Set([
+  'UDP_NO_PEER',
+  'TRANSPORT_NOT_READY',
+  'TCP_NO_CLIENT',
+  'TCP_NOT_CONNECTED',
+  'SERIAL_NOT_OPEN',
+  'QUEUE_CLEARED'
+]);
+
+/**
  * Ceiling on live per-client stream decoders. `peer-disconnect` evicts a
  * client's decoder as soon as its socket closes, but this bounds memory if a
  * burst of short-lived tcp-server clients ever churns faster than eviction
@@ -1040,7 +1056,15 @@ module.exports = function registerMavlinkAiConnection(RED) {
       const routingTargetSystem = codec.addressesTarget(message.name) ? targetSystem : undefined;
       let buffer;
       try {
-        buffer = codec.encode(message.name, fields, { targetSystem: routingTargetSystem, targetComponent });
+        buffer = codec.encode(message.name, fields, {
+          targetSystem: routingTargetSystem,
+          targetComponent,
+          /**
+           * Exact IEEE-754 bit patterns for float fields (PX4 byte-union
+           * params, #146) — see MavlinkCodec#encode.
+           */
+          exactFloatBits: message.exactFloatBits
+        });
       } catch (err) {
         return Promise.reject(toMavlinkError(err, 'ENCODE_FAILED'));
       }
@@ -1122,18 +1146,16 @@ module.exports = function registerMavlinkAiConnection(RED) {
         });
         return;
       }
-      // Track the peer's wire version, keyed by its sysid, so an "auto" profile
-      // frames outbound packets the way *that* peer speaks — a v1-only vehicle
-      // ignores v2 frames, and a mixed fleet must not have one peer's version
-      // flip framing for all of them (#69). Noted on the default codec (which
-      // encodes outbound) here; the matched profile's codec is updated below.
       /**
        * Read the wire version from the actual first frame byte, not
        * header.magic: node-mavlink's v1 parser never sets header.magic (it
        * stays 0), so a v1 (0xFE) frame would otherwise never be detected (#138).
+       * Recorded below, only after routing and signature policy accept the
+       * packet — an unsigned forged v1 frame passes CRC without any secret, so
+       * learning the version here would let it silently downgrade outbound
+       * framing for a trusted peer even under requireSignature.
        */
       const wireMagic = packet.buffer && packet.buffer.length ? packet.buffer[0] : header.magic;
-      node._codec.noteInboundMagic(wireMagic, header.sysid);
 
       // 1. Route on the framed header (sysid/compid) before decoding. A
       //    matched route whose profile cannot be resolved rejects the packet
@@ -1161,13 +1183,6 @@ module.exports = function registerMavlinkAiConnection(RED) {
         node.emitter.emit('rejected', { sysid: header.sysid, compid: header.compid, reason: 'profile-invalid' });
         return;
       }
-      // Give the matched profile's codec the same per-peer version observation,
-      // so a send that encodes with that profile's codec frames to the peer's
-      // version too (#69). No-op when it is the default codec (already noted).
-      if (codec !== node._codec) {
-        codec.noteInboundMagic(wireMagic, header.sysid);
-      }
-
       // 3. MAVLink 2 signature verification (issue #15), using the *matched
       //    profile's* codec so a routed system is checked against its own
       //    signing policy/key rather than the default profile's. Verification
@@ -1192,6 +1207,21 @@ module.exports = function registerMavlinkAiConnection(RED) {
       // it can never redirect outbound packets.
       if (node._transport && typeof node._transport.confirmPeer === 'function') {
         node._transport.confirmPeer(header.sysid);
+      }
+
+      /**
+       * Track the peer's wire version, keyed by its sysid, so an "auto"
+       * profile frames outbound packets the way *that* peer speaks — a v1-only
+       * vehicle ignores v2 frames, and a mixed fleet must not have one peer's
+       * version flip framing for all of them (#69). Learned at the same trust
+       * boundary as confirmPeer (#85): only a packet that passed routing and
+       * the matched profile's signature policy may influence outbound framing.
+       * Noted on the default codec (which encodes outbound) and on the matched
+       * profile's codec so per-profile sends frame identically.
+       */
+      node._codec.noteInboundMagic(wireMagic, header.sysid);
+      if (codec !== node._codec) {
+        codec.noteInboundMagic(wireMagic, header.sysid);
       }
 
       // 4. If the matched dialect has no definition for this message id, or
@@ -1286,11 +1316,19 @@ module.exports = function registerMavlinkAiConnection(RED) {
             { priority: 3, coalesceKey: 'heartbeat' }
           )
           .catch((err) => {
-            // "No peer yet" is a normal udp-peer startup state (nothing has
-            // sent to us, so there is nowhere to reply); logging it once per
-            // tick until a vehicle appears is pure noise. Heartbeats resume
-            // silently once a peer is learned.
-            if (err && (err.code === 'UDP_NO_PEER' || err.code === 'TRANSPORT_NOT_READY')) {
+            /**
+             * Expected "no link yet / link down / tearing down" states must not
+             * log an error every tick forever — heartbeats resume silently once
+             * the link is up. UDP_NO_PEER: udp-peer hasn't learned a peer;
+             * TCP_NO_CLIENT / TCP_NOT_CONNECTED / SERIAL_NOT_OPEN: the same
+             * "nothing to send to yet" state for the other transports (each is
+             * already surfaced once through transport status/error events);
+             * TRANSPORT_NOT_READY: transport not started; QUEUE_CLEARED: this
+             * node is being deactivated/closed — re-emitting that on the
+             * emitter after close() has removed its listeners would throw and
+             * take the whole process down as an unhandled rejection.
+             */
+            if (err && HEARTBEAT_EXPECTED_IDLE_CODES.has(err.code)) {
               return;
             }
             node.emitter.emit('error', toMavlinkError(err, 'HEARTBEAT_FAILED'));
@@ -1474,7 +1512,22 @@ module.exports = function registerMavlinkAiConnection(RED) {
         setStatus('connected', describeListening(node, info));
         startHeartbeat();
       });
-      node._transport.on('reconnecting', () => setStatus('reconnecting', 'Reconnecting...'));
+      node._transport.on('reconnecting', () => {
+        /**
+         * The dropped session may have left a partial frame buffered in the
+         * shared stream decoder (tcp-client / serial share one splitter). The
+         * next session's bytes would be appended mid-frame and force a lossy
+         * resync, garbling the first frames — start the new session with clean
+         * framing state instead. Per-client tcp-server decoders are already
+         * dropped on 'peer-disconnect'.
+         */
+        const shared = node._decoders.get(SHARED_STREAM_KEY);
+        if (shared) {
+          node._decoders.delete(SHARED_STREAM_KEY);
+          shared.destroy();
+        }
+        setStatus('reconnecting', 'Reconnecting...');
+      });
       node._transport.on('error', (err) => {
         const e = toMavlinkError(err, 'TRANSPORT_ERROR');
         setStatus('error', e.message);
@@ -1518,6 +1571,14 @@ module.exports = function registerMavlinkAiConnection(RED) {
         done();
       };
       try {
+        /**
+         * Mark the node dead first: a reactivate() scheduled before this close
+         * ran (profile restored, then node removed in the next deploy) would
+         * otherwise see `_active` still true once the pending teardown settles
+         * and start a fresh transport on a closed node — a bound socket nothing
+         * can ever stop, and EADDRINUSE for the replacement node.
+         */
+        node._active = false;
         stopHeartbeat();
         node.subscriptions.clear();
         node.locks.clear();
@@ -1527,6 +1588,16 @@ module.exports = function registerMavlinkAiConnection(RED) {
         }
         destroyDecoders();
         node.emitter.removeAllListeners();
+        /**
+         * Async teardown can still emit on this emitter after the listeners are
+         * gone (an in-flight send's callback failing once the socket is
+         * destroyed, a transport 'error' re-emitted by the handler above). An
+         * 'error' emit with zero listeners throws, which at this point means an
+         * unhandled rejection or uncaughtException that kills all of Node-RED —
+         * keep a no-op listener for the emitter's remaining lifetime, exactly
+         * like the transports do on their sockets in stop() (#149).
+         */
+        node.emitter.on('error', () => {});
       } catch (err) {
         node.error(`Error tearing down connection on close: ${err && err.message ? err.message : err}`);
       }

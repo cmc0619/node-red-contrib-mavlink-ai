@@ -29,7 +29,7 @@ module.exports = function registerMavlinkAiSwarm(RED) {
     const node = this;
 
     node.name = config.name;
-    node.connection = RED.nodes.getNode(config.connection);
+    node.connection = null;
     node.staleMs = toInt(config.staleMs, 5000);
     node.expireMs = toInt(config.expireMs, 30000);
     node.emitOnChange = toBool(config.emitOnChange, true);
@@ -45,37 +45,9 @@ module.exports = function registerMavlinkAiSwarm(RED) {
       }
     }
 
-    if (!node.connection) {
-      node.status({ fill: 'red', shape: 'ring', text: 'missing connection' });
-      /**
-       * The registry setup below needs the connection, so we return early — but
-       * still register an input handler so a triggering message gets a structured
-       * NO_CONNECTION error instead of being silently swallowed (#154), matching
-       * mission/param.
-       */
-      node.on('input', (msg, send, done) => {
-        msg.topic = 'mavlink/error';
-        msg.payload = errorPayload({
-          node: 'mavlink-ai-swarm',
-          code: 'NO_CONNECTION',
-          message: 'Swarm node has no connection configured.'
-        });
-        send(msg);
-        done();
-      });
-      return;
-    }
-
-    const profile = node.connection.profile;
-    const bundle = profile && typeof profile.getDialect === 'function' ? profile.getDialect() : null;
-    const registry = new VehicleRegistry({
-      staleMs: node.staleMs,
-      expireMs: node.expireMs,
-      includeGcs: node.includeGcs,
-      enums: bundle && bundle.valid ? bundle.enums : null
-    });
-    registry.setGroups(groups);
-    node.registry = registry; // exposed for tests/diagnostics
+    /** Created on the first successful attach (needs the connection's profile). */
+    let registry = null;
+    let lastSignature = '';
 
     /**
      * Emit the current vehicle table.
@@ -85,6 +57,9 @@ module.exports = function registerMavlinkAiSwarm(RED) {
      * @returns {void}
      */
     function emitSnapshot(filter, msg) {
+      if (!registry) {
+        return;
+      }
       const vehicles = registry.vehicles(filter || {});
       const out = msg || {};
       out.topic = 'swarm/vehicles';
@@ -99,6 +74,9 @@ module.exports = function registerMavlinkAiSwarm(RED) {
 
     /** @param {object[]} [vehicles] */
     function updateBadge(vehicles) {
+      if (!registry) {
+        return;
+      }
       const list = vehicles || registry.vehicles();
       const stale = list.filter((v) => v.stale).length;
       const text = stale ? `${list.length} vehicles (${stale} stale)` : `${list.length} vehicles`;
@@ -114,8 +92,10 @@ module.exports = function registerMavlinkAiSwarm(RED) {
         .join(',');
     }
 
-    let lastSignature = signature();
     function emitIfChanged() {
+      if (!registry) {
+        return;
+      }
       const sig = signature();
       if (sig !== lastSignature) {
         lastSignature = sig;
@@ -123,16 +103,93 @@ module.exports = function registerMavlinkAiSwarm(RED) {
       }
     }
 
-    const subId = node.connection.subscribe({ messageNames: REGISTRY_MESSAGES }, (message) => {
-      const { added } = registry.ingest(message.payload);
-      if (added) {
-        if (node.emitOnChange) {
-          emitIfChanged();
-        } else {
-          updateBadge();
+    /**
+     * The connection instance the subscription/listeners are attached to.
+     * `undefined` = attach() has never run (so the first run always proceeds,
+     * even when the connection resolves to null); `null` = attached to nothing.
+     */
+    let attachedTo;
+    let subId = null;
+    let onStatus = null;
+
+    /** Drop the subscription and status listener from the attached connection. */
+    function detach() {
+      if (attachedTo) {
+        try {
+          if (subId != null) {
+            attachedTo.unsubscribe(subId);
+          }
+          if (onStatus) {
+            attachedTo.emitter.removeListener('status', onStatus);
+          }
+        } catch (err) {
+          node.error(`Error detaching from connection: ${err && err.message ? err.message : err}`);
         }
       }
-    });
+      attachedTo = null;
+      subId = null;
+      onStatus = null;
+    }
+
+    /**
+     * (Re-)resolve the connection and (re-)subscribe. Re-run on every
+     * `flows:started` (#164): a connection config node added/restored/
+     * re-created in a later deploy leaves this node in place, so a one-time
+     * constructor resolution would leave it dead (stale "missing connection"
+     * badge, or a subscription on a destroyed connection object) until the
+     * node itself is manually redeployed. The registry survives re-attachment
+     * so known vehicles aren't forgotten across a connection redeploy.
+     */
+    function attach() {
+      const conn = RED.nodes.getNode(config.connection) || null;
+      if (conn === attachedTo && conn === node.connection) {
+        return;
+      }
+      detach();
+      node.connection = conn;
+      if (!node.connection) {
+        node.status({ fill: 'red', shape: 'ring', text: 'missing connection' });
+        return;
+      }
+
+      if (!registry) {
+        const profile = node.connection.profile;
+        const bundle = profile && typeof profile.getDialect === 'function' ? profile.getDialect() : null;
+        registry = new VehicleRegistry({
+          staleMs: node.staleMs,
+          expireMs: node.expireMs,
+          includeGcs: node.includeGcs,
+          enums: bundle && bundle.valid ? bundle.enums : null
+        });
+        registry.setGroups(groups);
+        node.registry = registry; // exposed for tests/diagnostics
+        lastSignature = signature();
+      }
+
+      subId = node.connection.subscribe({ messageNames: REGISTRY_MESSAGES }, (message) => {
+        const { added } = registry.ingest(message.payload);
+        if (added) {
+          if (node.emitOnChange) {
+            emitIfChanged();
+          } else {
+            updateBadge();
+          }
+        }
+      });
+
+      onStatus = (status) => node.status(badgeForState(status.state, status.state));
+      node.connection.emitter.on('status', onStatus);
+      updateBadge();
+      attachedTo = node.connection;
+    }
+
+    attach();
+    if (RED.events && typeof RED.events.on === 'function') {
+      RED.events.on('flows:started', attach);
+      node.on('close', function removeAttachWatcher() {
+        RED.events.removeListener('flows:started', attach);
+      });
+    }
 
     const timers = [];
     if (node.emitOnChange) {
@@ -151,6 +208,21 @@ module.exports = function registerMavlinkAiSwarm(RED) {
     // filter ({ group, type, armed, sysids, includeStale }). A malformed
     // filter yields a structured error message, not a crashed handler.
     node.on('input', (msg, send, done) => {
+      if (!registry) {
+        /**
+         * No connection has ever resolved, so there is no registry to query —
+         * answer with a structured NO_CONNECTION error instead of silently
+         * swallowing the trigger (#154), matching mission/param.
+         */
+        msg.topic = 'mavlink/error';
+        msg.payload = errorPayload({
+          node: 'mavlink-ai-swarm',
+          code: 'NO_CONNECTION',
+          message: 'Swarm node has no connection configured.'
+        });
+        send(msg);
+        return done();
+      }
       const p = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
       const filter = {};
       for (const key of ['group', 'type', 'armed', 'sysids', 'includeStale']) {
@@ -180,15 +252,8 @@ module.exports = function registerMavlinkAiSwarm(RED) {
       done();
     });
 
-    const onStatus = (status) => node.status(badgeForState(status.state, status.state));
-    node.connection.emitter.on('status', onStatus);
-    updateBadge();
-
     node.on('close', (done) => {
-      safeDetach(node, () => {
-        node.connection.unsubscribe(subId);
-        node.connection.emitter.removeListener('status', onStatus);
-      });
+      safeDetach(node, detach);
       for (const t of timers) {
         clearInterval(t);
       }

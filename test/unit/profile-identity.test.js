@@ -31,19 +31,26 @@ function makeProfile(overrides) {
 }
 
 test('valid boundary identity values are accepted (#90)', () => {
+  /** Source compid floor is 1: 0 is MAV_COMP_ID_ALL, a broadcast address (#153). */
   const profile = makeProfile({
     sourceSystemId: 1,
-    sourceComponentId: 0,
+    sourceComponentId: 1,
     defaultTargetSystem: 0,
     defaultTargetComponent: 255,
     signingLinkId: 255
   });
   assert.strictEqual(profile.isValid(), true);
   assert.strictEqual(profile.sourceSystemId, 1);
-  assert.strictEqual(profile.sourceComponentId, 0);
+  assert.strictEqual(profile.sourceComponentId, 1);
   assert.strictEqual(profile.defaultTargetSystem, 0);
   assert.strictEqual(profile.defaultTargetComponent, 255);
   assert.strictEqual(profile.signingLinkId, 255);
+});
+
+test('source component 0 (MAV_COMP_ID_ALL) invalidates the profile (#153)', () => {
+  const profile = makeProfile({ sourceComponentId: 0 });
+  assert.strictEqual(profile.isValid(), false);
+  assert.strictEqual(profile.getError().code, 'IDENTITY_INVALID');
 });
 
 test('blank identity values take the documented defaults (#90)', () => {
@@ -120,9 +127,11 @@ test('codec rejects out-of-range source identity (#90)', () => {
   assert.throws(() => new MavlinkCodec({ bundle, sysid: 0, compid: 1 }), (e) => e.code === 'IDENTITY_INVALID');
   assert.throws(() => new MavlinkCodec({ bundle, sysid: 256, compid: 1 }), (e) => e.code === 'IDENTITY_INVALID');
   assert.throws(() => new MavlinkCodec({ bundle, sysid: 1, compid: 1.5 }), (e) => e.code === 'IDENTITY_INVALID');
-  const ok = new MavlinkCodec({ bundle, sysid: 255, compid: 0 });
+  /** Source compid 0 is MAV_COMP_ID_ALL (broadcast), never a sender id (#153). */
+  assert.throws(() => new MavlinkCodec({ bundle, sysid: 1, compid: 0 }), (e) => e.code === 'IDENTITY_INVALID');
+  const ok = new MavlinkCodec({ bundle, sysid: 255, compid: 1 });
   assert.strictEqual(ok.sysid, 255);
-  assert.strictEqual(ok.compid, 0);
+  assert.strictEqual(ok.compid, 1);
 });
 
 test('connection refuses to start on an identity-invalid profile (#90)', async () => {

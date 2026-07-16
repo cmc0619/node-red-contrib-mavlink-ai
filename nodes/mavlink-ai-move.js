@@ -120,7 +120,7 @@ module.exports = function registerMavlinkAiMove(RED) {
       }
 
       if (!node.profile || !node.profile.isValid || !node.profile.isValid()) {
-        return finishError(node, send, done, errorPayload({
+        return finishError(node, msg, send, done, errorPayload({
           node: 'mavlink-ai-move',
           code: 'MISSING_PROFILE',
           message: 'Move node has no valid profile/dialect.'
@@ -137,7 +137,7 @@ module.exports = function registerMavlinkAiMove(RED) {
         validateTargetComponent(targetComponent);
       } catch (err) {
         const e = toMavlinkError(err, 'INVALID_FIELD');
-        return finishError(node, send, done, errorPayload({
+        return finishError(node, msg, send, done, errorPayload({
           node: 'mavlink-ai-move',
           code: e.code,
           message: e.message,
@@ -174,7 +174,7 @@ module.exports = function registerMavlinkAiMove(RED) {
       } catch (err) {
         const e = toMavlinkError(err, 'BAD_SETPOINT');
         node.status({ fill: 'red', shape: 'ring', text: e.code });
-        return finishError(node, send, done, errorPayload({
+        return finishError(node, msg, send, done, errorPayload({
           node: 'mavlink-ai-move',
           code: e.code,
           message: e.message,
@@ -212,11 +212,23 @@ module.exports = function registerMavlinkAiMove(RED) {
         streamOverride === true || (streamOverride === undefined && (node.stream || !!node._streamTimer));
       if (streaming) {
         if (!node.connection) {
-          return finishError(node, send, done, errorPayload({
+          return finishError(node, msg, send, done, errorPayload({
             node: 'mavlink-ai-move',
             code: 'STREAM_NEEDS_CONNECTION',
             message: 'Streaming requires a Connection to send setpoints continuously.'
           }));
+        }
+        /**
+         * PX4 drops out of OFFBOARD after ~0.5 s without a fresh setpoint, so a
+         * sub-2 Hz stream keeps the mode only nominally alive. Advisory (other
+         * stacks have no such floor), surfaced once per deploy like the
+         * per-firmware setpoint advisories above.
+         */
+        if (defaults.firmware === 'px4' && node.streamRateHz < 2 && !node._warnedPx4StreamRate) {
+          node._warnedPx4StreamRate = true;
+          node.warn(
+            `Stream rate ${node.streamRateHz} Hz is below PX4's ~2 Hz OFFBOARD keep-alive; PX4 will drop OFFBOARD between setpoints.`
+          );
         }
         node._streamState = { name: built.name, profile: node.profile.id, fields: built.fields };
         startStream(node);
@@ -242,7 +254,7 @@ module.exports = function registerMavlinkAiMove(RED) {
         } catch (err) {
           const e = toMavlinkError(err, 'SEND_FAILED');
           node.status({ fill: 'red', shape: 'ring', text: e.code });
-          return finishError(node, send, done, errorPayload({
+          return finishError(node, msg, send, done, errorPayload({
             node: 'mavlink-ai-move',
             connection: connection.name,
             code: e.code,
@@ -441,7 +453,15 @@ function labelFor(name) {
  * @param {object} payload  error payload (§14.5)
  * @returns {void}
  */
-function finishError(node, send, done, payload) {
-  send({ topic: 'mavlink/error', payload });
+function finishError(node, msg, send, done, payload) {
+  /**
+   * Re-use the inbound msg (Node-RED convention): a fresh object would drop
+   * `_msgid` correlation, `msg.parts` (split/join), and user-attached
+   * properties on exactly the error branch — the success paths already mutate
+   * and forward `msg`, and the command/fanout nodes do the same for errors.
+   */
+  msg.topic = 'mavlink/error';
+  msg.payload = payload;
+  send(msg);
   done();
 }

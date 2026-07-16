@@ -37,9 +37,12 @@
       mavlinkVersion: { value: 'auto', required: true },
       // MAVLink identity fields are wire uint8s (#90): require integers in
       // range, not just "a number". Source sysid 0 (unknown/broadcast) is not
-      // a valid sender id, so its minimum is 1.
+      // a valid sender id, so its minimum is 1 — and source compid 0 is
+      // MAV_COMP_ID_ALL (the broadcast component address), never a sender id,
+      // so it shares that floor (#153). Target component 0 stays legal (it
+      // means "all components").
       sourceSystemId: { value: 255, required: true, validate: mavUint8Validator(1) },
-      sourceComponentId: { value: 190, required: true, validate: mavUint8Validator(0) },
+      sourceComponentId: { value: 190, required: true, validate: mavUint8Validator(1) },
       defaultTargetSystem: { value: 1, required: true, validate: mavUint8Validator(0) },
       defaultTargetComponent: { value: 1, required: true, validate: mavUint8Validator(0) },
       preferredMissionItemType: { value: 'MISSION_ITEM_INT', required: true },
@@ -430,7 +433,7 @@
   <p>The profile role sets this node's own MAVLink identity (its default heartbeat <code>MAV_TYPE</code>). This is independent of the target flight controller's vehicle type, firmware, and dialect — the same profile works with any of them.</p>
   <ul>
     <li><b>GCS</b> — ground control station (<code>MAV_TYPE_GCS</code>).</li>
-    <li><b>Companion Computer / Onboard Controller</b> — an onboard companion (e.g. a Raspberry Pi) riding on the vehicle. Its default heartbeat type is <code>MAV_TYPE_ONBOARD_CONTROLLER</code> and its suggested <b>Source CompID</b> is <code>191</code> (<code>MAV_COMP_ID_ONBOARD_COMPUTER</code>). A companion normally uses the <b>same Source SysID as its vehicle</b> (commonly <code>1</code>) while keeping its own distinct CompID, so it appears as a component of that vehicle rather than a separate system. Use it with copters, planes, rovers, boats, or subs on ArduPilot, PX4, or a custom stack — it does not imply a target vehicle type. The suggested CompID is only pre-filled when the field is blank; an explicitly set CompID is never overwritten.</li>
+    <li><b>Companion Computer / Onboard Controller</b> — an onboard companion (e.g. a Raspberry Pi) riding on the vehicle. Its default heartbeat type is <code>MAV_TYPE_ONBOARD_CONTROLLER</code> and its suggested <b>Source CompID</b> is <code>191</code> (<code>MAV_COMP_ID_ONBOARD_COMPUTER</code>). A companion normally uses the <b>same Source SysID as its vehicle</b> (commonly <code>1</code>) while keeping its own distinct CompID, so it appears as a component of that vehicle rather than a separate system. Use it with copters, planes, rovers, boats, or subs on ArduPilot, PX4, or a custom stack — it does not imply a target vehicle type. The suggested CompID is pre-filled when the field is blank or still on the generic default <code>190</code>; a CompID customized to any other value is never overwritten.</li>
     <li><b>Copter / Plane / Rover / Boat / Sub / Antenna Tracker</b> — the node identifies as that vehicle type.</li>
     <li><b>Generic</b> — <code>MAV_TYPE_GENERIC</code> with no role-specific defaults.</li>
   </ul>
