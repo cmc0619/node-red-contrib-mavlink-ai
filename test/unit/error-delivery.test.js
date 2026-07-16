@@ -181,3 +181,21 @@ test('out node surfaces config-dependent link failures (TCP_NOT_CONNECTED / SERI
     assert.strictEqual(err.code, code);
   }
 });
+
+test('out node surfaces a failed listener start (UDP_NOT_STARTED / TCP_NOT_LISTENING), not "waiting"', async () => {
+  /**
+   * A udp-peer / tcp-server whose socket or server is null never came up — often
+   * a permanent failure (a port already in use). The transports reject that with
+   * a distinct not-started code *before* the transient UDP_NO_PEER / TCP_NO_CLIENT
+   * waiting states, so a listener that failed to start surfaces to a Catch node
+   * instead of being silently swallowed as "waiting for link" (Codex review).
+   */
+  for (const code of ['UDP_NOT_STARTED', 'TCP_NOT_LISTENING']) {
+    const e = Object.assign(new Error(code), { code });
+    const { RED } = setup({ sendError: e });
+    const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
+    const { err } = await RED.inject(node, { topic: 'mavlink/send', payload: { name: 'HEARTBEAT', fields: {} } });
+    assert.ok(err, `${code} surfaces via done(err)`);
+    assert.strictEqual(err.code, code);
+  }
+});

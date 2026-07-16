@@ -97,6 +97,35 @@ test('udp-out with no remote rejects with UDP_NO_REMOTE, not the transient UDP_N
   await transport.stop();
 });
 
+test('udp-peer send before the socket has started rejects UDP_NOT_STARTED, not UDP_NO_PEER', async () => {
+  /**
+   * A never-started (or torn-down) socket is null. The transport must reject
+   * that with UDP_NOT_STARTED *before* the empty-target check, so a failed bind
+   * can never masquerade as the transient UDP_NO_PEER that a fire-and-forget
+   * sender silently waits out — a listener that never came up is a real error a
+   * Catch node must see.
+   */
+  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  await assert.rejects(
+    () => transport.send(Buffer.from([1])),
+    (err) => err.code === 'UDP_NOT_STARTED'
+  );
+});
+
+test('tcp-server send before listen has started rejects TCP_NOT_LISTENING, not TCP_NO_CLIENT', async () => {
+  /**
+   * A never-started (or torn-down) server is null. The transport must reject
+   * that with TCP_NOT_LISTENING *before* the no-client check, so a failed listen
+   * (a port already in use) can never masquerade as the transient TCP_NO_CLIENT
+   * a fire-and-forget sender silently waits out.
+   */
+  const transport = new TcpTransport({ mode: 'tcp-server', host: '127.0.0.1' });
+  await assert.rejects(
+    () => transport.send(Buffer.from([1])),
+    (err) => err.code === 'TCP_NOT_LISTENING'
+  );
+});
+
 test('serial start without a path errors clearly (does not need serialport)', async () => {
   const transport = new SerialTransport({ serialPath: '' });
   const err = await new Promise((resolve) => {
@@ -527,6 +556,8 @@ test('tcp-server broadcast is not blocked by a stalled client, which is kicked (
       this.destroyed = true;
     }
   };
+  /** A server with connected clients is, by definition, listening. */
+  transport.server = {};
   transport.sockets.add(healthy);
   transport.sockets.add(stalled);
 
@@ -565,6 +596,8 @@ test('tcp-server drops a client already backed up past the backlog cap without w
       this.destroyed = true;
     }
   };
+  /** A server with connected clients is, by definition, listening. */
+  transport.server = {};
   transport.sockets.add(healthy);
   transport.sockets.add(backedUp);
 
