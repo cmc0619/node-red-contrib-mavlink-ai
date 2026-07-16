@@ -6,7 +6,7 @@ const { CommandSend } = require('../lib/command/command-workflow');
 const { toNum, toBool, firstDefined } = require('../lib/util/validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
-const { watchProfileBadge } = require('../lib/util/node-lifecycle');
+const { watchConfigBadge } = require('../lib/util/node-lifecycle');
 
 /**
  * mavlink-ai-payload.
@@ -32,11 +32,19 @@ module.exports = function registerMavlinkAiPayload(RED) {
 
     node.name = config.name;
     /**
-     * Resolves node.profile and keeps the "invalid profile" badge live across
-     * deploys, so a profile fixed after this node was deployed clears the badge.
+     * Resolves node.profile AND node.connection, and keeps both live across
+     * deploys (#238): Node-RED leaves this node in place when only a referenced
+     * config node changed, so a Connection re-created on a later deploy would
+     * otherwise leave the direct-send/await-ack path pointing at the destroyed
+     * old object (the in/out/swarm nodes re-resolve the same way, #164). The
+     * connection is optional — without one the node emits mavlink/send — so the
+     * "missing connection" badge only shows when await-ack actually needs it.
      */
-    watchProfileBadge(RED, node, config);
-    node.connection = config.connection ? RED.nodes.getNode(config.connection) : null;
+    watchConfigBadge(RED, node, config, {
+      profile: 'required',
+      connection: 'optional',
+      connectionRequiredWhen: () => toBool(config.awaitAck, false)
+    });
     node.action = config.action || 'camera_photo';
     node.targetComponent = config.targetComponent;
     node.interval = config.interval;

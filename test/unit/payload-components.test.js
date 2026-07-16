@@ -108,3 +108,32 @@ test('gripper resolves grab/release strictly and fails an unknown action closed 
   assert.strictEqual(bad.collected[0].payload.code, 'BAD_GRIPPER_ACTION');
   assert.ok(!bad.collected.some((m) => m.topic === 'mavlink/send'), 'no command was sent');
 });
+
+test('payload re-resolves a Connection re-created on a later deploy (#238)', async () => {
+  /**
+   * Node-RED leaves the payload node in place when only its referenced
+   * Connection config node changed, so a one-time constructor resolution kept
+   * node.connection pointing at the destroyed old object (in/out/swarm already
+   * re-resolve on flows:started, #164 — payload was missed).
+   */
+  const { RED, node } = setup(profileWithoutComponentDefault('p1'), { action: 'camera_photo', connection: 'c1' });
+  assert.strictEqual(node.connection, null, 'connection did not exist at construction');
+
+  /** The Connection config node appears on a later deploy. */
+  const sent = [];
+  RED._nodes.set('c1', {
+    id: 'c1',
+    name: 'Conn',
+    send: (m) => {
+      sent.push(m);
+      return Promise.resolve();
+    }
+  });
+  RED.events.emit('flows:started');
+  assert.ok(node.connection, 're-resolved the recreated connection');
+  assert.strictEqual(node.connection.id, 'c1');
+
+  /** The direct-send path now uses the fresh object, not the stale null. */
+  await RED.inject(node, { payload: {} });
+  assert.strictEqual(sent.length, 1, 'sent directly through the recreated connection');
+});

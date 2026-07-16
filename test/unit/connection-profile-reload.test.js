@@ -238,6 +238,71 @@ test('restoring a valid default profile reactivates a deactivated connection (#1
   assert.strictEqual(message.payload.name, 'GNSS_INTEGRITY');
 });
 
+test('a connection CONSTRUCTED with a missing profile activates once the profile appears (#238)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  /**
+   * The profile never existed at construction: before #238 this took the no-op
+   * path, which never installed the flows:started reconcile — the connection
+   * stayed permanently dead after the profile was created, until a manual
+   * redeploy of the connection itself.
+   */
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c1', name: 'UDP', profile: 'p1', localIdentity: 'id1',
+    transport: 'udp-peer', routingMode: 'single-profile',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
+  });
+  t.after(() => RED.close(conn));
+
+  assert.strictEqual(conn._active, false);
+  assert.strictEqual(conn._transport, null, 'no transport while inactive');
+  assert.match(conn.errors.map(String).join('\n'), /NO_PROFILE/);
+  await assert.rejects(conn.send({ name: 'HEARTBEAT', fields: {} }), (e) => e.code === 'NO_PROFILE');
+
+  /** The missing dependency is created on a later deploy -> reactivate in place. */
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.events.emit('flows:started');
+  await conn._activating;
+
+  assert.strictEqual(conn._active, true);
+  assert.strictEqual(conn.profile, RED.nodes.getNode('p1'));
+  assert.ok(conn._transport, 'transport started on activation');
+  assert.strictEqual(conn._inactiveError, null, 'inactive reason cleared');
+});
+
+test('a connection CONSTRUCTED with a missing identity activates once the identity appears (#238)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c1', name: 'UDP', profile: 'p1', localIdentity: 'id1',
+    transport: 'udp-peer', routingMode: 'single-profile',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
+  });
+  t.after(() => RED.close(conn));
+
+  assert.strictEqual(conn._active, false);
+  await assert.rejects(conn.send({ name: 'HEARTBEAT', fields: {} }), (e) => e.code === 'LOCAL_IDENTITY_REQUIRED');
+
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  RED.events.emit('flows:started');
+  await conn._activating;
+
+  assert.strictEqual(conn._active, true);
+  assert.strictEqual(conn.localIdentity, RED.nodes.getNode('id1'));
+  assert.ok(conn._transport, 'transport started on activation');
+  assert.strictEqual(conn._inactiveError, null, 'inactive reason cleared');
+});
+
 test('rebuilding the profile preserves the codec learned per-peer wire version (#69)', async (t) => {
   const RED = new MockRED().loadNodes();
 

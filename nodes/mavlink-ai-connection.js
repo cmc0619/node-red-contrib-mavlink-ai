@@ -288,16 +288,31 @@ module.exports = function registerMavlinkAiConnection(RED) {
       registerNoop(node);
       return;
     }
+
+    /**
+     * A DEPENDENCY failure — missing/invalid Vehicle Profile or Local Identity,
+     * or a codec that can't build from the profile — must not no-op this node:
+     * those heal on a later deploy without this connection's own config ever
+     * changing (the profile/identity is fixed or re-created under the same id),
+     * and a no-op'ed node never installs the flows:started reconcile, staying
+     * permanently dead until a manual redeploy (#238). Instead the connection
+     * constructs DEACTIVATED with its full runtime API and reconcile listener;
+     * reconcileRequiredConfig() then reactivate()s it once the dependency is
+     * back. Own-config failures (accept filter, link id, signing, bindings,
+     * route table, transport config) still no-op — fixing them means editing
+     * this node, which redeploys it anyway. The first failure wins the recorded
+     * reason; the reconcile re-checks everything on each deploy regardless.
+     */
+    let startInactive = null;
     if (!node.profile) {
       fatal('NO_PROFILE', 'Connection has no Vehicle Profile configured.');
-      registerNoop(node);
-      return;
-    }
-    if (!node.profile.isValid()) {
+      startInactive = { code: 'NO_PROFILE', message: 'Connection has no Vehicle Profile configured.' };
+    } else if (!node.profile.isValid()) {
       const err = node.profile.getError();
-      fatal((err && err.code) || 'PROFILE_INVALID', `Vehicle Profile invalid: ${err && err.message}`);
-      registerNoop(node);
-      return;
+      const code = (err && err.code) || 'PROFILE_INVALID';
+      const message = `Vehicle Profile invalid: ${err && err.message}`;
+      fatal(code, message);
+      startInactive = { code, message };
     }
 
     /**
@@ -312,22 +327,20 @@ module.exports = function registerMavlinkAiConnection(RED) {
         ? ' (Flows created before v3 stored the local identity on the profile; that coupling was removed — ' +
           'create a Local Identity carrying the old profile’s Source SysID/CompID and signing settings.)'
         : '';
-      fatal(
-        'LOCAL_IDENTITY_REQUIRED',
+      const message =
         `Connection '${node.name || node.id}' has no Local Identity. Select one in Connection > Local Identity. ` +
-          `If none exists, create a GCS, Companion, or Custom Local Identity first.${legacyHint}`
-      );
-      registerNoop(node);
-      return;
-    }
-    if (!node.localIdentity.isValid()) {
+        `If none exists, create a GCS, Companion, or Custom Local Identity first.${legacyHint}`;
+      fatal('LOCAL_IDENTITY_REQUIRED', message);
+      if (!startInactive) {
+        startInactive = { code: 'LOCAL_IDENTITY_REQUIRED', message };
+      }
+    } else if (!node.localIdentity.isValid()) {
       const err = node.localIdentity.getError();
-      fatal(
-        'LOCAL_IDENTITY_INVALID',
-        `Local Identity '${node.localIdentity.name || node.localIdentity.id}' is invalid: ${err && err.message}`
-      );
-      registerNoop(node);
-      return;
+      const message = `Local Identity '${node.localIdentity.name || node.localIdentity.id}' is invalid: ${err && err.message}`;
+      fatal('LOCAL_IDENTITY_INVALID', message);
+      if (!startInactive) {
+        startInactive = { code: 'LOCAL_IDENTITY_INVALID', message };
+      }
     }
 
     /**
@@ -421,13 +434,15 @@ module.exports = function registerMavlinkAiConnection(RED) {
       );
     }
 
-    try {
-      node._codec = buildCodec(node.profile);
-      node._codecByProfile.set(node.profile.id, { profile: node.profile, codec: node._codec });
-    } catch (err) {
-      fatal('CODEC_INIT_FAILED', err.message);
-      registerNoop(node);
-      return;
+    if (!startInactive) {
+      try {
+        node._codec = buildCodec(node.profile);
+        node._codecByProfile.set(node.profile.id, { profile: node.profile, codec: node._codec });
+      } catch (err) {
+        fatal('CODEC_INIT_FAILED', err.message);
+        /** Profile-derived: a fixed/re-created profile heals this on reconcile. */
+        startInactive = { code: 'CODEC_INIT_FAILED', message: err.message };
+      }
     }
 
     // Reject an impossible transport/settings combination loudly at deploy
@@ -812,7 +827,14 @@ module.exports = function registerMavlinkAiConnection(RED) {
       return null;
     }
 
-    {
+    if (!startInactive) {
+      /**
+       * Binding collisions are own-config and stay fatal — but the check needs
+       * a resolved default identity, so when construction is already deferred
+       * on a missing/invalid dependency it is skipped here and re-run by
+       * reconcileRequiredConfig (with reporting) before any reactivation, which
+       * refuses to bring the connection up while a collision exists (#238).
+       */
       const collision = validateIdentityBindings();
       if (collision) {
         fatal(collision.code, collision.message);
@@ -2204,13 +2226,28 @@ module.exports = function registerMavlinkAiConnection(RED) {
       }
     }
 
-    /**
-     * Construction succeeded: the connection is live. Set this before starting
-     * the transport so the 'listening'/'connected' handlers that fire the first
-     * heartbeat see an active connection (#116).
-     */
-    node._active = true;
-    startTransport();
+    if (startInactive) {
+      /**
+       * A dependency failed at construction (#238): finish as a DEACTIVATED
+       * connection — full runtime API, subscriptions registry, and the
+       * flows:started reconcile all live — but no codec and no transport.
+       * Sends reject with the recorded reason via inactiveRejection(); once
+       * the profile/identity is fixed or re-created on a later deploy,
+       * reconcileRequiredConfig() reactivate()s this node in place, exactly
+       * like a connection whose dependency was deleted mid-flight.
+       */
+      node._active = false;
+      node._inactiveError = new MavlinkError(startInactive.code, startInactive.message);
+      setStatus('error', startInactive.message);
+    } else {
+      /**
+       * Construction succeeded: the connection is live. Set this before starting
+       * the transport so the 'listening'/'connected' handlers that fire the first
+       * heartbeat see an active connection (#116).
+       */
+      node._active = true;
+      startTransport();
+    }
 
     // --- lifecycle (DESIGN.md §19) ------------------------------------------
     node.on('close', function closeConnection(done) {
