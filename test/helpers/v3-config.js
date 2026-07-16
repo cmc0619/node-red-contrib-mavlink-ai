@@ -135,7 +135,7 @@ function enc(codec, name, fields, opts = {}) {
 /**
  * A minimal stub Local Identity for node-level tests that use a hand-rolled
  * fake connection. Exposes the identity surface the action/workflow nodes call
- * (getIdentity/getSigningPolicy/getHeartbeatFields/describe).
+ * (getIdentity/getHeartbeatFields/describe).
  *
  * @param {number} [sysid=255]
  * @param {number} [compid=190]
@@ -146,7 +146,6 @@ function fakeIdentity(sysid = 255, compid = 190) {
     id: 'id-stub',
     name: 'GCS',
     getIdentity: () => ({ sysid, compid }),
-    getSigningPolicy: () => null,
     getHeartbeatFields: () => ({
       type: 'MAV_TYPE_GCS',
       autopilot: 'MAV_AUTOPILOT_INVALID',

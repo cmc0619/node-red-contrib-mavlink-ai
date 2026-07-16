@@ -205,14 +205,15 @@ config nodes so each question has one owner.
 
 | Concern | Config node | Owns |
 | --- | --- | --- |
-| Who Node-RED **is** on the wire | `mavlink-ai-local-identity` | source SysID/CompID, role preset (GCS / companion / custom), HEARTBEAT identity (`MAV_TYPE`, autopilot, base_mode/status defaults), signing credential + sign/verify/require **policy** |
+| Who Node-RED **is** on the wire | `mavlink-ai-local-identity` | source SysID/CompID, role preset (GCS / companion / custom), HEARTBEAT identity (`MAV_TYPE`, autopilot, base_mode/status defaults) |
 | What vehicle is **addressed** | `mavlink-ai-vehicle` (Vehicle Profile) | dialect, firmware, MAVLink version preference, default target SysID/CompID, vehicle family (mode tables + parameter metadata), mission preferences |
-| How traffic **moves** | `mavlink-ai-connection` | transport/session, routing, outbound queue, mission locks, heartbeat scheduling, **signing link id**, and all per-link channel state (sequence numbers, monotonic signing timestamps, inbound replay memory, detected peer wire versions) |
+| How traffic **moves** and is **secured** | `mavlink-ai-connection` | transport/session, routing, outbound queue, mission locks, heartbeat scheduling, **signing credential + sign/verify/require policy + link id**, and all per-link channel state (sequence numbers, monotonic signing timestamps, inbound replay memory, detected peer wire versions) |
 
 A Vehicle Profile must **never** determine or change the local source identity.
-A Connection must **never** silently choose among multiple identities. The
-signing **link id**, sequence counter, signing timestamp, and replay state are
-channel state and belong to the Connection/`LinkState`, not the identity or the
+A Connection must **never** silently choose among multiple identities. Signing —
+the shared key, the sign/verify/require policy, the **link id**, the sequence
+counter, the signing timestamp, and replay state — is all a property of the
+secured link and belongs to the Connection/`LinkState`, not the identity or the
 dialect codec (this satisfies #192).
 
 ### 5.5.2 Config-node relationship
@@ -311,9 +312,14 @@ another's queued heartbeat.
 
 ### 5.5.8 Signing and channel-state ownership (#192)
 
-The Local Identity owns the shared signing secret and the sign/verify/require
-policy (a credential is naturally reused across links). The Connection owns the
-signing **link id** and the `LinkState`, which keys:
+The Connection owns MAVLink 2 signing in full: the shared secret (a passphrase
+credential), the sign/verify/require policy, and the signing **link id**. A
+MAVLink link has exactly one signing key shared by both endpoints, so it is a
+property of the secured link — not of an identity that may transmit on several
+links. Every identity that transmits on a connection signs with the connection's
+key, and one identity can therefore talk signed on one connection and unsigned
+on another (a GCS to a mix of secured and open fleets). The Connection also owns
+the `LinkState`, which keys:
 
 - outbound **sequence** numbers by `(local sysid, local compid)`;
 - monotonic outbound signing **timestamps** by `(local sysid, local compid, link id)`;

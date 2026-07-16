@@ -66,14 +66,6 @@ test('out-of-range and non-integer source identity values invalidate the identit
   }
 });
 
-test("sign-outbound with no passphrase invalidates the identity (fail closed, #91)", () => {
-  const RED = new MockRED().loadNodes();
-  const id = makeIdentity(RED, { signOutbound: true });
-  assert.strictEqual(id.isValid(), false);
-  assert.strictEqual(id.getError().code, 'IDENTITY_INVALID');
-  assert.match(id.getError().message, /passphrase/);
-});
-
 // --- Vehicle Profile target ids --------------------------------------------
 test('valid boundary target values are accepted (#90)', () => {
   const RED = new MockRED().loadNodes();

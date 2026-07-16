@@ -115,12 +115,12 @@ test('signature-rejected packets do not teach a peer mapping (#85)', async (t) =
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {
-    id: 'id_sig', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190,
-    verifyInbound: true, requireSignature: true,
-    credentials: { signingPassphrase: 'the-shared-secret' }
+    id: 'id_sig', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c_sig', name: 'CSig', profile: 'p_sig', localIdentity: 'id_sig',
+    verifyInbound: true, requireSignature: true,
+    credentials: { signingPassphrase: 'the-shared-secret' },
     transport: 'udp-peer',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
