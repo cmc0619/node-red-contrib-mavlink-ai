@@ -62,8 +62,22 @@
         $('.mav-form-follow').toggle(follow);
         $('.mav-form-geo').toggle(!follow);
         $('.mav-form-fixed-anchor').toggle(!follow && $('#node-input-anchorMode').val() === 'fixed');
-        $('.mav-form-fixed-heading').toggle($('#node-input-headingSource').val() === 'fixed');
         $('.mav-form-explicit').toggle(!follow && $('#node-input-slotAssign').val() === 'explicit');
+        /**
+         * Only offer heading sources that apply to the mode: a geometric shape
+         * has no leader, and follow-leader has no msg-carried heading. Disable the
+         * incompatible options and reset an invalid saved selection, so the
+         * runtime never silently reinterprets it (leader→north / msg→leader).
+         */
+        const validHeadings = follow ? ['fixed', 'leader'] : ['north', 'fixed', 'msg'];
+        const $heading = $('#node-input-headingSource');
+        $heading.find('option').each(function () {
+          $(this).prop('disabled', validHeadings.indexOf($(this).val()) === -1);
+        });
+        if (validHeadings.indexOf($heading.val()) === -1) {
+          $heading.val(follow ? 'leader' : 'north');
+        }
+        $('.mav-form-fixed-heading').toggle($heading.val() === 'fixed');
       }
       $('#node-input-shape').on('change', refresh);
       $('#node-input-anchorMode').on('change', refresh);
@@ -95,6 +109,7 @@
     <select id="node-input-followerShape" style="width:70%;">
       <option value="line">Line (abreast)</option>
       <option value="column">Column (trail)</option>
+      <option value="grid">Grid</option>
       <option value="wedge">Wedge (V)</option>
       <option value="circle">Circle (around leader)</option>
     </select>

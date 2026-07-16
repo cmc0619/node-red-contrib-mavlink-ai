@@ -94,21 +94,56 @@ module.exports = function registerMavlinkAiFormation(RED) {
       done();
     }
 
+    /** MAV_CMD_DO_REPOSITION in name or numeric (192) form. */
+    const REPOSITION_COMMAND = new Set(['MAV_CMD_DO_REPOSITION', 'DO_REPOSITION', '192']);
+    function isRepositionCommand(cmd) {
+      return REPOSITION_COMMAND.has(String(cmd));
+    }
+
+    /**
+     * The shared `fields` for the fanout payload. This node computes only
+     * positions, but a bare per-target message would get DO_REPOSITION's non-
+     * position params wrong: fanout fills omitted params with 0
+     * (lib/swarm/fanout.js), and for DO_REPOSITION that means param1 = 0 m/s
+     * ground speed and param4 = yaw-to-north instead of "keep current". So for a
+     * reposition we set the same defaults the single-vehicle goto command uses —
+     * param1 = -1 (vehicle default speed), param2 = 1 (MAV_DO_REPOSITION_FLAGS_
+     * CHANGE_MODE → switch to guided so the reposition is accepted), and
+     * param4 = NaN (keep the current yaw). An explicit `msg.payload.fields`
+     * overrides any of them.
+     *
+     * @param {object} [p]  the input payload (geometric mode), for field overrides
+     * @returns {object}
+     */
+    function baseFields(p) {
+      const fields = { frame: node.frame };
+      if (isRepositionCommand(node.command)) {
+        fields.param1 = -1;
+        fields.param2 = 1;
+        fields.param4 = NaN;
+      }
+      if (p && p.fields && typeof p.fields === 'object') {
+        Object.assign(fields, p.fields);
+      }
+      return fields;
+    }
+
     /**
      * Wrap a target list in the fanout-compatible payload. `command_int` selects
-     * COMMAND_INT (degE7 x/y) vs COMMAND_LONG; the frame rides in `fields` so
-     * fanout applies it to every target; `dry_run` asks a downstream fanout to
-     * echo the built messages instead of sending.
+     * COMMAND_INT (degE7 x/y) vs COMMAND_LONG; `fields` (frame + reposition
+     * defaults) is applied by fanout to every target; `dry_run` asks a downstream
+     * fanout to echo the built messages instead of sending.
      *
      * @param {Array<object>} targets
+     * @param {object} fields  shared fields (see {@link baseFields})
      * @param {number} [leader]  the leader sysid (follow-leader mode)
      * @returns {object} payload
      */
-    function fanoutPayload(targets, leader) {
+    function fanoutPayload(targets, fields, leader) {
       const payload = {
         command: node.command,
         command_int: node.sendAs === 'int',
-        fields: { frame: node.frame },
+        fields,
         dry_run: node.dryRun,
         targets
       };
@@ -127,6 +162,7 @@ module.exports = function registerMavlinkAiFormation(RED) {
     let currentLeader = node.leaderSysid;
     let lastEmit = 0;
     let lastLeaderPos = null;
+    let lastFollowerSig = '';
     let staleHandled = false;
     const minIntervalMs = node.updateHz > 0 ? 1000 / node.updateHz : 0;
 
@@ -145,13 +181,15 @@ module.exports = function registerMavlinkAiFormation(RED) {
      * heading), all at the leader's altitude.
      *
      * @param {object} leader  leader snapshot from the registry
-     * @returns {void}
+     * @param {number[]} followers  the sorted follower sysids to position
+     * @returns {boolean} true when it acted on this state (sent positions, or a
+     *   deterministic error) — false only for the benign "no followers yet" case,
+     *   so the caller keeps re-checking until one appears
      */
-    function emitFollowers(leader) {
-      const followers = followerSysids();
+    function emitFollowers(leader, followers) {
       if (!followers.length) {
         node.status({ fill: 'green', shape: 'dot', text: `leader ${currentLeader}, 0 followers` });
-        return;
+        return false;
       }
       const heading =
         node.headingSource === 'fixed'
@@ -174,10 +212,11 @@ module.exports = function registerMavlinkAiFormation(RED) {
         const e = toMavlinkError(err, 'FORMATION_FAILED');
         node.status({ fill: 'red', shape: 'ring', text: e.code });
         node.send({ topic: 'mavlink/error', payload: errorPayload({ node: 'mavlink-ai-formation', code: e.code, message: e.message, context: e.context }) });
-        return;
+        return true;
       }
-      node.send({ topic: 'swarm/formation', payload: fanoutPayload(targets, currentLeader) });
+      node.send({ topic: 'swarm/formation', payload: fanoutPayload(targets, baseFields(null), currentLeader) });
       node.status({ fill: 'green', shape: 'dot', text: `leader ${currentLeader} → ${followers.length}` });
+      return true;
     }
 
     /**
@@ -197,12 +236,31 @@ module.exports = function registerMavlinkAiFormation(RED) {
           currentLeader = next;
           lastLeaderPos = null;
           lastEmit = 0;
+          lastFollowerSig = '';
           staleHandled = false;
           node.status({ fill: 'yellow', shape: 'dot', text: `leader → ${currentLeader} (succession)` });
           return;
         }
-        node.status({ fill: 'red', shape: 'ring', text: 'no live leader' });
-      } else if (node.staleAction === 'stop') {
+        /**
+         * No live successor yet — badge once, but keep re-checking on every
+         * message/tick so a vehicle that appears LATER is promoted. Suppressing
+         * this branch after the no-candidate case left `successor` mode stuck
+         * until the original leader returned (Codex review on #244).
+         */
+        if (!staleHandled) {
+          node.status({ fill: 'red', shape: 'ring', text: 'no live leader' });
+          staleHandled = true;
+        }
+        return;
+      }
+      /**
+       * hold / stop deliberately do NOT promote — they cease emitting until the
+       * configured leader itself returns. Badge once to avoid per-message thrash.
+       */
+      if (staleHandled) {
+        return;
+      }
+      if (node.staleAction === 'stop') {
         node.status({ fill: 'red', shape: 'ring', text: `leader ${currentLeader} stale — stopped` });
       } else {
         node.status({ fill: 'yellow', shape: 'ring', text: `leader ${currentLeader} stale — holding` });
@@ -228,11 +286,12 @@ module.exports = function registerMavlinkAiFormation(RED) {
        * Lost leader (never appeared, or no recent heartbeat) → stale action. A
        * leader that is heartbeating but has not sent a position yet is NOT stale
        * — it is simply not ready, so we wait rather than promote a successor.
+       * handleStale is idempotent (retries succession, badges once for hold/stop),
+       * so it is called unconditionally — the previous `!staleHandled` guard here
+       * blocked succession retries after a no-candidate case (Codex review on #244).
        */
       if (!leader || leader.stale) {
-        if (!staleHandled) {
-          handleStale();
-        }
+        handleStale();
         return;
       }
       staleHandled = false;
@@ -240,18 +299,34 @@ module.exports = function registerMavlinkAiFormation(RED) {
         node.status({ fill: 'grey', shape: 'dot', text: `leader ${currentLeader} (awaiting position)` });
         return;
       }
+      const followers = followerSysids();
+      const followerSig = followers.join(',');
+      const membershipChanged = followerSig !== lastFollowerSig;
       const now = node._now();
       if (!force) {
         if (now - lastEmit < minIntervalMs) {
           return;
         }
-        if (lastLeaderPos && node.minMoveM > 0 && moveDistanceMeters(lastLeaderPos, leader.position) < node.minMoveM) {
+        /**
+         * A follower joining or leaving must re-emit even when the leader is
+         * stationary, or a newly-arrived vehicle never receives its slot
+         * (CodeRabbit review on #244). Only the minimum-move gate is bypassed on a
+         * membership change; the rate limit still bounds the emit rate.
+         */
+        if (
+          !membershipChanged &&
+          lastLeaderPos &&
+          node.minMoveM > 0 &&
+          moveDistanceMeters(lastLeaderPos, leader.position) < node.minMoveM
+        ) {
           return;
         }
       }
-      emitFollowers(leader);
-      lastEmit = now;
-      lastLeaderPos = { lat: leader.position.lat, lon: leader.position.lon };
+      if (emitFollowers(leader, followers)) {
+        lastEmit = now;
+        lastLeaderPos = { lat: leader.position.lat, lon: leader.position.lon };
+        lastFollowerSig = followerSig;
+      }
     }
     /** Exposed for tests to drive staleness/succession without a real timer. */
     node._maybeEmit = maybeEmit;
@@ -408,7 +483,7 @@ module.exports = function registerMavlinkAiFormation(RED) {
         return sendError(msg, send, done, e.code, e.message, e.context);
       }
       msg.topic = 'swarm/formation';
-      msg.payload = fanoutPayload(targets);
+      msg.payload = fanoutPayload(targets, baseFields(p));
       node.status({ fill: 'green', shape: 'dot', text: `${geometry} ${targets.length}` });
       send(msg);
       done();

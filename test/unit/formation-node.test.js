@@ -122,6 +122,36 @@ test('a malformed explicit slot map invalidates the node and fails closed (#204)
   assert.strictEqual(collected[0].payload.code, 'INVALID_CONFIG');
 });
 
+test('a reposition payload keeps current yaw and default speed, not 0/north (#244 review)', async () => {
+  const RED = new MockRED().loadNodes();
+  const node = RED.create('mavlink-ai-formation', { id: 'fm1', shape: 'line', spacing: 10, anchorMode: 'msg', sendAs: 'int' });
+  const { collected } = await RED.inject(node, { payload: { sysids: [1, 2], origin: { lat: 39.1, lon: -75.1, alt: 100 } } });
+  const f = collected[0].payload.fields;
+  assert.strictEqual(f.param1, -1); /** default ground speed, not 0 m/s */
+  assert.strictEqual(f.param2, 1); /** switch to guided so the reposition is accepted */
+  assert.ok(Number.isNaN(f.param4), 'param4 (yaw) is NaN = keep current heading, not yaw-to-north');
+  /** An explicit fields override wins. */
+  const o = await RED.inject(node, { payload: { sysids: [1], origin: { lat: 39.1, lon: -75.1, alt: 100 }, fields: { param4: 0 } } });
+  assert.strictEqual(o.collected[0].payload.fields.param4, 0);
+});
+
+test('a non-reposition command does not get reposition param defaults', async () => {
+  const RED = new MockRED().loadNodes();
+  const node = RED.create('mavlink-ai-formation', {
+    id: 'fm1',
+    shape: 'line',
+    anchorMode: 'fixed',
+    anchorLat: 39.1,
+    anchorLon: -75.1,
+    anchorAlt: 100,
+    command: 'MAV_CMD_NAV_WAYPOINT'
+  });
+  const { collected } = await RED.inject(node, { payload: { sysids: [1] } });
+  const f = collected[0].payload.fields;
+  assert.strictEqual(f.param1, undefined);
+  assert.strictEqual(f.param4, undefined);
+});
+
 /** Follow-leader: a live registry that tracks a leader and promotes a successor. */
 
 /** Follow-leader node with a controllable clock and a stub connection. */
@@ -186,6 +216,37 @@ test('leader going stale promotes the next present sysid (leader + 1)', async ()
   assert.strictEqual(last.payload.leader, 2);
   /** 1 is stale (excluded), 2 is the leader, so only 3 is a follower now. */
   assert.deepStrictEqual(last.payload.targets.map((t) => t.sysid), [3]);
+});
+
+test('successor promotes a vehicle that appears after the no-candidate state (#244 review)', async () => {
+  const { conn, node, clock } = followSetup({ leaderSysid: 1, staleAction: 'successor', staleMs: 5000 });
+  conn.deliver(heartbeat(1));
+  conn.deliver(gpi(1, 39.1, -75.1, 100, 0));
+  clock.now += 7000; /** leader 1 goes stale as the only vehicle */
+  node._maybeEmit(false); /** a tick with no candidates → "no live leader" */
+  /** Vehicles appear later; the previously-stuck successor mode must now promote. */
+  conn.deliver(heartbeat(2));
+  conn.deliver(heartbeat(3));
+  conn.deliver(gpi(2, 39.1, -75.1, 100, 0));
+  conn.deliver(gpi(3, 39.1, -75.1, 100, 0));
+  const last = node.sent[node.sent.length - 1];
+  assert.strictEqual(last.payload.leader, 2, 'promoted the newly-appeared vehicle');
+  assert.deepStrictEqual(last.payload.targets.map((t) => t.sysid), [3]);
+});
+
+test('a new follower joining a stationary leader triggers a re-emit (#244 review)', async () => {
+  const { conn, node, clock } = followSetup({ leaderSysid: 1, updateHz: 2, minMoveM: 5 });
+  conn.deliver(heartbeat(1));
+  conn.deliver(heartbeat(2));
+  conn.deliver(gpi(1, 39.1, -75.1, 100, 0)); /** first emit, followers [2] */
+  const firstCount = node.sent.length;
+  assert.deepStrictEqual(node.sent[firstCount - 1].payload.targets.map((t) => t.sysid), [2]);
+  /** Leader has not moved (< minMoveM), but a new follower appears past the window. */
+  clock.now += 600;
+  conn.deliver(heartbeat(3));
+  assert.ok(node.sent.length > firstCount, 're-emitted on membership change despite a stationary leader');
+  const last = node.sent[node.sent.length - 1];
+  assert.deepStrictEqual(last.payload.targets.map((t) => t.sysid), [2, 3]);
 });
 
 test('stale action "hold" stops emitting and does not switch leader', async () => {

@@ -49,6 +49,21 @@ test('an unknown shape throws BAD_FORMATION', () => {
   assert.throws(() => slotOffsets('spiral', 3, 10), (e) => e.code === 'BAD_FORMATION');
 });
 
+test('grid keeps slot 0 on the reference and trails the rest behind (#244 review)', () => {
+  const g = slotOffsets('grid', 4, 10);
+  assert.deepStrictEqual(g[0], { forward: 0, right: 0, down: 0 });
+  /** Every follower trails behind the reference (forward < 0). */
+  assert.ok(g.slice(1).every((o) => o.forward < 0));
+  /** A single-vehicle grid is just the reference. */
+  assert.deepStrictEqual(slotOffsets('grid', 1, 10), [{ forward: 0, right: 0, down: 0 }]);
+});
+
+test('duplicate explicit slot assignments are rejected (#244 review)', () => {
+  assert.throws(() => assignSlots([1, 2], { slotMap: { 1: 0, 2: 0 } }), (e) => e.code === 'BAD_SLOT');
+  /** A pinned slot that collides with an auto-filled one is also caught. */
+  assert.throws(() => assignSlots([1, 2, 3], { slotMap: { 3: 0, 1: 0 } }), (e) => e.code === 'BAD_SLOT');
+});
+
 test('bodyToNed rotates forward/right into north/east by heading', () => {
   /** Heading 0 (north): forward -> north, right -> east. */
   const n0 = bodyToNed({ forward: 5, right: 3 }, 0);
