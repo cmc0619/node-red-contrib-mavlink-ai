@@ -114,9 +114,12 @@ type-aware boundary module that reads each field's MAVLink type, range, and
 units from dialect metadata; visible nodes must not do their own sign, mask, or
 numeric coercion. Prove it with round-trip tests (`encode(decode(x))`
 reproduces `x`, compared NaN-aware and at float32 precision rather than raw
-`===`) covering every field type, including an unsigned bitmask with bit 31
-set, a `NaN` "keep current" sentinel, an int/float parameter union, and a
-full-length `char[]`. Validate an integer's range before any unsigned
+`===`) plus canonical payload-byte vectors or an independent-decoder cross-check
+(a round trip alone passes a symmetric codec bug — same wrong byte order both
+ways — so byte-check the payload, though not whole frames whose
+sequence/signature/timestamp vary), covering every field type, including an
+unsigned bitmask with bit 31 set, a `NaN` "keep current" sentinel, an int/float
+parameter union, and a full-length `char[]`. Validate an integer's range before any unsigned
 normalization, so out-of-range input fails closed instead of silently wrapping. See `WIRE_ENCODING_GOTCHAS.md` for the recurring failures this
 prevents.
 
