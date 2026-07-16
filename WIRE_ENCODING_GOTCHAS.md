@@ -15,13 +15,18 @@
 
 ## How to read this list (for the next builder)
 
-**Treat every entry as a prediction, not a warning.** These are not
-hypotheticals, and they are not defensive paranoia about cosmic bit-flips —
-each one is a bug that actually shipped in this project and had to be found and
-fixed, usually at real review cost. They are reachable on *ordinary* input: a
-blank editor field, an imported flow, a mode bitmask with the high bit set, an
-unconfigured route. They feel paranoid only because the wire output actuates a
-physical vehicle, so a "plausible" wrong value flies instead of erroring.
+**Treat every entry as a prediction, not a warning.** Be precise about what
+these are, because overstating them costs the reader's trust: every entry is a
+real defect that existed in this project's code and was caught in **review or
+reasoning** — *not* a failure anyone observed on real hardware, and *not*
+cosmic-bit-flip paranoia either. They sit in the boring middle. The honest,
+narrower claim is still worth acting on: the code *would* emit the wrong bytes
+if that path ran, on ordinary input (a blank field, an imported flow, a
+high-bit bitmask, an unconfigured route). Throughout this doc, "what bites" and
+"real bug" mean *the defect the code contained*, not a logged incident — most
+were fixed before anything was ever connected to a vehicle. They matter because
+the output actuates a vehicle, so you want them gone before first connection,
+not after.
 
 If you implement the build spec straight through, you are **likely to
 reintroduce most of these**, because they live in the *seams between the tools*
@@ -40,9 +45,9 @@ Two root themes explain the bulk of them:
 
 ## The one structural rule that prevents most of this
 
-Roughly **1 in 4 of every bug-fix commit** (about 1 in 5 across all commits)
-lived on the JS→wire seam, and they recurred because each node did its own
-number handling. The fix is not "be
+Roughly **1 in 4 bug-fix commits** (about 1 in 5 across *all* commits — bug-fix
+and non-bug-fix together) lived on the JS→wire seam, and they recurred because
+each node did its own number handling. The fix is not "be
 careful" — we tried that and it failed 14 times. The fix is structural:
 
 1. **One wire-boundary module.** Every JS→bytes and bytes→JS conversion goes
@@ -192,17 +197,21 @@ debugging session. Same theme as B: a convenient default did the wrong thing
 quietly.
 
 ### C1. Queue scheduling: background traffic starves the important traffic
-**What bites:** A naive priority queue lets a flood of low-priority background
-sends — or aged messages promoted too aggressively — outrank the emergency and
-heartbeat bands, so a critical send waits behind bulk traffic. Un-coalesced
-periodic sends (heartbeats) also pile up.
+**What bites:** Two opposite failure modes. A sustained flood of *higher*-
+priority traffic can park the background heartbeat band forever (tripping a
+vehicle's GCS-loss failsafe) — but the age-based promotion you add to fix that,
+if unclamped, can float a stale low-priority send ahead of a fresh
+emergency/arm/mode command. Un-coalesced periodic sends (heartbeats) also pile
+up behind a slow transport.
 **Real bugs:** `age promotion + heartbeat coalescing so background band can't
 starve (#150)`, `clamp age promotion so aged sends never outrank the emergency
 band`, `honor Infinity age opt-out`.
-**Mitigation:** Give every send an explicit priority band. **Clamp** age-based
-promotion so an aged low-priority item can never cross into a higher band —
-especially emergency. Coalesce periodic sends per identity. Offer an opt-out
-(`Infinity`) for "never promote this."
+**Mitigation:** Give every send an explicit priority band. Let an aged
+low-priority item age *up through the non-emergency bands* — that promotion is
+the anti-starvation mechanism, so don't disable it — but **clamp** it so it can
+never cross into the emergency/protected band (floor it one band above
+emergency; a same-band clamp still loses on an age tie-break). Coalesce periodic
+sends per identity. Offer an opt-out (`Infinity`) for "never promote this."
 
 ### C2. Editor↔runtime state sync: stale UI and clobbered values
 **What bites:** The Node-RED editor caches config. Derived UI (validity badges,
@@ -227,10 +236,13 @@ vehicle.
 **Real bugs:** `Out node: hold "no peer yet" sends in a waiting state instead of
 error spam (#247)`, `udp-peer: fan out broadcast/untargeted sends and stop a GCS
 stealing the fallback (#184)`.
-**Mitigation:** Model peers as learned-over-time. Hold a send with no known peer
-in a waiting state and surface it **once**, don't error-spam. For untargeted
-sends, fan out to learned peers rather than a single stealable fallback, and
-never let a non-vehicle component become the default target.
+**Mitigation:** Model peers as learned-over-time. When there is no known peer,
+badge the connection "waiting for link" and warn **once** instead of erroring on
+every send — but **drop** the individual send (there is nowhere to deliver it);
+do **not** queue it, or a command sent now gets delivered stale to whatever peer
+is learned later. Sending resumes automatically once the link is ready. For
+untargeted sends, fan out to learned peers rather than a single stealable
+fallback, and never let a non-vehicle component become the default target.
 
 ---
 
