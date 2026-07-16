@@ -32,6 +32,7 @@ test('clampPriority bounds the advanced override into valid bands (#241)', () =>
   assert.strictEqual(clampPriority(undefined), undefined);
   assert.strictEqual(clampPriority(null), undefined);
   assert.strictEqual(clampPriority(''), undefined);
+  assert.strictEqual(clampPriority('   '), undefined, "whitespace is 'left blank', not band 0");
   assert.strictEqual(clampPriority('nope'), undefined);
   assert.strictEqual(clampPriority(NaN), undefined);
   assert.strictEqual(clampPriority(0), 0);
