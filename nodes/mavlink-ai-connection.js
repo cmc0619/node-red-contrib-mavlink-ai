@@ -1704,11 +1704,28 @@ module.exports = function registerMavlinkAiConnection(RED) {
       } catch (err) {
         return Promise.reject(toMavlinkError(err, 'ENCODE_FAILED'));
       }
+      /**
+       * Trace the send via the queue's onWrite hook, which fires only when the
+       * buffer is actually written — not on a QUEUE_FULL/stalled-transport
+       * rejection, and not for a heartbeat dropped by coalescing (its promise
+       * resolves, but it never reaches the writer). Both would otherwise log a
+       * phantom `send` (Codex review).
+       */
       return node._queue.enqueue(
         buffer,
         options.priority,
         { targetSystem: routingTargetSystem },
-        { coalesceKey: options.coalesceKey }
+        {
+          coalesceKey: options.coalesceKey,
+          onWrite: () =>
+            logProtocolDebug(
+              profile,
+              'send',
+              message.name,
+              routingTargetSystem,
+              routingTargetSystem === undefined ? undefined : targetComponent
+            )
+        }
       );
     };
 
@@ -1752,6 +1769,40 @@ module.exports = function registerMavlinkAiConnection(RED) {
         `mavlink-ai-connection '${node.name || node.id}': rejecting packets from ` +
           `sysid ${header.sysid} compid ${header.compid}: ${err.message}`
       );
+    }
+
+    /**
+     * Per-profile protocol debug (Vehicle Profile > Advanced > Debug). When a
+     * matched (inbound) or outbound Vehicle Profile has `debugProtocol` enabled,
+     * log a concise one-line summary of the message to the Node-RED log so a
+     * user can watch that vehicle's traffic while troubleshooting. Opt-in per
+     * profile and a single boolean check when off, so it adds nothing to the
+     * hot path for the normal (debug-disabled) case.
+     *
+     * @param {?object} profile  the matched/outbound Vehicle Profile node
+     * @param {'recv'|'send'} direction
+     * @param {string} messageName
+     * @param {number|undefined} sysid  source (recv) or target (send) system id
+     * @param {number|undefined} compid  source (recv) or target (send) component id
+     * @returns {void}
+     */
+    function logProtocolDebug(profile, direction, messageName, sysid, compid) {
+      if (!profile || !profile.debugProtocol) {
+        return;
+      }
+      const tag = `mavlink debug [${profile.name || profile.id}]`;
+      /**
+       * An outbound message with no addressed target (`sysid` undefined), or an
+       * explicit `target_system` of 0, is a broadcast/fan-out — the UDP
+       * transport treats 0 as broadcast, so it is not a unicast to sysid 0. Say
+       * so rather than logging a misleading default/zero target as addressed.
+       */
+      if (direction === 'send' && (sysid === undefined || sysid === 0)) {
+        node.log(`${tag} send ${messageName} (broadcast)`);
+        return;
+      }
+      const rel = direction === 'send' ? 'to' : 'from';
+      node.log(`${tag} ${direction} ${messageName} ${rel} sysid=${sysid} compid=${compid}`);
     }
 
     /**
@@ -1932,6 +1983,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
 
       node.subscriptions.dispatch(message);
       node.emitter.emit('message', message);
+      logProtocolDebug(profile, 'recv', payload.name, header.sysid, header.compid);
       const rawEvent = { topic: 'mavlink/raw', payload: packet.buffer };
       if (origin) {
         rawEvent.remote = origin;

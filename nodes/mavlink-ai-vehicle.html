@@ -225,6 +225,26 @@
       });
 
       loadCatalog();
+
+      /**
+       * Advanced disclosure: version preference, mission-item wire type, and
+       * per-profile protocol debug are rarely changed (auto / INT / off suit
+       * almost everyone), so tuck them behind a toggle. Auto-expand when any is
+       * set to a non-default so an existing override is never hidden.
+       */
+      function toggleAdvanced(show) {
+        $('.mav-advanced').toggle(show);
+        $('#node-mav-advanced-toggle i').toggleClass('fa-caret-right', !show).toggleClass('fa-caret-down', show);
+      }
+      $('#node-mav-advanced-toggle').on('click', function (e) {
+        e.preventDefault();
+        toggleAdvanced(!$('.mav-advanced').is(':visible'));
+      });
+      const advancedActive =
+        (node.mavlinkVersion && node.mavlinkVersion !== 'auto') ||
+        (node.preferredMissionItemType && node.preferredMissionItemType !== 'MISSION_ITEM_INT') ||
+        node.debugProtocol === true;
+      toggleAdvanced(!!advancedActive);
     },
     oneditsave: function () {
       // Re-derive the persisted dialect at save time so it is always correct
@@ -308,31 +328,46 @@
   </div>
   <input type="hidden" id="node-config-input-dialect">
   <div class="form-row">
-    <label for="node-config-input-mavlinkVersion">Version</label>
-    <select id="node-config-input-mavlinkVersion">
-      <option value="auto">auto (match inbound peer, v2 until detected)</option>
-      <option value="v1">v1</option>
-      <option value="v2">v2</option>
-    </select>
-  </div>
-  <div class="form-row">
-    <label for="node-config-input-defaultTargetSystem">Target SysID</label>
+    <label for="node-config-input-defaultTargetSystem">Outbound target SysID</label>
     <input type="number" id="node-config-input-defaultTargetSystem">
   </div>
   <div class="form-row">
-    <label for="node-config-input-defaultTargetComponent">Target CompID</label>
+    <label for="node-config-input-defaultTargetComponent">Outbound target CompID</label>
     <input type="number" id="node-config-input-defaultTargetComponent">
   </div>
-  <div class="form-row">
-    <label for="node-config-input-preferredMissionItemType">Mission Item</label>
-    <select id="node-config-input-preferredMissionItemType">
-      <option value="MISSION_ITEM_INT">MISSION_ITEM_INT</option>
-      <option value="MISSION_ITEM">MISSION_ITEM</option>
-    </select>
+  <div class="form-row" style="margin-bottom: 4px;">
+    <a href="#" id="node-mav-advanced-toggle" style="color: inherit;"><i class="fa fa-caret-right"></i> Advanced</a>
   </div>
-  <div class="form-row">
-    <label for="node-config-input-debugProtocol">Debug</label>
-    <input type="checkbox" id="node-config-input-debugProtocol" style="display: inline-block; width: auto; vertical-align: top;">
+  <div class="mav-advanced">
+    <div class="form-row">
+      <label for="node-config-input-mavlinkVersion">Version</label>
+      <select id="node-config-input-mavlinkVersion">
+        <option value="auto">auto (match inbound peer, v2 until detected)</option>
+        <option value="v1">v1</option>
+        <option value="v2">v2</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label for="node-config-input-preferredMissionItemType">Mission Item</label>
+      <select id="node-config-input-preferredMissionItemType">
+        <option value="MISSION_ITEM_INT">MISSION_ITEM_INT</option>
+        <option value="MISSION_ITEM">MISSION_ITEM</option>
+      </select>
+    </div>
+    <div class="form-tips" style="margin-bottom: 8px;">
+      Leave on <b>MISSION_ITEM_INT</b> unless you have an old MAVLink-1 autopilot that only speaks the
+      legacy float format. This only sets the <em>initial download request</em> — downloads auto-downgrade
+      to the float <code>MISSION_ITEM</code> if the vehicle doesn't answer INT, and uploads always match
+      the vehicle's own request.
+    </div>
+    <div class="form-row">
+      <label for="node-config-input-debugProtocol">Debug</label>
+      <input type="checkbox" id="node-config-input-debugProtocol" style="display: inline-block; width: auto; vertical-align: top;">
+    </div>
+    <div class="form-tips">
+      Logs a one-line summary of every message decoded as, or sent under, this profile to the Node-RED
+      log. A troubleshooting aid — verbose on high-rate telemetry, so leave it off in normal use.
+    </div>
   </div>
 </script>
 
@@ -347,9 +382,12 @@
   Copter modes and parameters <em>and</em> a truthful <code>MAV_TYPE_GCS</code> heartbeat.</p>
   <h3>Vehicle family</h3>
   <p><b>Copter / Plane / Rover / Boat / Sub / Antenna Tracker</b> select the ArduPilot mode tables and
-  parameter metadata for that vehicle; <b>Generic</b> applies no vehicle-specific metadata. The
-  <b>Target SysID/CompID</b> (commonly <code>1</code>/<code>1</code> for the autopilot) are the
-  vehicle you send to.</p>
+  parameter metadata for that vehicle; <b>Generic</b> applies no vehicle-specific metadata.</p>
+  <p><b>Outbound target SysID/CompID</b> (commonly <code>1</code>/<code>1</code> for the autopilot) are
+  the <em>default destination for messages you send</em> with this profile — an outbound default, not an
+  inbound identity. Which incoming packets are matched to this profile is decided by the
+  <b>Connection's route table</b>, not by this field, so on a routed multi-vehicle Connection the
+  route's SysID is authoritative and this stays purely an outbound default.</p>
   <p>Profiles saved before v3 stored a combined role/vehicle <code>profileType</code>; opening and
   saving the profile converts it (vehicle types keep their family; <code>gcs</code>,
   <code>companion-computer</code>, and <code>generic</code> become <b>Generic</b> — create a Local
@@ -359,4 +397,14 @@
     <li><b>Bundled</b> — pick from the dialects the loader can serve (discovered dynamically, not hard-coded).</li>
     <li><b>Custom</b> — a single <b>XML path</b> to a MAVLink dialect file the Node-RED process can read (local or mounted; they are not separate modes). Its <code>&lt;include&gt;</code> graph is resolved and the dialect is compiled at runtime. Invalid XML or a missing/circular include fails loudly (the profile marks itself invalid) rather than falling back.</li>
   </ul>
+  <h3>Advanced</h3>
+  <p><b>Version</b> — MAVLink 1/2 framing. <code>auto</code> (recommended) sends v2 until it hears a peer
+  speak v1, then matches it; force <code>v1</code>/<code>v2</code> only for a stack that requires it.</p>
+  <p><b>Mission Item</b> — the mission-item wire message used for downloads. <code>MISSION_ITEM_INT</code>
+  (int32 degE7, precise) suits modern ArduPilot/PX4. It is only the initial download request: downloads
+  auto-downgrade to the legacy float <code>MISSION_ITEM</code> if a pre-INT MAVLink-1 vehicle doesn't
+  answer, and uploads always answer with the type the vehicle requests — so you rarely change this.</p>
+  <p><b>Debug</b> — when enabled, logs a one-line summary of every message decoded as, or sent under,
+  this profile to the Node-RED log. A per-vehicle troubleshooting aid; verbose on live telemetry, so
+  leave it off in normal operation.</p>
 </script>
