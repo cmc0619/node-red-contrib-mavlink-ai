@@ -339,6 +339,18 @@
       }
 
       /**
+       * Whether the catalog is relevant to the current action — only Read one
+       * and Set one use the Param ID picker / value pulldowns, so the on-open
+       * auto-load is gated to them (a List action pulls no catalog).
+       *
+       * @returns {boolean}
+       */
+      function catalogRelevant() {
+        const action = $('#node-input-action').val();
+        return action === 'read' || action === 'set';
+      }
+
+      /**
        * Refresh the catalog-source status line and the "Load parameters" button
        * visibility for the current firmware/vehicle.
        *
@@ -370,6 +382,17 @@
             }
             if (resp.cached) {
               $status.text('Catalog: ' + resp.cached.count + ' parameters cached (' + resp.source.sourceKey + ').');
+            } else if (!resp.source.urlRequired && catalogRelevant()) {
+              /**
+               * Auto-load: a source with its own published URL (ArduPilot) needs
+               * nothing from the user, so fetch it on open — the Param ID and
+               * Value dropdowns then work without hunting for a button, which is
+               * the whole point of configuring in a vacuum (no vehicle attached).
+               * PX4 (urlRequired) still waits for a pasted URL, and a failed
+               * auto-load leaves the manual button for a retry.
+               */
+              $status.text('Loading parameter catalog…');
+              loadCatalog();
             } else {
               $status.text('No catalog cached yet for ' + resp.source.sourceKey + ' — click Load parameters.');
             }
@@ -439,9 +462,22 @@
       $('#node-input-action').on('change', function () {
         ctxRequestId += 1;
         refresh();
+        /** Re-check the catalog so switching to Read/Set can auto-load it. */
+        loadCatalogStatus();
       });
       $('#node-input-paramType').on('change', revalidateValue);
       $('#node-input-paramId').on('change', loadParamDetail);
+      /**
+       * Rebuild the value control live as the Param ID is typed or picked, not
+       * only on blur — a datalist input fires `change` only when it loses focus,
+       * which made the Value pulldown feel like it wasn't updating. Debounced so
+       * a keystroke burst does not spray catalog lookups.
+       */
+      let paramIdDebounce = null;
+      $('#node-input-paramId').on('input', function () {
+        clearTimeout(paramIdDebounce);
+        paramIdDebounce = setTimeout(loadParamDetail, 300);
+      });
       /**
        * A Connection/Profile change moves the whole context to a new
        * firmware/vehicle: refresh the status, the picker list, and — via
@@ -519,8 +555,12 @@
   </div>
   <div class="form-row mav-param-id">
     <label for="node-input-paramId">Param ID</label>
-    <input type="text" id="node-input-paramId" list="node-input-paramId-list" placeholder="e.g. RC1_MIN">
+    <input type="text" id="node-input-paramId" list="node-input-paramId-list" placeholder="type to search, e.g. RC1_MIN">
     <datalist id="node-input-paramId-list"></datalist>
+  </div>
+  <div class="form-tips mav-param-id" style="margin: -6px 0 8px 105px; width: 70%;">
+    Start typing to search the parameter list for this vehicle (loaded automatically for ArduPilot).
+    A parameter with named options fills the <b>Value</b> field as a pulldown. No catalog? Just type the exact ID.
   </div>
   <div class="form-row mav-param-index">
     <label for="node-input-paramIndex">Param index</label>
@@ -573,7 +613,7 @@
     <li><b>Request list</b> — request the full parameter list and assemble it; missing items are re-requested on a lossy link.</li>
   </ul>
   <h3>Parameter catalog</h3>
-  <p>When the effective profile's firmware publishes machine-readable parameter metadata (ArduPilot per vehicle; PX4 via a supplied <code>parameters.json</code> URL), click <b>Load parameters</b> to cache it. The <code>Param ID</code> field then offers a searchable list, and for parameters that define named choices the <code>Value</code> field becomes a pulldown (enumerations) or a bit checklist (bitmasks), each with a <b>Custom value…</b> escape hatch. Everything stays optional: free-text Param IDs and raw numeric values always work, so offline flow-building and unlisted parameters are unaffected. Generic/custom firmwares have no catalog and keep the plain inputs.</p>
+  <p>When the effective profile's firmware publishes machine-readable parameter metadata, the editor uses it so you can configure without a vehicle attached. <b>ArduPilot</b> publishes it per vehicle at a known URL, so it is <b>loaded automatically</b> the first time you open the node (and cached on disk afterwards) — no button, no drone. <b>PX4</b> ships it as a build artifact, so paste a <code>parameters.json</code> URL and click <b>Load parameters</b> once. Either way, the <code>Param ID</code> field then offers a searchable list, and for parameters that define named choices the <code>Value</code> field becomes a pulldown (enumerations) or a bit checklist (bitmasks), each with a <b>Custom value…</b> escape hatch. Everything stays optional: free-text Param IDs and raw numeric values always work (auto-load needs internet once, not a vehicle; offline it degrades to plain inputs). Generic/custom firmwares have no catalog and keep the plain inputs.</p>
   <h3>Profile</h3>
   <p><b>Profile</b> (optional) pins the workflow to a specific profile: its dialect, firmware behavior, source identity, signing, and target defaults are used, and every outbound message is encoded with it. Left empty, the target system/component is resolved through the connection's route table (the same resolution inbound packets get) and falls back to the connection's default profile. <code>msg.payload.profile</code> overrides per message. On routed connections with component-specific routes, set an explicit profile — target defaults can make route resolution ambiguous.</p>
   <h3>Inputs</h3>
