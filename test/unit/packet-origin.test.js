@@ -136,6 +136,31 @@ test('rejected diagnostics carry the sender endpoint; a read without one yields 
   assert.strictEqual(conn._transport.peersBySysid.size, 0);
 });
 
+test('decoded payloads and rejected diagnostics carry the connection identity (#240)', async (t) => {
+  /**
+   * A Profile can be shared by several Connections and separate links reuse
+   * common wire identities, so the payload carries the canonical Connection
+   * config-node id (and display name) for flows and Filter state to key on.
+   */
+  const RED = new MockRED().loadNodes();
+  const conn = udpPeerConnection(RED, { acceptedSysids: '7' });
+  t.after(() => RED.close(conn));
+
+  const received = [];
+  conn.emitter.on('message', (m) => received.push(m.payload));
+  const rejections = [];
+  conn.emitter.on('rejected', (info) => rejections.push(info));
+
+  conn._transport.emit('data', heartbeatFrom(7), { address: '10.0.0.1', port: 111 });
+  assert.strictEqual(received.length, 1);
+  assert.strictEqual(received[0].connection, 'Peer');
+  assert.strictEqual(received[0].connection_id, 'c1');
+
+  conn._transport.emit('data', heartbeatFrom(9), { address: '10.0.0.9', port: 999 });
+  assert.strictEqual(rejections.length, 1);
+  assert.strictEqual(rejections[0].connection_id, 'c1');
+});
+
 test('the decoder attributes packets to the read that completed the frame (#239)', () => {
   const codec = new MavlinkCodec({ bundle: common, version: 'v2' });
   const f1 = heartbeatFrom(1);

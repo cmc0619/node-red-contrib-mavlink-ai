@@ -1085,6 +1085,8 @@ The module needs stable message contracts. Do not let every node invent its own 
     sysid: 1,
     compid: 1,
     profile: "Copter",
+    connection: "Copter UDP",
+    connection_id: "a1b2c3d4e5f6a7b8",
     fields: {
       type: "MAV_TYPE_QUADROTOR",
       autopilot: "MAV_AUTOPILOT_ARDUPILOTMEGA",
@@ -1108,6 +1110,17 @@ The module needs stable message contracts. Do not let every node invent its own 
   }
 }
 ```
+
+**Connection identity (#240).** `connection_id` is the canonical Connection
+config-node id (with `connection` as its display name). It is the stable
+identity per-link state keys on: a Profile can be reused by several
+Connections, so `profile_id` cannot disambiguate links, and reusing common
+wire identities (vehicle sysid 1/compid 1) across separate links is normal.
+The Filter node and the subscription registry include it in their rate-limit
+and changed-only keys so two links carrying the same identity never suppress
+each other; rejected and decode-error payloads carry the same identity, and a
+message without one (not produced by this package) falls back to a shared
+legacy bucket.
 
 **Per-message endpoint (#239).** `transport.remoteAddress` / `remotePort` name
 the actual source of the transport read that carried *this* packet — the UDP

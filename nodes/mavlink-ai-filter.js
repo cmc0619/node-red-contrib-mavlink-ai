@@ -122,13 +122,24 @@ module.exports = function registerMavlinkAiFilter(RED) {
         }
       }
 
-      const key = `${payload.name}:${payload.sysid}:${payload.compid}`;
+      /**
+       * State keys include the connection identity (#240): a Filter can
+       * receive decoded messages from several Connection nodes, and reusing
+       * common identities (vehicle sysid 1/compid 1) across separate links is
+       * normal — without the connection in the key, traffic from link A
+       * rate-limits or changed-only-suppresses unrelated traffic from link B.
+       * Messages not produced by this package carry no connection_id and
+       * share one fallback bucket, preserving the old per-identity behavior.
+       */
+      const key = `${payload.connection_id || ''}:${payload.name}:${payload.sysid}:${payload.compid}`;
       const now = Date.now();
 
-      // Check the rate-limit window, but don't advance the clock until the
-      // message clears every filter below — otherwise a message dropped by
-      // changedOnly would still consume the delivery window and wrongly
-      // suppress the next genuinely-new value.
+      /**
+       * Check the rate-limit window, but don't advance the clock until the
+       * message clears every filter below — otherwise a message dropped by
+       * changedOnly would still consume the delivery window and wrongly
+       * suppress the next genuinely-new value.
+       */
       if (node.rateLimitHz > 0) {
         const minInterval = 1000 / node.rateLimitHz;
         if (now - (lastDelivered.get(key) || 0) < minInterval) {
