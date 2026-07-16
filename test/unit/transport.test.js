@@ -54,9 +54,10 @@ test('udp-peer learns peer and round-trips bytes', async () => {
   assert.deepStrictEqual([...got], [...frame]);
 
   // Receipt alone is not trust (#85): the connection confirms the peer once
-  // the packet passes validation, and only then can the transport reply.
+  // the packet passes validation — with that packet's own source endpoint
+  // (#239) — and only then can the transport reply.
   await assert.rejects(() => transport.send(Buffer.from([9, 9])), (err) => err.code === 'UDP_NO_PEER');
-  transport.confirmPeer(5);
+  transport.confirmPeer(5, { address: '127.0.0.1', port: peer.address().port });
   const replyReceived = new Promise((resolve) => peer.on('message', (buf) => resolve(buf)));
   await transport.send(Buffer.from([9, 9]));
   const reply = await replyReceived;
@@ -160,18 +161,6 @@ test('serial fails clearly on an unsupported Node.js runtime (#102)', () => {
   }
 });
 
-test('sniffSysid reads the source sysid from v1/v2 frames (#21)', () => {
-  const { sniffSysid } = require('../../lib/transport/udp-transport');
-  // v2: magic 0xFD, sysid at offset 5.
-  assert.strictEqual(sniffSysid(Buffer.from([0xfd, 9, 0, 0, 7, 42, 1, 0, 0, 0])), 42);
-  // v1: magic 0xFE, sysid at offset 3.
-  assert.strictEqual(sniffSysid(Buffer.from([0xfe, 9, 7, 17, 1, 0])), 17);
-  // Not a MAVLink frame / truncated.
-  assert.strictEqual(sniffSysid(Buffer.from([0x00, 1, 2, 3])), null);
-  assert.strictEqual(sniffSysid(Buffer.from([0xfd, 9])), null);
-  assert.strictEqual(sniffSysid('nope'), null);
-});
-
 test('udp-peer routes sends to the addressed sysid endpoint (#21)', () => {
   const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
   // Simulate two vehicles having been heard (as the message handler would).
@@ -198,7 +187,7 @@ test('udp-peer routes sends to the addressed sysid endpoint (#21)', () => {
   assert.deepStrictEqual(transport._target({ targetSystem: 1 }), { address: '10.0.0.1', port: 14550 });
 });
 
-test('udp-peer observes candidates but only confirmPeer commits mappings (#21, #85)', async () => {
+test('udp-peer receipt commits nothing; confirmPeer commits the validated endpoint (#21, #85, #239)', async () => {
   const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
   const addr = await new Promise((resolve) => {
     transport.on('listening', resolve);
@@ -223,16 +212,20 @@ test('udp-peer observes candidates but only confirmPeer commits mappings (#21, #
   assert.strictEqual(transport.peersBySysid.size, 0);
   assert.strictEqual(transport._target(), null);
 
-  // The connection confirms after validation; only then do mappings appear.
-  transport.confirmPeer(1);
-  transport.confirmPeer(2);
+  // The connection confirms after validation, passing each validated packet's
+  // own datagram source (#239); only then do mappings appear.
+  transport.confirmPeer(1, { address: '127.0.0.1', port: v1.address().port });
+  transport.confirmPeer(2, { address: '127.0.0.1', port: v2.address().port });
   assert.strictEqual(transport.peersBySysid.get(1).port, v1.address().port);
   assert.strictEqual(transport.peersBySysid.get(2).port, v2.address().port);
   assert.strictEqual(transport.learnedPeer.port, v2.address().port);
 
-  // Confirming a sysid never observed is a no-op.
-  transport.confirmPeer(99);
-  assert.strictEqual(transport.peersBySysid.has(99), false);
+  /** The stored peer is a copy — mutating the caller's endpoint later cannot
+   * silently redirect the committed mapping. */
+  const endpoint = { address: '127.0.0.1', port: v1.address().port };
+  transport.confirmPeer(7, endpoint);
+  endpoint.port = 1;
+  assert.strictEqual(transport.peersBySysid.get(7).port, v1.address().port);
 
   await transport.stop();
   await new Promise((r) => v1.close(r));
@@ -255,8 +248,8 @@ test('udp-peer broadcast (target_system 0) fans out to every learned peer (#148)
   v1.send(Buffer.from([0xfd, 9, 0, 0, 0, 1, 1, 0, 0, 0]), addr.port, '127.0.0.1');
   v2.send(Buffer.from([0xfe, 9, 0, 2, 1, 0]), addr.port, '127.0.0.1');
   await twoSeen;
-  transport.confirmPeer(1);
-  transport.confirmPeer(2);
+  transport.confirmPeer(1, { address: '127.0.0.1', port: v1.address().port });
+  transport.confirmPeer(2, { address: '127.0.0.1', port: v2.address().port });
 
   /** A broadcast must reach both vehicles, not only the last sender. */
   await transport.send(Buffer.from([1, 2, 3]), { targetSystem: 0 });
@@ -287,8 +280,8 @@ test('a later GCS confirmation does not steal the fallback; untargeted sends sti
   gcs.send(Buffer.from([0xfd, 9, 0, 0, 0, 255, 1, 0, 0, 0]), addr.port, '127.0.0.1');
   await twoSeen;
 
-  transport.confirmPeer(1);
-  transport.confirmPeer(255);
+  transport.confirmPeer(1, { address: '127.0.0.1', port: vehicle.address().port });
+  transport.confirmPeer(255, { address: '127.0.0.1', port: gcs.address().port });
 
   assert.strictEqual(transport.learnedPeer.port, vehicle.address().port, 'GCS did not steal the fallback');
 
@@ -338,25 +331,21 @@ test('a partial fan-out failure still resolves but emits sendPartialFailure (#14
   await new Promise((r) => good.close(r));
 });
 
-test('non-MAVLink datagrams never become peer candidates (#85)', async () => {
+test('confirmPeer without a valid endpoint commits nothing (#85, #239)', async () => {
+  /**
+   * Trust comes only from a validated read's endpoint: a confirm with no
+   * endpoint (e.g. a transport read that carried no source info) or with an
+   * invalid one must be a no-op, so nothing but a real datagram source can
+   * enter the routing tables.
+   */
   const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
-  const addr = await new Promise((resolve) => {
-    transport.on('listening', resolve);
-    transport.start();
-  });
-  const noise = dgram.createSocket('udp4');
-  await new Promise((r) => noise.bind(0, '127.0.0.1', r));
-  const seen = new Promise((resolve) => transport.on('data', resolve));
-  noise.send(Buffer.from('definitely not mavlink'), addr.port, '127.0.0.1');
-  await seen;
-
-  assert.strictEqual(transport._candidatesBySysid.size, 0);
   transport.confirmPeer(1);
+  transport.confirmPeer(1, null);
+  transport.confirmPeer(1, { address: '', port: 14550 });
+  transport.confirmPeer(1, { address: '127.0.0.1', port: 0 });
+  transport.confirmPeer('bogus', { address: '127.0.0.1', port: 14550 });
   assert.strictEqual(transport.learnedPeer, null);
   assert.strictEqual(transport.peersBySysid.size, 0);
-
-  await transport.stop();
-  await new Promise((r) => noise.close(r));
 });
 
 test('validateDestination accepts good targets and rejects bad ones (#77)', () => {
