@@ -4,6 +4,7 @@ const { MissionDownload } = require('../lib/mission/mission-download');
 const { MissionUpload } = require('../lib/mission/mission-upload');
 const { MissionClear } = require('../lib/mission/mission-clear');
 const { missionTypeToNumber } = require('../lib/mission/mission-state-machine');
+const { PRIORITY } = require('../lib/runtime/send-priority');
 const { topicAction, normalizeUploadItems, resolveUploadItems, validateMissionItems } = require('../lib/mission/upload-input');
 const { toInt, toBool, firstDefined } = require('../lib/util/validation');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
@@ -346,7 +347,7 @@ async function clearMission(connection, opts, targetSystem, targetComponent, mis
   if (opts.localIdentity != null && opts.localIdentity !== '') {
     message.localIdentity = opts.localIdentity;
   }
-  await connection.send(message);
+  await connection.send(message, { priority: PRIORITY.NORMAL });
   return {
     topic: 'mission/cleared',
     payload: {

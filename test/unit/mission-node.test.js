@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const { MockRED } = require('../helpers/mock-red');
 const { fakeIdentity } = require('../helpers/v3-config');
 const { LockManager } = require('../../lib/runtime/lock-manager');
+const { PRIORITY } = require('../../lib/runtime/send-priority');
 
 /**
  * Build a mission node backed by a real profile and a lightweight stub
@@ -143,6 +144,7 @@ function setupWithSends({ profile, config } = {}) {
     name: 'Conn',
     profile: defaultProfile,
     sent: [],
+    sentOptions: [],
     lockNames: [],
     resolveProfile: (ref) => (profile && ref === profile.id ? profile : { name: ref }),
     resolveOutboundIdentity: () => fakeIdentity(),
@@ -150,8 +152,9 @@ function setupWithSends({ profile, config } = {}) {
       conn.lockNames.push(name);
       return { release: () => {} };
     },
-    send(m) {
+    send(m, options) {
       conn.sent.push(m);
+      conn.sentOptions.push(options);
       return Promise.resolve();
     }
   };
@@ -194,6 +197,17 @@ test('mission node route-resolves the target profile when no override is set', a
   assert.strictEqual(sent.fields.target_system, 2);
   assert.strictEqual(sent.fields.mission_type, 2); // rally, from the routed profile's defaults
   assert.match(conn.lockNames[0], /:p_routed:/);
+});
+
+test('the best-effort clear stamps the NORMAL band explicitly (#241)', async () => {
+  /**
+   * The wait_ack-false clear bypasses MissionWorkflow._send, so it must carry
+   * its own priority — every producer assigns a band per §21.1 (Codex review).
+   */
+  const { RED, conn, node } = setupWithSends({});
+  await RED.inject(node, { payload: { action: 'clear' } });
+  assert.strictEqual(conn.sent[0].name, 'MISSION_CLEAR_ALL');
+  assert.strictEqual(conn.sentOptions[0].priority, PRIORITY.NORMAL);
 });
 
 test('the mission lock is released exactly once when the success-path send throws (#150)', async () => {
