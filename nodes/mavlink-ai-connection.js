@@ -1803,10 +1803,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
        */
       const wireMagic = packet.buffer && packet.buffer.length ? packet.buffer[0] : header.magic;
 
-      // 1. Route on the framed header (sysid/compid) before decoding. A
-      //    matched route whose profile cannot be resolved rejects the packet
-      //    (never falls back to the default dialect) and logs once per
-      //    identity so the broken route is loud without flooding at wire rate.
+      /**
+       * 1. Route on the framed header (sysid/compid) before decoding. A
+       * matched route whose profile cannot be resolved rejects the packet
+       * (never falls back to the default dialect) and logs once per identity
+       * so the broken route is loud without flooding at wire rate.
+       */
       const decision = node._router.route(header.sysid, header.compid);
       if (!decision.accepted) {
         if (decision.error) {
@@ -1828,9 +1830,11 @@ module.exports = function registerMavlinkAiConnection(RED) {
       const transportDescriptor = node._transport ? node._transport.descriptor : { type: node.transportType };
       const messageTransport = origin ? Object.assign({}, transportDescriptor, origin) : transportDescriptor;
 
-      // 2. Decode with the matched profile's dialect (routed connections may
-      //    carry systems on different dialects). A matched profile whose
-      //    dialect/codec is unusable rejects the packet, same as above.
+      /**
+       * 2. Decode with the matched profile's dialect (routed connections may
+       * carry systems on different dialects). A matched profile whose
+       * dialect/codec is unusable rejects the packet, same as above.
+       */
       let codec;
       try {
         codec = getCodecForProfile(profile);
@@ -1856,14 +1860,16 @@ module.exports = function registerMavlinkAiConnection(RED) {
         return;
       }
 
-      // Only now is the sender trusted enough to route replies to (#85): the
-      // frame passed CRC in the splitter, its identity passed routing, and it
-      // satisfied the signature policy. Tell a udp-peer transport to commit
-      // this packet's OWN source endpoint for its sysid (#239) — malformed,
-      // route-rejected, or signature-rejected traffic never reaches here, and
-      // a racing datagram from another endpoint can no longer be the one
-      // promoted, because the endpoint travels with the validated packet
-      // instead of being looked up from a mutable latest-claimant table.
+      /**
+       * Only now is the sender trusted enough to route replies to (#85): the
+       * frame passed CRC in the splitter, its identity passed routing, and it
+       * satisfied the signature policy. Tell a udp-peer transport to commit
+       * this packet's OWN source endpoint for its sysid (#239) — malformed,
+       * route-rejected, or signature-rejected traffic never reaches here, and
+       * a racing datagram from another endpoint can no longer be the one
+       * promoted, because the endpoint travels with the validated packet
+       * instead of being looked up from a mutable latest-claimant table.
+       */
       if (origin && node._transport && typeof node._transport.confirmPeer === 'function') {
         node._transport.confirmPeer(header.sysid, { address: origin.remoteAddress, port: origin.remotePort });
       }
@@ -1899,9 +1905,11 @@ module.exports = function registerMavlinkAiConnection(RED) {
         return;
       }
 
-      // `_buffer` carries the original wire bytes for subscribers that opt into
-      // raw output. It is stripped before a decoded message leaves a node, so
-      // it never pollutes the §14.1 contract.
+      /**
+       * `_buffer` carries the original wire bytes for subscribers that opt
+       * into raw output. It is stripped before a decoded message leaves a
+       * node, so it never pollutes the §14.1 contract.
+       */
       const message = { topic: `mavlink/${payload.name}`, payload, _buffer: packet.buffer };
 
       node.subscriptions.dispatch(message);

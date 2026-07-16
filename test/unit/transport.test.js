@@ -46,16 +46,18 @@ test('udp-peer learns peer and round-trips bytes', async () => {
   const peer = dgram.createSocket('udp4');
   await new Promise((resolve) => peer.bind(0, '127.0.0.1', resolve));
 
-  // A MAVLink-shaped frame claiming sysid 5 (v2 magic; sysid at offset 5).
+  /** A MAVLink-shaped frame claiming sysid 5 (v2 magic; sysid at offset 5). */
   const frame = Buffer.from([0xfd, 1, 0, 0, 0, 5, 1, 0, 0, 0, 42]);
   const received = new Promise((resolve) => transport.on('data', (buf) => resolve(buf)));
   peer.send(frame, addr.port, '127.0.0.1');
   const got = await received;
   assert.deepStrictEqual([...got], [...frame]);
 
-  // Receipt alone is not trust (#85): the connection confirms the peer once
-  // the packet passes validation — with that packet's own source endpoint
-  // (#239) — and only then can the transport reply.
+  /**
+   * Receipt alone is not trust (#85): the connection confirms the peer once
+   * the packet passes validation — with that packet's own source endpoint
+   * (#239) — and only then can the transport reply.
+   */
   await assert.rejects(() => transport.send(Buffer.from([9, 9])), (err) => err.code === 'UDP_NO_PEER');
   transport.confirmPeer(5, { address: '127.0.0.1', port: peer.address().port });
   const replyReceived = new Promise((resolve) => peer.on('message', (buf) => resolve(buf)));
@@ -202,18 +204,20 @@ test('udp-peer receipt commits nothing; confirmPeer commits the validated endpoi
     let n = 0;
     transport.on('data', () => { n += 1; if (n === 2) resolve(); });
   });
-  // Vehicle sysid 1 speaks v2 framing; vehicle sysid 2 speaks v1 framing.
+  /** Vehicle sysid 1 speaks v2 framing; vehicle sysid 2 speaks v1 framing. */
   v1.send(Buffer.from([0xfd, 9, 0, 0, 0, 1, 1, 0, 0, 0]), addr.port, '127.0.0.1');
   v2.send(Buffer.from([0xfe, 9, 0, 2, 1, 0]), addr.port, '127.0.0.1');
   await twoSeen;
 
-  // Receipt alone commits nothing (#85): no fallback peer, no sysid mapping.
+  /** Receipt alone commits nothing (#85): no fallback peer, no sysid mapping. */
   assert.strictEqual(transport.learnedPeer, null);
   assert.strictEqual(transport.peersBySysid.size, 0);
   assert.strictEqual(transport._target(), null);
 
-  // The connection confirms after validation, passing each validated packet's
-  // own datagram source (#239); only then do mappings appear.
+  /**
+   * The connection confirms after validation, passing each validated packet's
+   * own datagram source (#239); only then do mappings appear.
+   */
   transport.confirmPeer(1, { address: '127.0.0.1', port: v1.address().port });
   transport.confirmPeer(2, { address: '127.0.0.1', port: v2.address().port });
   assert.strictEqual(transport.peersBySysid.get(1).port, v1.address().port);
