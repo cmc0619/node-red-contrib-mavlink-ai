@@ -2,6 +2,7 @@
 
 const { badgeForState } = require('../lib/util/status');
 const { safeDetach } = require('../lib/util/node-lifecycle');
+const { TRANSPORT_WAITING_CODES } = require('../lib/util/errors');
 
 /**
  * mavlink-ai-out (DESIGN.md §13.2).
@@ -98,11 +99,30 @@ module.exports = function registerMavlinkAiOut(RED) {
           await node.connection.send(msg.payload);
         }
         sent += 1;
+        node._notReadyWarned = false;
         node.status({ fill: 'green', shape: 'dot', text: `tx ${sent}` });
         done();
       } catch (err) {
-        /** This node has no outputs; failures surface via done(err) so a
+        /**
+         * A transport that is passively waiting for the other side — a udp-peer
+         * that hasn't learned a peer, a TCP server with no client connected yet —
+         * is a normal transient state, not a send failure. Badge it "waiting for
+         * link" and warn once (re-armed on the next successful send) instead of
+         * spamming the error output / Catch nodes on every send (#83 follow-up).
+         * Codes that may never recover (a not-connected client with reconnect
+         * off, a failed transport start) fall through to done(err) below.
+         */
+        if (err && TRANSPORT_WAITING_CODES.has(err.code)) {
+          node.status({ fill: 'yellow', shape: 'ring', text: 'waiting for link' });
+          if (!node._notReadyWarned) {
+            node._notReadyWarned = true;
+            node.warn(`Holding output — ${err.message}`);
+          }
+          return done();
+        }
+        /** This node has no outputs; real failures surface via done(err) so a
          * Catch node can handle them. */
+        node._notReadyWarned = false;
         node.status({ fill: 'red', shape: 'ring', text: err.code || 'send error' });
         done(err);
       }

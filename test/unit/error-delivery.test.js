@@ -53,6 +53,8 @@ function setup({ sendError } = {}) {
 }
 
 const boom = Object.assign(new Error('link down'), { code: 'UDP_NO_PEER' });
+/** A genuine send failure (not a transient not-ready state) — must surface. */
+const realBoom = Object.assign(new Error('encode blew up'), { code: 'ENCODE_FAILED' });
 
 test('mission workflow failure: error output once, done() — no Catch double-fire (#89)', async () => {
   const { RED } = setup({ sendError: boom });
@@ -97,8 +99,8 @@ test('command await-ack failure: error on the output, done() (#89)', async () =>
   assert.strictEqual(err, undefined, 'done() without the error — Catch must not fire too');
 });
 
-test('out node has no outputs: failures go to done(err) for Catch nodes (#89)', async () => {
-  const { RED } = setup({ sendError: boom });
+test('out node has no outputs: real failures go to done(err) for Catch nodes (#89)', async () => {
+  const { RED } = setup({ sendError: realBoom });
   const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
   const { collected, err } = await RED.inject(node, {
     topic: 'mavlink/send',
@@ -107,5 +109,93 @@ test('out node has no outputs: failures go to done(err) for Catch nodes (#89)', 
 
   assert.strictEqual(collected.length, 0, 'no outputs to send on');
   assert.ok(err, 'done(err) is the delivery path');
-  assert.strictEqual(err.code, 'UDP_NO_PEER');
+  assert.strictEqual(err.code, 'ENCODE_FAILED');
+});
+
+test('out node treats a not-ready transport as "waiting", not an error (no spam)', async () => {
+  /**
+   * A udp-peer that hasn't learned a peer yet (UDP_NO_PEER) is a normal
+   * transient state. The Out node must badge "waiting for link" and warn once,
+   * not fire done(err) on every send — which used to spam the error output /
+   * Catch nodes when a peer simply hadn't appeared.
+   */
+  const { RED } = setup({ sendError: boom });
+  const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
+  const first = await RED.inject(node, { topic: 'mavlink/send', payload: { name: 'HEARTBEAT', fields: {} } });
+  assert.strictEqual(first.collected.length, 0);
+  assert.strictEqual(first.err, undefined, 'no done(err) — Catch nodes are not triggered');
+  assert.deepStrictEqual(node.statusHistory[node.statusHistory.length - 1], {
+    fill: 'yellow',
+    shape: 'ring',
+    text: 'waiting for link'
+  });
+  assert.strictEqual(node.warnings.length, 1, 'warned once');
+  /** A second send while still waiting does not warn again. */
+  const second = await RED.inject(node, { topic: 'mavlink/send', payload: { name: 'HEARTBEAT', fields: {} } });
+  assert.strictEqual(second.err, undefined);
+  assert.strictEqual(node.warnings.length, 1, 'warn-once — no spam');
+});
+
+test('out node still surfaces a permanent udp-out misconfiguration (UDP_NO_REMOTE)', async () => {
+  /**
+   * Unlike a udp-peer waiting for a peer, a udp-out with no remote configured
+   * can never deliver — that is a real error, so it must reach done(err) and
+   * not be swallowed as a "waiting" state.
+   */
+  const badRemote = Object.assign(new Error('no remote configured'), { code: 'UDP_NO_REMOTE' });
+  const { RED } = setup({ sendError: badRemote });
+  const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
+  const { err } = await RED.inject(node, { topic: 'mavlink/send', payload: { name: 'HEARTBEAT', fields: {} } });
+  assert.ok(err, 'a permanent udp-out misconfiguration surfaces via done(err)');
+  assert.strictEqual(err.code, 'UDP_NO_REMOTE');
+});
+
+test('out node surfaces a failed transport start (TRANSPORT_NOT_READY), not "waiting"', async () => {
+  /**
+   * TRANSPORT_NOT_READY means the transport is null — often a permanent failed
+   * start (unknown transport, a serial dependency that threw), not the transient
+   * "link coming up" the heartbeat silently retries. A fire-and-forget send must
+   * surface it so a Catch node sees the misconfiguration (Codex review).
+   */
+  const notStarted = Object.assign(new Error('Transport is not started.'), { code: 'TRANSPORT_NOT_READY' });
+  const { RED } = setup({ sendError: notStarted });
+  const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
+  const { err } = await RED.inject(node, { topic: 'mavlink/send', payload: { name: 'HEARTBEAT', fields: {} } });
+  assert.ok(err, 'a failed/absent transport surfaces via done(err)');
+  assert.strictEqual(err.code, 'TRANSPORT_NOT_READY');
+});
+
+test('out node surfaces config-dependent link failures (TCP_NOT_CONNECTED / SERIAL_NOT_OPEN)', async () => {
+  /**
+   * A disconnected tcp-client or serial link only recovers when Reconnect is
+   * enabled; with reconnect off it is permanently down, so these must surface
+   * rather than be swallowed as "waiting" — a Catch node needs to see a link
+   * that can't recover on its own (Codex review).
+   */
+  for (const code of ['TCP_NOT_CONNECTED', 'SERIAL_NOT_OPEN']) {
+    const e = Object.assign(new Error(code), { code });
+    const { RED } = setup({ sendError: e });
+    const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
+    const { err } = await RED.inject(node, { topic: 'mavlink/send', payload: { name: 'HEARTBEAT', fields: {} } });
+    assert.ok(err, `${code} surfaces via done(err)`);
+    assert.strictEqual(err.code, code);
+  }
+});
+
+test('out node surfaces a failed listener start (UDP_NOT_STARTED / TCP_NOT_LISTENING), not "waiting"', async () => {
+  /**
+   * A udp-peer / tcp-server whose socket or server is null never came up — often
+   * a permanent failure (a port already in use). The transports reject that with
+   * a distinct not-started code *before* the transient UDP_NO_PEER / TCP_NO_CLIENT
+   * waiting states, so a listener that failed to start surfaces to a Catch node
+   * instead of being silently swallowed as "waiting for link" (Codex review).
+   */
+  for (const code of ['UDP_NOT_STARTED', 'TCP_NOT_LISTENING']) {
+    const e = Object.assign(new Error(code), { code });
+    const { RED } = setup({ sendError: e });
+    const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
+    const { err } = await RED.inject(node, { topic: 'mavlink/send', payload: { name: 'HEARTBEAT', fields: {} } });
+    assert.ok(err, `${code} surfaces via done(err)`);
+    assert.strictEqual(err.code, code);
+  }
 });

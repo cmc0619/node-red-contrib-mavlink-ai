@@ -12,7 +12,7 @@ const { OutboundQueue } = require('../lib/runtime/outbound-queue');
 const { LockManager } = require('../lib/runtime/lock-manager');
 const { statusPayload } = require('../lib/util/status');
 const { toInt, toBool, parseIdListStrict } = require('../lib/util/validation');
-const { MavlinkError, toMavlinkError, errorPayload } = require('../lib/util/errors');
+const { MavlinkError, toMavlinkError, errorPayload, TRANSPORT_NOT_READY_CODES } = require('../lib/util/errors');
 
 /**
  * Minimum HEARTBEAT interval. HEARTBEAT is a low-rate presence/status message,
@@ -42,18 +42,12 @@ const SHARED_STREAM_KEY = '__shared__';
 /**
  * Send-rejection codes the periodic heartbeat treats as normal idle/teardown
  * states (see the heartbeat tick's catch): logged nowhere, retried silently on
- * the next tick.
+ * the next tick. Shared with the Out node (which badges "waiting for link"
+ * instead of erroring) via the errors util.
  *
  * @type {Set<string>}
  */
-const HEARTBEAT_EXPECTED_IDLE_CODES = new Set([
-  'UDP_NO_PEER',
-  'TRANSPORT_NOT_READY',
-  'TCP_NO_CLIENT',
-  'TCP_NOT_CONNECTED',
-  'SERIAL_NOT_OPEN',
-  'QUEUE_CLEARED'
-]);
+const HEARTBEAT_EXPECTED_IDLE_CODES = TRANSPORT_NOT_READY_CODES;
 
 /**
  * Ceiling on live per-client stream decoders. `peer-disconnect` evicts a
