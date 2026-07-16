@@ -531,11 +531,13 @@
         return (mask & ~known) >>> 0;
       }
 
-      // Bitmask enum -> a checklist of single-bit flags plus an "other bits"
-      // numeric for values the flag list can't express; the combined OR is the
-      // persisted wire value (#97). All math is unsigned 32-bit (#242) so
-      // bit-31 flags and unknown bits render and round-trip as non-negative
-      // values; unknown bits are preserved when known flags are toggled.
+      /**
+       * Bitmask enum -> a checklist of single-bit flags plus an "other bits"
+       * numeric for values the flag list can't express; the combined OR is the
+       * persisted wire value (#97). All math is unsigned 32-bit (#242) so
+       * bit-31 flags and unknown bits render and round-trip as non-negative
+       * values; unknown bits are preserved when known flags are toggled.
+       */
       function bitmaskControl(p, $row, $sink) {
         const members = (enumsByName[p.bitmask] || []).filter(function (m) {
           return isSingleBit(m.value);
@@ -551,17 +553,22 @@
               bits.push(c.bit);
             }
           });
-          // Reject an invalid "other bits" entry (fractional/negative/>uint32)
-          // instead of silently truncating it into the persisted value.
+          /**
+           * An invalid "other bits" entry (fractional/negative/>uint32) is
+           * flagged and contributes nothing: the persisted value falls back to
+           * the checked flags alone, so the sink can never carry a stale or
+           * truncated value into oneditsave while the field shows garbage
+           * (Codex review). A valid entry ORs in as usual.
+           */
           const otherRaw = String($other.val() || '').trim();
           const extra = parseBitmaskValue(otherRaw);
           if (otherRaw !== '' && extra === null) {
             $other.addClass('input-error');
-            return;
-          }
-          $other.removeClass('input-error');
-          if (extra !== null) {
-            bits.push(extra);
+          } else {
+            $other.removeClass('input-error');
+            if (extra !== null) {
+              bits.push(extra);
+            }
           }
           const value = orBits(bits);
           $sink.val(value ? String(value) : '');
