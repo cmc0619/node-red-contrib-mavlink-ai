@@ -473,6 +473,8 @@ test('validateMissionItems rejects non-numeric garbage but preserves NaN sentine
   }
   /** Flags are 0/1; frame is a number or name; command is a number or name. */
   assert.throws(() => validateMissionItems([{ command: 16, current: 5 }]), (e) => e.context.field === 'current');
+  /** Natural JSON booleans on the flags are accepted — they predate this guard. */
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, current: true, autocontinue: false }]));
   assert.throws(() => validateMissionItems([{ command: 16, frame: {} }]), (e) => e.context.field === 'frame');
   assert.throws(() => validateMissionItems([{ command: {} }]), (e) => e.context.field === 'command');
   /** A fully-specified valid item passes. */
