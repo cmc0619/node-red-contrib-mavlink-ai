@@ -56,20 +56,26 @@ careful" — we tried that and it failed 14 times. The fix is structural:
    metadata. Nodes never do their own `<<`, `>>>`, `parseInt`, or `Number()`
    on a wire value. Fix a rule once; every node inherits it.
 
-2. **One round-trip test, run over every field type.** Assert on the
-   *normalized field values* — `encode(decode(x))` reproduces the field `x` (and
-   `decode(encode(v))` reproduces `v`) for representative and random values of
-   each type. Do **not** assert byte-identical *frames*: sequence numbers,
-   signatures, and timestamps legitimately change between encodes, so a
-   whole-frame compare gives false failures (which an implementer then "fixes"
-   by loosening the assert). Compare the decoded field values instead. And do
-   **not** use raw `===`: the `NaN` sentinel fails `NaN === NaN`, and float
-   fields narrow to IEEE float32 so an arbitrary JS double won't be strictly
-   equal after a round trip. Compare with `Object.is`/`Number.isNaN` for
-   sentinels, at float32 precision for floats, and exact equality for integers.
-   This single test catches the sign, `NaN`, `char[]`, and overflow families
-   *automatically*, before they ship. Prefer a property-based generator
-   (thousands of random inputs) over hand-picked cases.
+2. **Round-trip tests *and* golden-byte vectors, over every field type.** A
+   round trip is necessary but not sufficient. Assert `encode(decode(x))`
+   reproduces the field value `x` (and `decode(encode(v))` reproduces `v`) for
+   representative and random values of each type — but a round trip only proves
+   `encode` and `decode` are inverses *of each other*, so a **symmetric** bug
+   (both directions using the same wrong byte order or padding) passes while
+   emitting wire-incompatible bytes. So **also** pin canonical **payload-byte
+   vectors** (a known input → its known-good MAVLink bytes) or cross-check
+   against an independent decoder. Mind the layer: don't byte-compare whole
+   *frames* — sequence numbers, signatures, and timestamps legitimately vary
+   between encodes, giving false failures an implementer then "fixes" by
+   loosening the assert — but the *payload* bytes are stable and must match the
+   spec, so byte-check those. For the value comparisons, do **not** use raw
+   `===`: the `NaN` sentinel fails `NaN === NaN`, and float fields narrow to
+   IEEE float32 so an arbitrary JS double won't be strictly equal after a round
+   trip. Compare with `Object.is`/`Number.isNaN` for sentinels, at float32
+   precision for floats, and exact equality for integers. Together these catch
+   the sign, `NaN`, `char[]`, and overflow families *automatically*, before they
+   ship. Prefer a property-based generator (thousands of random inputs) over
+   hand-picked cases.
 
 Everything below is what that module and that test must get right.
 
@@ -268,9 +274,11 @@ fallback, and never let a non-vehicle component become the default target.
 - [ ] `char[]` handled as text; params type-detected before write.
 - [ ] A **round-trip / property test** covers every field type, including a
       bitmask with bit 31 set, a `NaN` sentinel, an int/float param union, and a
-      full-length `char[]`. Assert on decoded **field values**, not
-      byte-identical frames (seq/signature/timestamp vary); compare NaN-aware
-      (`Object.is`) and at float32 precision, not raw `===`.
+      full-length `char[]`. Compare NaN-aware (`Object.is`) and at float32
+      precision, not raw `===`. Assert on decoded field values, not
+      byte-identical *frames* (seq/signature/timestamp vary) — **but** also pin
+      canonical **payload-byte** vectors (or an independent-decoder cross-check)
+      to catch symmetric codec bugs a round trip alone can't.
 - [ ] State ownership decided up front; missing input fails closed.
 - [ ] Priority bands on every send; age promotion clamped so background can
       never outrank emergency; periodic sends coalesced per identity.
