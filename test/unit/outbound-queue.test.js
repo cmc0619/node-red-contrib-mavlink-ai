@@ -319,20 +319,21 @@ test('coalescing reclaims a full queue slot instead of rejecting', async () => {
   await inflight;
 });
 
-test('clear rejects pending writes', async () => {
+test('clear rejects pending writes, including the one in flight (#237)', async () => {
+  /**
+   * Before #237 the in-flight item was deliberately left unsettled by clear()
+   * — but its owner is a flow message whose done() then never fires when the
+   * writer is stalled, leaking the message across a redeploy. clear() now
+   * settles the in-flight item too; a late writer completion is a no-op on the
+   * already-rejected promise.
+   */
   const gate = new Promise(() => {}); // never resolves
   const queue = new OutboundQueue(() => gate);
   const pending = queue.enqueue(Buffer.from([1]));
   const queued = queue.enqueue(Buffer.from([2]));
   queue.clear();
   await assert.rejects(() => queued, /cleared/);
-  // The in-flight write should remain unsettled (neither resolved nor rejected)
-  // after clear(), since clear only drops queued items, not the active write.
-  const state = await Promise.race([
-    pending.then(() => 'settled', () => 'settled'),
-    new Promise((r) => setTimeout(() => r('pending'), 20))
-  ]);
-  assert.strictEqual(state, 'pending');
+  await assert.rejects(() => pending, (e) => e.code === 'QUEUE_CLEARED');
 });
 
 test('teardown and overflow rejections carry stable codes (QUEUE_CLEARED / QUEUE_FULL)', async () => {
@@ -360,4 +361,31 @@ test('a synchronously-throwing writer rejects (never throws) when the queue is d
   );
   /** must return a rejected promise, preserving the promise contract */
   await assert.rejects(q.enqueue(Buffer.from([1])), /sync boom/);
+});
+
+test('clear() settles the in-flight item during a stalled write (#237)', async () => {
+  /**
+   * The drain loop shift()s an item out of _queue before awaiting the writer,
+   * so the old clear() (which only spliced _queue) left a stalled write's
+   * caller waiting forever — done() never fired and the flow message leaked
+   * across a redeploy. clear() must reject the in-flight item too; the late
+   * writer completion is a no-op on the already-settled promise.
+   */
+  let completeWrite;
+  const queue = new OutboundQueue(() => new Promise((resolve) => { completeWrite = resolve; }));
+  const stalled = queue.enqueue(Buffer.from([1]));
+  const queued = queue.enqueue(Buffer.from([2]));
+
+  queue.clear();
+  await assert.rejects(stalled, (e) => e.code === 'QUEUE_CLEARED', 'the in-flight item settles on clear');
+  await assert.rejects(queued, (e) => e.code === 'QUEUE_CLEARED', 'queued items settle as before');
+
+  /** The writer's late completion must not wedge the loop or double-settle. */
+  completeWrite();
+  await new Promise((r) => setImmediate(r));
+
+  /** The queue keeps working after the teardown/clear. */
+  const after = queue.enqueue(Buffer.from([3]));
+  completeWrite();
+  await after;
 });
