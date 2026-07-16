@@ -13,10 +13,41 @@
 > correct framing. Almost every bug below is a place where JS produced a
 > *wrong-but-plausible* byte and MAVLink faithfully acted on it.
 
+## How to read this list (for the next builder)
+
+**Treat every entry as a prediction, not a warning.** Be precise about what
+these are, because overstating them costs the reader's trust: every entry is a
+real defect that existed in this project's code and was caught in **review or
+reasoning** — *not* a failure anyone observed on real hardware, and *not*
+cosmic-bit-flip paranoia either. They sit in the boring middle. The honest,
+narrower claim is still worth acting on: the code *would* emit the wrong bytes
+if that path ran, on ordinary input (a blank field, an imported flow, a
+high-bit bitmask, an unconfigured route). Throughout this doc, "what bites" and
+"real bug" mean *the defect the code contained*, not a logged incident — most
+were fixed before anything was ever connected to a vehicle. They matter because
+the output actuates a vehicle, so you want them gone before first connection,
+not after.
+
+If you implement the build spec straight through, you are **likely to
+reintroduce most of these**, because they live in the *seams between the tools*
+(JS's number model, Node-RED's editor lifecycle, MAVLink's framing), not in
+careless code. So before you write each node: find the entries that touch it,
+write the failing test first, then implement. That converts this from a
+post-mortem into a checklist you clear as you go.
+
+Two root themes explain the bulk of them:
+
+1. **The numeric seam (~1 in 4 fixes):** JS's loose numbers vs MAVLink's exact
+   bytes — signs, `NaN`, `char[]`, unions. Section A.
+2. **Silent leniency (~1 in 2 fixes):** a lenient default quietly did something
+   plausible instead of failing loudly — "empty" meant "everyone," state lived
+   wherever was convenient, cleanup didn't happen. Sections B and C.
+
 ## The one structural rule that prevents most of this
 
-Roughly **1 in 5 of every bug we fixed** lived on the JS→wire seam, and they
-recurred because each node did its own number handling. The fix is not "be
+Roughly **1 in 4 bug-fix commits** (about 1 in 5 across *all* commits — bug-fix
+and non-bug-fix together) lived on the JS→wire seam, and they recurred because
+each node did its own number handling. The fix is not "be
 careful" — we tried that and it failed 14 times. The fix is structural:
 
 1. **One wire-boundary module.** Every JS→bytes and bytes→JS conversion goes
@@ -159,6 +190,62 @@ MAVLink spec for framing/ACK rules — don't reconstruct them from memory.
 
 ---
 
+## C. Operational gotchas (scheduling, editor state, routing)
+
+Lower-frequency than A and B (~16% of fixes combined) but each cost a real
+debugging session. Same theme as B: a convenient default did the wrong thing
+quietly.
+
+### C1. Queue scheduling: background traffic starves the important traffic
+**What bites:** Two opposite failure modes. A sustained flood of *higher*-
+priority traffic can park the background heartbeat band forever (tripping a
+vehicle's GCS-loss failsafe) — but the age-based promotion you add to fix that,
+if unclamped, can float a stale low-priority send ahead of a fresh
+emergency/arm/mode command. Un-coalesced periodic sends (heartbeats) also pile
+up behind a slow transport.
+**Real bugs:** `age promotion + heartbeat coalescing so background band can't
+starve (#150)`, `clamp age promotion so aged sends never outrank the emergency
+band`, `honor Infinity age opt-out`.
+**Mitigation:** Give every send an explicit priority band. Let an aged
+low-priority item age *up through the non-emergency bands* — that promotion is
+the anti-starvation mechanism, so don't disable it — but **clamp** it so it can
+never cross into the emergency/protected band (floor it one band above
+emergency; a same-band clamp still loses on an age tie-break). Coalesce periodic
+sends per identity. Offer an opt-out (`Infinity`) for "never promote this."
+
+### C2. Editor↔runtime state sync: stale UI and clobbered values
+**What bites:** The Node-RED editor caches config. Derived UI (validity badges,
+dropdowns) goes stale after a redeploy or a fix — an "invalid profile" badge
+stays red after the profile is repaired; catalog dropdowns are empty until an
+unrelated field is chosen. Worse, a late async metadata load can overwrite a
+valid saved value with empty config.
+**Real bugs:** `refresh the "invalid profile" badge on redeploy (#161)`, `make
+missing-connection / invalid-profile badges consistent and live (#165)`, `param
+node auto-load the catalog so dropdowns work without a vehicle`.
+**Mitigation:** Recompute derived UI state on **every** redeploy, not just first
+load. Load metadata catalogs eagerly enough that dropdowns work before all
+dependencies are picked. A late menu-load callback must **merge**, never
+overwrite a persisted value (build-spec §3.2).
+
+### C3. Routing & peer selection: one socket is not one vehicle
+**What bites:** One UDP port is one socket that can hear many systems. Before a
+peer is learned there is no destination — naive code error-spams ("no peer
+yet") or picks the wrong learned peer. An untargeted/broadcast send can let a
+non-vehicle component (a GCS) grab the fallback target slot meant for the
+vehicle.
+**Real bugs:** `Out node: hold "no peer yet" sends in a waiting state instead of
+error spam (#247)`, `udp-peer: fan out broadcast/untargeted sends and stop a GCS
+stealing the fallback (#184)`.
+**Mitigation:** Model peers as learned-over-time. When there is no known peer,
+badge the connection "waiting for link" and warn **once** instead of erroring on
+every send — but **drop** the individual send (there is nowhere to deliver it);
+do **not** queue it, or a command sent now gets delivered stale to whatever peer
+is learned later. Sending resumes automatically once the link is ready. For
+untargeted sends, fan out to learned peers rather than a single stealable
+fallback, and never let a non-vehicle component become the default target.
+
+---
+
 ## Checklist for the next builder
 
 - [ ] All JS↔wire conversion goes through **one** type-aware boundary module.
@@ -173,3 +260,9 @@ MAVLink spec for framing/ACK rules — don't reconstruct them from memory.
       full-length `char[]`. Compare NaN-aware (`Object.is`) and at float32
       precision, not raw `===`.
 - [ ] State ownership decided up front; missing input fails closed.
+- [ ] Priority bands on every send; age promotion clamped so background can
+      never outrank emergency; periodic sends coalesced per identity.
+- [ ] Derived editor UI recomputed on every redeploy; async menu loads merge,
+      never overwrite a saved value.
+- [ ] Peers learned over time; no-peer sends wait (surfaced once) instead of
+      spamming; untargeted sends fan out, never grab a stealable fallback.
