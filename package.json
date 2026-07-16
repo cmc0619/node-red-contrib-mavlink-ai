@@ -64,7 +64,8 @@
       "mavlink-ai-move": "nodes/mavlink-ai-move.js",
       "mavlink-ai-payload": "nodes/mavlink-ai-payload.js",
       "mavlink-ai-swarm": "nodes/mavlink-ai-swarm.js",
-      "mavlink-ai-fanout": "nodes/mavlink-ai-fanout.js"
+      "mavlink-ai-fanout": "nodes/mavlink-ai-fanout.js",
+      "mavlink-ai-formation": "nodes/mavlink-ai-formation.js"
     }
   },
   "devDependencies": {

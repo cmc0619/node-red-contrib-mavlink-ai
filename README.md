@@ -364,14 +364,32 @@ msg.payload = {
 };
 ```
 
+### `mavlink-ai-formation`
+
+Computes one global position target per vehicle from a **formation shape** (line,
+column, grid, wedge, circle) and emits a fanout-shaped payload, so
+`formation → fanout → out` moves a swarm into formation. Geometric shapes are a
+stateless transform of a vehicle list (`sysids`, a swarm registry's `vehicles`,
+or `targets`) plus an anchor (`msg.payload.origin` or a fixed point); slot 0 sits
+on the anchor and the rest fan out, rotated by the heading. Slot assignment is
+deterministic by sysid order or an explicit `{ "sysid": slot }` map.
+
+**Follow-leader** mode holds a live registry: it tracks a leader sysid's position
+and re-emits follower targets as the leader moves (rate limited by `updateHz` and
+a minimum-move threshold), arranging followers around the leader at its altitude
+and heading. When the leader goes stale it promotes the next present sysid to
+leader (`leader + 1`, wrapping) — or holds/stops, configurable. Supervisory only:
+goal updates at a few Hz via `DO_REPOSITION`, not a control loop.
+
 ## Swarm orchestration
 
 Multi-vehicle use is a first-class concern, not a hand-rolled pattern: the
-**swarm** node maintains the registry, and the **fanout** node expands one
+**swarm** node maintains the registry, the **fanout** node expands one
 logical command into one message per target system — *fan-out* — or, explicitly
-and only when asked, a single `target_system` 0 message — *broadcast*. These
-are different things: formation movement is fan-out, because each vehicle needs
-its own target position.
+and only when asked, a single `target_system` 0 message — *broadcast*, and the
+**formation** node computes per-vehicle positions for a shape or a live
+leader-follow. These are different things: formation movement is fan-out,
+because each vehicle needs its own target position.
 
 Fan-out understands meters: give an `origin` and per-target `north`/`east`/`up`
 offsets and it converts to global lat/lon/alt (and degE7 for `COMMAND_INT`)
