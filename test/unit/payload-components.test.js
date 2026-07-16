@@ -79,4 +79,10 @@ test('camera_photo sequence defaults to 1 only for single captures (spec: 0 for 
   const many = await burst.RED.inject(burst.node, { payload: { count: 5, interval: 1 } });
   assert.strictEqual(many.collected[0].payload.fields.param3, 5);
   assert.strictEqual(many.collected[0].payload.fields.param4, 0);
+
+  /** An explicit sequence override is only meaningful for a single capture —
+   * forced to 0 for bursts so saved editor values can't go out of spec. */
+  const overridden = setup(profileWithoutComponentDefault('p3'), { action: 'camera_photo' });
+  const forced = await overridden.RED.inject(overridden.node, { payload: { count: 5, sequence: 7, interval: 1 } });
+  assert.strictEqual(forced.collected[0].payload.fields.param4, 0);
 });

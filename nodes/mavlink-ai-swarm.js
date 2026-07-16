@@ -6,12 +6,16 @@ const { toInt, toBool } = require('../lib/util/validation');
 const { badgeForState } = require('../lib/util/status');
 const { safeDetach } = require('../lib/util/node-lifecycle');
 
-// Messages the registry consumes. HEARTBEAT discovers vehicles; the rest
-// enrich known vehicles with position/status.
+/**
+ * Messages the registry consumes. HEARTBEAT discovers vehicles; the rest
+ * enrich known vehicles with position/status.
+ */
 const REGISTRY_MESSAGES = ['HEARTBEAT', 'GLOBAL_POSITION_INT', 'LOCAL_POSITION_NED', 'SYS_STATUS'];
 
-// Change detection runs on a coarse ticker so stale/expiry transitions emit
-// without a per-message cost.
+/**
+ * Change detection runs on a coarse ticker so stale/expiry transitions emit
+ * without a per-message cost.
+ */
 const CHANGE_TICK_MS = 1000;
 
 /**
@@ -83,8 +87,10 @@ module.exports = function registerMavlinkAiSwarm(RED) {
       node.status({ fill: list.length ? 'green' : 'grey', shape: 'dot', text });
     }
 
-    // Membership signature for change detection: which vehicles exist and
-    // whether each is stale. Position/telemetry updates don't churn it.
+    /**
+     * Membership signature for change detection: which vehicles exist and
+     * whether each is stale. Position/telemetry updates don't churn it.
+     */
     function signature() {
       return registry
         .vehicles()
@@ -162,7 +168,8 @@ module.exports = function registerMavlinkAiSwarm(RED) {
           enums: bundle && bundle.valid ? bundle.enums : null
         });
         registry.setGroups(groups);
-        node.registry = registry; // exposed for tests/diagnostics
+        /** Exposed for tests/diagnostics. */
+        node.registry = registry;
         lastSignature = signature();
       }
 
@@ -204,9 +211,11 @@ module.exports = function registerMavlinkAiSwarm(RED) {
       }
     }
 
-    // Input triggers an on-demand snapshot; payload may carry a registry
-    // filter ({ group, type, armed, sysids, includeStale }). A malformed
-    // filter yields a structured error message, not a crashed handler.
+    /**
+     * Input triggers an on-demand snapshot; payload may carry a registry
+     * filter ({ group, type, armed, sysids, includeStale }). A malformed
+     * filter yields a structured error message, not a crashed handler.
+     */
     node.on('input', (msg, send, done) => {
       if (!registry) {
         /**

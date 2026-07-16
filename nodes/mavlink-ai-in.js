@@ -4,9 +4,11 @@ const { parseList, parseIdList, toNum, toBool } = require('../lib/util/validatio
 const { badgeForState } = require('../lib/util/status');
 const { safeDetach } = require('../lib/util/node-lifecycle');
 
-// Minimum interval between rx-counter badge updates. Status updates travel to
-// every open editor over the admin websocket, so pushing one per message at
-// telemetry rates (50Hz ATTITUDE) can bog down the editor UI.
+/**
+ * Minimum interval between rx-counter badge updates. Status updates travel to
+ * every open editor over the admin websocket, so pushing one per message at
+ * telemetry rates (50Hz ATTITUDE) can bog down the editor UI.
+ */
 const STATUS_UPDATE_MS = 500;
 
 /**
@@ -35,8 +37,8 @@ module.exports = function registerMavlinkAiIn(RED) {
     node.sysids = parseIdList(config.sysid);
     node.compids = parseIdList(config.compid);
     node.profileFilter = config.profileFilter || '';
-    // toNum, not toInt: sub-1Hz rates like 0.5 are meaningful and truncation
-    // would silently disable the limit.
+    /** toNum, not toInt: sub-1Hz rates like 0.5 are meaningful and truncation
+     * would silently disable the limit. */
     node.rateLimitHz = toNum(config.rateLimitHz, 0);
     node.changedOnly = toBool(config.changedOnly, false);
     node.outputRaw = toBool(config.outputRaw, false);
@@ -67,8 +69,10 @@ module.exports = function registerMavlinkAiIn(RED) {
       );
     }
 
-    // Output layout: [decoded, raw?, errors?] — the optional outputs keep
-    // their relative order, so the errors output index depends on outputRaw.
+    /**
+     * Output layout: [decoded, raw?, errors?] — the optional outputs keep
+     * their relative order, so the errors output index depends on outputRaw.
+     */
     const errorIndex = node.outputRaw ? 2 : 1;
     /** Send one message on output `index`, padding the array to match. */
     function sendAt(index, message) {
@@ -165,9 +169,11 @@ module.exports = function registerMavlinkAiIn(RED) {
         }
       });
 
-      // Diagnostics output (#22): decode errors already arrive as mavlink/error
-      // envelopes; routing rejections are wrapped here. Without this output the
-      // connection's structured diagnostics have no consumer a flow can reach.
+      /**
+       * Diagnostics output (#22): decode errors already arrive as mavlink/error
+       * envelopes; routing rejections are wrapped here. Without this output the
+       * connection's structured diagnostics have no consumer a flow can reach.
+       */
       if (node.outputErrors) {
         onDecodeError = (message) =>
           sendAt(errorIndex, RED.util.cloneMessage({ topic: message.topic, payload: message.payload }));

@@ -84,8 +84,10 @@ module.exports = function registerMavlinkAiOut(RED) {
         node.status({ fill: 'red', shape: 'ring', text: 'missing connection' });
         return done(new Error('NO_CONNECTION: mavlink-ai-out has no connection configured/resolved.'));
       }
-      // Error/status envelopes (e.g. from an upstream build/command node) are
-      // not outbound MAVLink messages — don't try to encode and send them.
+      /**
+       * Error/status envelopes (e.g. from an upstream build/command node) are
+       * not outbound MAVLink messages — don't try to encode and send them.
+       */
       if (msg.topic === 'mavlink/error' || msg.topic === 'mavlink/status') {
         return done();
       }
@@ -99,8 +101,8 @@ module.exports = function registerMavlinkAiOut(RED) {
         node.status({ fill: 'green', shape: 'dot', text: `tx ${sent}` });
         done();
       } catch (err) {
-        // This node has no outputs; failures surface via done(err) so a Catch
-        // node can handle them.
+        /** This node has no outputs; failures surface via done(err) so a
+         * Catch node can handle them. */
         node.status({ fill: 'red', shape: 'ring', text: err.code || 'send error' });
         done(err);
       }
