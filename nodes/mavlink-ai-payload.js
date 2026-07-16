@@ -7,7 +7,7 @@ const { toNum, toBool, firstDefined } = require('../lib/util/validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { watchConfigBadge } = require('../lib/util/node-lifecycle');
-const { commandPriorityFor } = require('../lib/runtime/send-priority');
+const { PRIORITY, commandPriorityFor } = require('../lib/runtime/send-priority');
 
 /**
  * mavlink-ai-payload.
@@ -268,6 +268,18 @@ module.exports = function registerMavlinkAiPayload(RED) {
       };
       if (payload.localIdentity !== undefined && payload.localIdentity !== null && payload.localIdentity !== '') {
         msg.payload.localIdentity = payload.localIdentity;
+      }
+      /**
+       * Stamp the CRITICAL band on the build-only output when the verb resolves
+       * to a critical MAV_CMD (parachute), mirroring the command node (#241) —
+       * Payload -> mavlink-ai-out must keep the same band as a direct send.
+       * Non-critical verbs carry no stamp so flows keep control of the field.
+       */
+      {
+        const priority = commandPriorityFor(bundle ? bundle.enums : null, built.fields.command);
+        if (priority === PRIORITY.CRITICAL) {
+          msg.priority = priority;
+        }
       }
       node.status({ fill: 'green', shape: 'dot', text: action });
       send(msg);

@@ -292,6 +292,10 @@ module.exports = function registerMavlinkAiMove(RED) {
       if (payload.localIdentity !== undefined && payload.localIdentity !== null && payload.localIdentity !== '') {
         msg.payload.localIdentity = payload.localIdentity;
       }
+      /** All Move setpoints ride the ELEVATED band (#241) — stamp the
+       * build-only output too, so Move -> mavlink-ai-out keeps the same band
+       * as a direct-Connection send. */
+      msg.priority = PRIORITY.ELEVATED;
       node.status({ fill: 'green', shape: 'dot', text: labelFor(built.name) });
       send(msg);
       done();
