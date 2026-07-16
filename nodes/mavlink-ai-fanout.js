@@ -4,6 +4,7 @@ const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { firstDefined, toInt, toBool, parseJsonObjectConfig } = require('../lib/util/validation');
 const { buildFanout } = require('../lib/swarm/fanout');
 const { CommandSend } = require('../lib/command/command-workflow');
+const { PRIORITY, commandPriorityFor } = require('../lib/runtime/send-priority');
 const { watchConfigBadge } = require('../lib/util/node-lifecycle');
 
 /**
@@ -300,10 +301,23 @@ module.exports = function registerMavlinkAiFanout(RED) {
       }
 
       // --- build-only mode (default): hand off to mavlink-ai-out -------------
+      /**
+       * Stamp the CRITICAL band when the fanned-out command resolves to a
+       * critical MAV_CMD (#241), mirroring the command node: fanout -> out
+       * must ride the same band as the await-ack path, or a fanned arm/mode
+       * change queues behind normal traffic. Every clone carries the same
+       * command, so one resolution serves all; non-critical commands carry no
+       * stamp so flows keep control of the field.
+       */
+      const buildBundle = node.profile && node.profile.getDialect ? node.profile.getDialect() : null;
+      const fanPriority = commandPriorityFor(buildBundle && buildBundle.valid ? buildBundle.enums : null, command);
       const toSend = decorated.map((payload) => {
         const out = RED.util.cloneMessage(msg);
         out.topic = 'mavlink/send';
         out.payload = payload;
+        if (fanPriority === PRIORITY.CRITICAL) {
+          out.priority = fanPriority;
+        }
         return out;
       });
       if (node.spacingMs > 0 && toSend.length > 1) {

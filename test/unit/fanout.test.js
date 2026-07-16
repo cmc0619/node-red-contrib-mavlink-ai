@@ -579,3 +579,18 @@ test('explicit zero param5/6 (equator/prime meridian) survive the alt-only senti
   assert.strictEqual(intMsg.fields.x, 0);
   assert.strictEqual(intMsg.fields.y, 0);
 });
+
+test('build-only fan-out stamps CRITICAL only on safety commands (#241)', async () => {
+  /** An arm/disarm fan-out to the Out node must ride the same critical band as
+   * the await-ack path; every clone carries the stamp. */
+  const arm = setup({ command: 'MAV_CMD_COMPONENT_ARM_DISARM' });
+  const armed = await arm.RED.inject(arm.node, { payload: { sysids: [1, 2] } });
+  const armBatch = armed.collected[0][0];
+  assert.strictEqual(armBatch[0].priority, 0);
+  assert.strictEqual(armBatch[1].priority, 0);
+
+  /** A non-critical command carries no stamp — flows keep control of the field. */
+  const rtl = setup({ command: 'MAV_CMD_NAV_RETURN_TO_LAUNCH' });
+  const sent = await rtl.RED.inject(rtl.node, { payload: { sysids: [1] } });
+  assert.strictEqual(sent.collected[0][0][0].priority, undefined);
+});
