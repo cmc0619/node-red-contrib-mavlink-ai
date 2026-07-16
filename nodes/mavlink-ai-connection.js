@@ -1750,9 +1750,11 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
-     * Rejected-event payload: the frame's identity and reason, plus the source
-     * endpoint of the read that carried it where the transport provides one
-     * (#239), so an operator can tell *which* endpoint sent rejected traffic.
+     * Rejected-event payload: the frame's identity and reason, plus the
+     * connection identity (#240) and the source endpoint of the read that
+     * carried it where the transport provides one (#239), so once the event
+     * leaves this connection an operator can still tell which link and
+     * endpoint the rejected traffic came from.
      *
      * @param {object} header  packet header (sysid/compid)
      * @param {string} reason
@@ -1760,7 +1762,16 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * @returns {object}
      */
     function rejectedInfo(header, reason, origin) {
-      return Object.assign({ sysid: header.sysid, compid: header.compid, reason }, origin);
+      return Object.assign(
+        {
+          connection: node.name || undefined,
+          connection_id: node.id,
+          sysid: header.sysid,
+          compid: header.compid,
+          reason
+        },
+        origin
+      );
     }
 
     /**
@@ -1898,6 +1909,8 @@ module.exports = function registerMavlinkAiConnection(RED) {
         payload = codec.decode(packet, {
           profile: profile ? profile.name : undefined,
           profile_id: profile ? profile.id : undefined,
+          connection: node.name || undefined,
+          connection_id: node.id,
           transport: messageTransport
         });
       } catch (err) {
@@ -1947,6 +1960,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
             dialect: codec.bundle.name,
             profile: profile ? profile.name : undefined,
             profile_id: profile ? profile.id : undefined,
+            connection_id: node.id,
             raw: packet.buffer.toString('hex')
           },
           origin

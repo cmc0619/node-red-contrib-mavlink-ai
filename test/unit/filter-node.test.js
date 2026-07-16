@@ -12,8 +12,8 @@ const { MockRED } = require('../helpers/mock-red');
  */
 
 /** Build a decoded §14.1 message envelope. */
-function msg(name, { id = 0, sysid = 1, compid = 1, fields = {}, profile, profile_id } = {}) {
-  return { payload: { name, id, sysid, compid, fields, profile, profile_id } };
+function msg(name, { id = 0, sysid = 1, compid = 1, fields = {}, profile, profile_id, connection_id } = {}) {
+  return { payload: { name, id, sysid, compid, fields, profile, profile_id, connection_id } };
 }
 
 /** Create a filter node with the given editor config. */
@@ -81,6 +81,30 @@ test('changed-only drops repeats and passes a changed value; per sysid key', asy
   assert.strictEqual(await passes(RED, node, msg('ATTITUDE', { fields: { roll: 2 } })), true);
   /** A different sysid is tracked independently. */
   assert.strictEqual(await passes(RED, node, msg('ATTITUDE', { sysid: 9, fields: { roll: 1 } })), true);
+});
+
+test('rate limit and changed-only are keyed per connection (#240)', async () => {
+  /**
+   * A Filter can receive from several Connection nodes, and separate links
+   * routinely reuse the same wire identity (vehicle sysid 1/compid 1) — so
+   * interleaved identical telemetry from two Connections must not suppress
+   * each other, while each link's own stream is still limited/deduplicated.
+   */
+  const limited = setup({ rateLimitHz: 2 });
+  assert.strictEqual(await passes(limited.RED, limited.node, msg('ATTITUDE', { connection_id: 'connA' })), true);
+  assert.strictEqual(await passes(limited.RED, limited.node, msg('ATTITUDE', { connection_id: 'connB' })), true);
+  assert.strictEqual(await passes(limited.RED, limited.node, msg('ATTITUDE', { connection_id: 'connA' })), false);
+  assert.strictEqual(await passes(limited.RED, limited.node, msg('ATTITUDE', { connection_id: 'connB' })), false);
+
+  const changed = setup({ changedOnly: true });
+  assert.strictEqual(await passes(changed.RED, changed.node, msg('HEARTBEAT', { connection_id: 'connA', fields: { custom_mode: 4 } })), true);
+  assert.strictEqual(await passes(changed.RED, changed.node, msg('HEARTBEAT', { connection_id: 'connB', fields: { custom_mode: 4 } })), true);
+  assert.strictEqual(await passes(changed.RED, changed.node, msg('HEARTBEAT', { connection_id: 'connA', fields: { custom_mode: 4 } })), false);
+
+  /** Foreign messages (no connection_id) share one legacy fallback bucket. */
+  const fallback = setup({ rateLimitHz: 2 });
+  assert.strictEqual(await passes(fallback.RED, fallback.node, msg('ATTITUDE')), true);
+  assert.strictEqual(await passes(fallback.RED, fallback.node, msg('ATTITUDE')), false);
 });
 
 test('profile filter matches the display name or the config-node id', async () => {

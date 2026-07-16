@@ -142,3 +142,32 @@ test('rate-limit/changed-only tracking maps are bounded against identity sweeps'
   assert.ok(sub.lastDeliveredAt.size <= 4096, `lastDeliveredAt bounded (got ${sub.lastDeliveredAt.size})`);
   assert.ok(sub.lastSignature.size <= 4096, `lastSignature bounded (got ${sub.lastSignature.size})`);
 });
+
+test('rate limit and changed-only are keyed per connection identity (#240)', () => {
+  /**
+   * Two links can carry the same wire identity (vehicle sysid 1/compid 1).
+   * Payloads stamped with different connection_ids must not consume each
+   * other's delivery window or changed-only signature.
+   */
+  const withConn = (name, connectionId, fields = {}) => ({
+    topic: `mavlink/${name}`,
+    payload: { name, id: 0, sysid: 1, compid: 1, connection_id: connectionId, fields }
+  });
+
+  const reg = new SubscriptionRegistry();
+  let limited = 0;
+  reg.subscribe({ rateLimitHz: 2 }, () => (limited += 1));
+  reg.dispatch(withConn('ATTITUDE', 'connA'));
+  reg.dispatch(withConn('ATTITUDE', 'connB'));
+  reg.dispatch(withConn('ATTITUDE', 'connA'));
+  reg.dispatch(withConn('ATTITUDE', 'connB'));
+  assert.strictEqual(limited, 2, 'each connection gets its own delivery window');
+
+  const reg2 = new SubscriptionRegistry();
+  let changed = 0;
+  reg2.subscribe({ changedOnly: true }, () => (changed += 1));
+  reg2.dispatch(withConn('HEARTBEAT', 'connA', { custom_mode: 4 }));
+  reg2.dispatch(withConn('HEARTBEAT', 'connB', { custom_mode: 4 }));
+  reg2.dispatch(withConn('HEARTBEAT', 'connA', { custom_mode: 4 }));
+  assert.strictEqual(changed, 2, 'identical fields from another connection still deliver once');
+});
