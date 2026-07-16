@@ -46,3 +46,37 @@ test('isWildcard and idAccepted', () => {
   assert.ok(idAccepted(5, [5, 6]));
   assert.ok(!idAccepted(7, [5, 6]));
 });
+
+test('parseIdListStrict reports malformed tokens instead of widening to wildcard (#193)', () => {
+  const { parseIdListStrict } = require('../../lib/util/validation');
+  // Blank yields an empty id list (which idAccepted treats as accept-all); an
+  // explicit wildcard token sets the flag. Both mean "accept everything".
+  assert.deepStrictEqual(parseIdListStrict(''), { ids: [], wildcard: false, invalid: [] });
+  assert.deepStrictEqual(parseIdListStrict('*'), { ids: [], wildcard: true, invalid: [] });
+  assert.deepStrictEqual(parseIdListStrict('any'), { ids: [], wildcard: true, invalid: [] });
+  // Valid ids parse.
+  assert.deepStrictEqual(parseIdListStrict('1,2,3'), { ids: [1, 2, 3], wildcard: false, invalid: [] });
+  // An all-invalid value does NOT become [] (accept everything) — it is reported.
+  assert.deepStrictEqual(parseIdListStrict('1O'), { ids: [], wildcard: false, invalid: ['1O'] });
+  // A mixed value keeps the good ids AND reports the bad token (never silently narrows).
+  assert.deepStrictEqual(parseIdListStrict('1,2x'), { ids: [1], wildcard: false, invalid: ['2x'] });
+  // Out-of-range and fractional are invalid for uint8 identities.
+  assert.deepStrictEqual(parseIdListStrict('300').invalid, ['300']);
+  assert.deepStrictEqual(parseIdListStrict('1.5').invalid, ['1.5']);
+  // Message ids allow the 24-bit range with an explicit max.
+  assert.deepStrictEqual(parseIdListStrict('300', 0xffffff), { ids: [300], wildcard: false, invalid: [] });
+});
+
+test('parseJsonObjectConfig fails malformed static JSON instead of substituting {} (#204)', () => {
+  const { parseJsonObjectConfig } = require('../../lib/util/validation');
+  // Blank is the documented empty default.
+  assert.deepStrictEqual(parseJsonObjectConfig('', 'fields'), { value: {}, error: null });
+  assert.deepStrictEqual(parseJsonObjectConfig(undefined, 'fields'), { value: {}, error: null });
+  // A valid object parses.
+  assert.deepStrictEqual(parseJsonObjectConfig('{"param1":1}', 'fields'), { value: { param1: 1 }, error: null });
+  // Malformed JSON is an error, not {}.
+  assert.strictEqual(parseJsonObjectConfig('{bad', 'fields').error !== null, true);
+  // Valid JSON of the wrong shape (array/scalar) is also an error.
+  assert.strictEqual(parseJsonObjectConfig('[1,2]', 'fields').error !== null, true);
+  assert.strictEqual(parseJsonObjectConfig('42', 'fields').error !== null, true);
+});

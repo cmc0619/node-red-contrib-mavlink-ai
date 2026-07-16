@@ -126,3 +126,10 @@ test('mavlink-ai-swarm without a connection emits NO_CONNECTION, not silence (#1
   assert.strictEqual(collected[0].topic, 'mavlink/error');
   assert.strictEqual(collected[0].payload.code, 'NO_CONNECTION');
 });
+
+test('malformed groups JSON invalidates the node instead of erasing grouping (#204)', async () => {
+  const { RED, node } = setup({ groups: '{bad json' });
+  const { collected } = await RED.inject(node, { payload: { group: 'scouts' } });
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'INVALID_CONFIG');
+});

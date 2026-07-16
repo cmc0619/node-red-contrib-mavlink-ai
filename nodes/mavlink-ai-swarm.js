@@ -2,7 +2,7 @@
 
 const { VehicleRegistry } = require('../lib/swarm/vehicle-registry');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
-const { toInt, toBool } = require('../lib/util/validation');
+const { toInt, toBool, parseJsonObjectConfig } = require('../lib/util/validation');
 const { badgeForState } = require('../lib/util/status');
 const { safeDetach } = require('../lib/util/node-lifecycle');
 
@@ -40,13 +40,17 @@ module.exports = function registerMavlinkAiSwarm(RED) {
     node.intervalMs = toInt(config.intervalMs, 0);
     node.includeGcs = toBool(config.includeGcs, false);
 
-    let groups = {};
-    if (config.groups) {
-      try {
-        groups = JSON.parse(config.groups);
-      } catch (e) {
-        node.warn(`mavlink-ai-swarm: invalid groups JSON, ignoring (${e.message})`);
-      }
+    /**
+     * Malformed `groups` JSON makes the node invalid instead of silently
+     * becoming `{}` and erasing safety grouping — a group-filtered snapshot
+     * would otherwise return every vehicle (#204). Blank stays the empty
+     * default; imported/API/hand-edited flows bypass the editor validator.
+     */
+    const parsedGroups = parseJsonObjectConfig(config.groups, 'groups');
+    const groups = parsedGroups.value;
+    node._configError = parsedGroups.error;
+    if (node._configError) {
+      node.status({ fill: 'red', shape: 'ring', text: 'invalid config' });
     }
 
     /** Created on the first successful attach (needs the connection's profile). */
@@ -217,6 +221,16 @@ module.exports = function registerMavlinkAiSwarm(RED) {
      * filter yields a structured error message, not a crashed handler.
      */
     node.on('input', (msg, send, done) => {
+      if (node._configError) {
+        msg.topic = 'mavlink/error';
+        msg.payload = errorPayload({
+          node: 'mavlink-ai-swarm',
+          code: 'INVALID_CONFIG',
+          message: `mavlink-ai-swarm: ${node._configError}`
+        });
+        send(msg);
+        return done();
+      }
       if (!registry) {
         /**
          * No connection has ever resolved, so there is no registry to query —

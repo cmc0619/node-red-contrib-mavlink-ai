@@ -3,7 +3,7 @@
 const { getMessageClass } = require('../lib/dialects/dialect-loader');
 const normalizer = require('../lib/protocol/message-normalizer');
 const { validate } = require('../lib/protocol/message-validator');
-const { toBool, firstDefined } = require('../lib/util/validation');
+const { toBool, firstDefined, parseJsonObjectConfig } = require('../lib/util/validation');
 const { errorPayload } = require('../lib/util/errors');
 const { registerEditorApi } = require('../lib/editor-api');
 const { watchProfileBadge } = require('../lib/util/node-lifecycle');
@@ -33,16 +33,24 @@ module.exports = function registerMavlinkAiBuild(RED) {
     node.fieldsJson = config.fields || '';
     node.applyDefaults = toBool(config.applyDefaults, true);
 
-    let configFields = {};
-    if (node.fieldsJson) {
-      try {
-        configFields = JSON.parse(node.fieldsJson);
-      } catch (e) {
-        node.warn(`mavlink-ai-build: invalid fields JSON, ignoring (${e.message})`);
-      }
+    /**
+     * Malformed static `fields` JSON makes the node invalid instead of silently
+     * becoming `{}` and emitting a zero-filled message (#204). Blank stays the
+     * documented empty default; the editor blocks bad JSON, but imported/API/
+     * hand-edited flows bypass that validator.
+     */
+    const parsedFields = parseJsonObjectConfig(node.fieldsJson, 'fields');
+    const configFields = parsedFields.value;
+    node._configError = parsedFields.error;
+    if (node._configError) {
+      node.status({ fill: 'red', shape: 'ring', text: 'invalid config' });
     }
 
     node.on('input', (msg, send, done) => {
+      if (node._configError) {
+        sendError(node, msg, send, 'INVALID_CONFIG', `mavlink-ai-build: ${node._configError}`);
+        return done();
+      }
       const bundle = node.profile && node.profile.isValid() ? node.profile.getDialect() : null;
       const name = msg.messageName || (msg.payload && msg.payload.name) || node.messageName;
 

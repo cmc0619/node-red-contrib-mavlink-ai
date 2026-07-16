@@ -1,6 +1,9 @@
 'use strict';
 
-const { parseList, parseIdList, toNum, toBool, idAccepted } = require('../lib/util/validation');
+const { parseList, parseIdListStrict, toNum, toBool, idAccepted } = require('../lib/util/validation');
+
+/** Inclusive max for a MAVLink 2 (24-bit) message id. */
+const MAX_MSG_ID = 0xffffff;
 const { fieldsSignature } = require('../lib/util/fields-signature');
 const { registerEditorApi } = require('../lib/editor-api');
 
@@ -21,12 +24,34 @@ module.exports = function registerMavlinkAiFilter(RED) {
 
     node.name = config.name;
     node.messageNames = parseList(config.messageNames).map((n) => n.toUpperCase());
-    node.messageIds = parseIdList(config.messageIds);
     node.profileFilter = config.profileFilter || '';
-    node.sysids = parseIdList(config.sysid);
-    node.compids = parseIdList(config.compid);
-    node.targetSystems = parseIdList(config.targetSystem);
-    node.targetComponents = parseIdList(config.targetComponent);
+    /**
+     * All id lists parse STRICTLY (#193): blank, "*", "any", or "all" means
+     * "accept everything", but a malformed token ("1O", "1,2x") fails the
+     * filter closed instead of being silently dropped — which would widen a
+     * gate the operator meant to narrow, passing traffic they'd excluded.
+     */
+    const parsed = {
+      messageIds: parseIdListStrict(config.messageIds, MAX_MSG_ID),
+      sysids: parseIdListStrict(config.sysid),
+      compids: parseIdListStrict(config.compid),
+      targetSystems: parseIdListStrict(config.targetSystem),
+      targetComponents: parseIdListStrict(config.targetComponent)
+    };
+    node.messageIds = parsed.messageIds.ids;
+    node.sysids = parsed.sysids.ids;
+    node.compids = parsed.compids.ids;
+    node.targetSystems = parsed.targetSystems.ids;
+    node.targetComponents = parsed.targetComponents.ids;
+    node._filterInvalid = [];
+    for (const [name, res] of Object.entries(parsed)) {
+      for (const token of res.invalid) {
+        node._filterInvalid.push(`${name} '${token}'`);
+      }
+    }
+    if (node._filterInvalid.length) {
+      node.status({ fill: 'red', shape: 'ring', text: 'invalid filter' });
+    }
     node.fieldName = config.fieldName || '';
     node.fieldValue = config.fieldValue === '' ? undefined : config.fieldValue;
     node.fieldExists = toBool(config.fieldExists, false);
@@ -39,6 +64,20 @@ module.exports = function registerMavlinkAiFilter(RED) {
     const lastSignature = new Map(); // key -> JSON of fields
 
     node.on('input', (msg, send, done) => {
+      /**
+       * Fail closed on a malformed id filter (#193): drop everything rather
+       * than pass a silently-widened stream. Surfaced once (not per message).
+       */
+      if (node._filterInvalid.length) {
+        if (!node._filterInvalidLogged) {
+          node._filterInvalidLogged = true;
+          node.error(
+            `mavlink-ai-filter: invalid id filter (${node._filterInvalid.join(', ')}); ` +
+              'each must be blank/*/any/all or an integer in range. Dropping all messages.'
+          );
+        }
+        return done();
+      }
       const payload = msg.payload || {};
       const fields = payload.fields || {};
 

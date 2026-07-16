@@ -137,6 +137,26 @@ module.exports = function registerMavlinkAiMission(RED) {
         }));
       }
 
+      /**
+       * A mission transfer is a single-responder handshake: the state machine
+       * filters responses by the target sysid and no real responder sources
+       * from sysid 0. A broadcast (target_system 0) can execute on every
+       * reachable vehicle — a broadcast clear is especially destructive — while
+       * every reply is ignored and the workflow times out, telling the operator
+       * it failed after the fleet already acted. Reject it before locking/
+       * sending, like the command/payload/fanout nodes (#197).
+       */
+      if (Number(targetSystem) === 0) {
+        node.status({ fill: 'red', shape: 'ring', text: 'BROADCAST_NO_ACK' });
+        return finishError(node, msg, send, done, errorPayload({
+          node: 'mavlink-ai-mission',
+          connection: node.connection.name,
+          code: 'BROADCAST_NO_ACK',
+          message:
+            'Broadcast (target_system 0) cannot run a mission handshake — every reply is ignored and the transfer times out after the fleet may have acted. Address a specific system.'
+        }));
+      }
+
       const lockKey = `mission:${node.connection.id}:${profile ? profile.id : 'default'}:${missionTypeNum}`;
       let lock;
       try {

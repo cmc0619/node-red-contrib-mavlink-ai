@@ -104,6 +104,24 @@ module.exports = function registerMavlinkAiParam(RED) {
         }));
       }
 
+      /**
+       * PARAM read/set/list are single-responder handshakes matched on the
+       * target sysid; a broadcast (target_system 0) would fan the request
+       * across the fleet — a broadcast PARAM_SET writes every vehicle — while
+       * every echo is ignored and the workflow times out. Reject it before
+       * locking/sending, like the command/payload/fanout nodes (#197).
+       */
+      if (Number(targetSystem) === 0) {
+        node.status({ fill: 'red', shape: 'ring', text: 'BROADCAST_NO_ACK' });
+        return finishError(node, msg, send, done, errorPayload({
+          node: 'mavlink-ai-param',
+          connection: node.connection.name,
+          code: 'BROADCAST_NO_ACK',
+          message:
+            'Broadcast (target_system 0) cannot run a parameter handshake — every echo is ignored and the request times out after the fleet may have applied it. Address a specific system.'
+        }));
+      }
+
       // Only one PARAM workflow per connection/profile/target at a time — the
       // param list stream and a concurrent read/set would otherwise interleave.
       const lockKey = `param:${node.connection.id}:${profile ? profile.id : 'default'}:${targetSystem}:${targetComponent}`;

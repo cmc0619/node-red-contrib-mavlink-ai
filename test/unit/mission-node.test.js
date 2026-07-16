@@ -193,3 +193,12 @@ test('the mission lock is released exactly once when the success-path send throw
   assert.strictEqual(releaseCount, 1, 'lock released exactly once despite the throwing send');
   assert.strictEqual(locks.isHeld('mission:conn1:p1:0'), false, 'the lock is free afterwards');
 });
+
+test('mission node rejects a broadcast target_system before locking/sending (#197)', async () => {
+  const { RED, conn, node } = setupWithSends();
+  const { collected } = await RED.inject(node, { payload: { action: 'clear', target_system: 0 } });
+  const err = collected[0][2];
+  assert.strictEqual(err.topic, 'mavlink/error');
+  assert.strictEqual(err.payload.code, 'BROADCAST_NO_ACK');
+  assert.strictEqual(conn.sent.length, 0, 'no mission message was sent to the broadcast target');
+});

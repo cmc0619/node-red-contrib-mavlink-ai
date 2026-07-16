@@ -86,3 +86,23 @@ test('camera_photo sequence defaults to 1 only for single captures (spec: 0 for 
   const forced = await overridden.RED.inject(overridden.node, { payload: { count: 5, sequence: 7, interval: 1 } });
   assert.strictEqual(forced.collected[0].payload.fields.param4, 0);
 });
+
+test('gripper resolves grab/release strictly and fails an unknown action closed (#218)', async () => {
+  // Explicit grab / release map to the documented raw values.
+  const grabNode = setup(profileWithoutComponentDefault('g1'), { action: 'gripper', gripAction: 'grab' });
+  const grab = await grabNode.RED.inject(grabNode.node, { payload: {} });
+  assert.strictEqual(grab.collected[0].topic, 'mavlink/send');
+  assert.strictEqual(grab.collected[0].payload.fields.param2, 1); // GRIPPER_GRAB
+
+  const relNode = setup(profileWithoutComponentDefault('g2'), { action: 'gripper', gripAction: 'release' });
+  const rel = await relNode.RED.inject(relNode.node, { payload: {} });
+  assert.strictEqual(rel.collected[0].payload.fields.param2, 0); // GRIPPER_RELEASE
+
+  // An unknown/misspelled action must NOT fall through to the destructive
+  // release — it fails with a structured error and sends nothing (#218).
+  const badNode = setup(profileWithoutComponentDefault('g3'), { action: 'gripper' });
+  const bad = await badNode.RED.inject(badNode.node, { payload: { grip_action: 'oepn' } });
+  assert.strictEqual(bad.collected[0].topic, 'mavlink/error');
+  assert.strictEqual(bad.collected[0].payload.code, 'BAD_GRIPPER_ACTION');
+  assert.ok(!bad.collected.some((m) => m.topic === 'mavlink/send'), 'no command was sent');
+});

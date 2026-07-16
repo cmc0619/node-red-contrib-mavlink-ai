@@ -82,3 +82,40 @@ test('valid boundary and Latin-1 values still encode (no false positives) (#153)
   /** uint64 max (2^64 - 1) is in range and encodes. */
   assert.ok(Buffer.isBuffer(enc(c, 'SYSTEM_TIME', { time_unix_usec: '18446744073709551615', time_boot_ms: 1 })));
 });
+
+test('a fractional value on an integer field is rejected, not truncated (#201)', () => {
+  assert.throws(
+    () => enc(codec(), 'COMMAND_LONG', { command: 400, target_system: 1.5, target_component: 1 }),
+    (e) => e.code === 'FIELD_NOT_INTEGER'
+  );
+});
+
+test('a non-finite value on an integer field is rejected (#201)', () => {
+  assert.throws(
+    () => enc(codec(), 'COMMAND_LONG', { command: 400, target_system: NaN, target_component: 1 }),
+    (e) => e.code === 'FIELD_NOT_INTEGER'
+  );
+});
+
+test('a fractional/unsafe Number on a 64-bit field is rejected, not silently truncated (#201)', () => {
+  assert.throws(
+    () => enc(codec(), 'SYSTEM_TIME', { time_unix_usec: 1.5, time_boot_ms: 1 }),
+    (e) => e.code === 'FIELD_NOT_INTEGER'
+  );
+  // Above 2^53 a Number has already lost bits — require a string/BigInt.
+  assert.throws(
+    () => enc(codec(), 'SYSTEM_TIME', { time_unix_usec: 9007199254740993, time_boot_ms: 1 }),
+    (e) => e.code === 'FIELD_NOT_INTEGER'
+  );
+  // A safe-integer Number and a decimal string both still work.
+  assert.ok(Buffer.isBuffer(enc(codec(), 'SYSTEM_TIME', { time_unix_usec: 1000, time_boot_ms: 1 })));
+  assert.ok(Buffer.isBuffer(enc(codec(), 'SYSTEM_TIME', { time_unix_usec: '18446744073709551615', time_boot_ms: 1 })));
+});
+
+test('a valid integer array still encodes; a fractional element is rejected (#201)', () => {
+  assert.ok(Buffer.isBuffer(enc(codec(), 'GPS_STATUS', { satellites_visible: 1, satellite_prn: [1, 2, 3] })));
+  assert.throws(
+    () => enc(codec(), 'GPS_STATUS', { satellites_visible: 1, satellite_prn: [1, 2.5, 3] }),
+    (e) => e.code === 'FIELD_NOT_INTEGER'
+  );
+});

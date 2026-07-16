@@ -89,3 +89,14 @@ test('profile filter matches the display name or the config-node id', async () =
   assert.strictEqual(await passes(RED, node, msg('HEARTBEAT', { profile_id: 'Copter' })), true);
   assert.strictEqual(await passes(RED, node, msg('HEARTBEAT', { profile: 'Plane' })), false);
 });
+
+test('a malformed id filter drops everything (fails closed) instead of widening (#193)', async () => {
+  // "1,2x" used to silently narrow to [1]; a fully-malformed value used to
+  // become [] = accept everything. Both must now fail the filter closed.
+  const { RED, node } = setup({ sysid: '1,2x' });
+  assert.strictEqual(await passes(RED, node, msg('HEARTBEAT', { sysid: 1 })), false);
+  assert.strictEqual(await passes(RED, node, msg('HEARTBEAT', { sysid: 99 })), false);
+
+  const bad = setup({ compid: '1O' });
+  assert.strictEqual(await passes(bad.RED, bad.node, msg('HEARTBEAT', { sysid: 5, compid: 5 })), false);
+});
