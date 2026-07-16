@@ -56,13 +56,17 @@ careful" — we tried that and it failed 14 times. The fix is structural:
    metadata. Nodes never do their own `<<`, `>>>`, `parseInt`, or `Number()`
    on a wire value. Fix a rule once; every node inherits it.
 
-2. **One round-trip test, run over every field type.** Assert that
-   `encode(decode(x))` reproduces `x` (and `decode(encode(v))` reproduces `v`)
-   for representative and random values of each type. Do **not** use raw `===`:
-   the `NaN` sentinel fails `NaN === NaN`, and float fields narrow to IEEE
-   float32 so an arbitrary JS double won't be strictly equal after a round trip.
-   Compare with `Object.is`/`Number.isNaN` for sentinels, at float32 precision
-   for floats (or compare the encoded bytes), and exact equality for integers.
+2. **One round-trip test, run over every field type.** Assert on the
+   *normalized field values* — `encode(decode(x))` reproduces the field `x` (and
+   `decode(encode(v))` reproduces `v`) for representative and random values of
+   each type. Do **not** assert byte-identical *frames*: sequence numbers,
+   signatures, and timestamps legitimately change between encodes, so a
+   whole-frame compare gives false failures (which an implementer then "fixes"
+   by loosening the assert). Compare the decoded field values instead. And do
+   **not** use raw `===`: the `NaN` sentinel fails `NaN === NaN`, and float
+   fields narrow to IEEE float32 so an arbitrary JS double won't be strictly
+   equal after a round trip. Compare with `Object.is`/`Number.isNaN` for
+   sentinels, at float32 precision for floats, and exact equality for integers.
    This single test catches the sign, `NaN`, `char[]`, and overflow families
    *automatically*, before they ship. Prefer a property-based generator
    (thousands of random inputs) over hand-picked cases.
@@ -96,17 +100,23 @@ packet. This surprises even seasoned C programmers — C doesn't do this.
 boundary module, never inline in a node. Add a round-trip test for a mask with
 bit 31 set.
 
-### A3. `NaN` is a real MAVLink signal, not "no value"
-**What bites:** MAVLink uses `NaN` to mean **"keep current / ignore this
-field"** (e.g. unused position-target axes, "don't change this param",
-gimbal-manager rates). `JSON.stringify(NaN)` is `null`; naive code turns it into
-`0` and commands the *wrong thing* (go to altitude 0, set rate 0).
+### A3. `NaN` is a real MAVLink signal in the fields that define it
+**What bites:** In specific fields, MAVLink uses `NaN` to mean **"keep current /
+ignore this field"** (e.g. unused position-target axes, "don't change this
+param", gimbal-manager rates). `JSON.stringify(NaN)` is `null`; naive code turns
+it into `0` and commands the *wrong thing* (go to altitude 0, set rate 0).
 **Real bugs:** `#187 reversible NaN/Infinity for floats`, `#173 preserve NaN
 "keep current" params`, `send NaN for unused gimbal-manager rates`,
 `NaN takeoff defaults`.
-**Mitigation:** Never round a wire float through `JSON.stringify`/`parse`.
-Represent and preserve `NaN`/`Infinity` explicitly end-to-end. Treat "field
-omitted" and "field = NaN sentinel" as first-class, distinct from `0`.
+**Mitigation:** Two separate rules — don't conflate them:
+- **Preserve** `NaN`/`Infinity` losslessly for *every* float field: never round
+  a wire float through `JSON.stringify`/`parse`, never coerce to `0`/`null`.
+  This is universal.
+- **Interpret** `NaN` as "keep current" **only** where that field's MAVLink
+  semantics define it — it is a per-field convention, not a global one. For an
+  arbitrary float field, `NaN` is simply an invalid value; validate/reject it.
+  Treat "field omitted" and "field = NaN sentinel" as first-class, distinct
+  from `0`, in the fields where the sentinel applies.
 
 ### A4. Float32 int/float unions (PX4 parameters)
 **What bites:** A `PARAM_VALUE` is a 32-bit slot that may carry an **integer bit
@@ -252,13 +262,15 @@ fallback, and never let a non-vehicle component become the default target.
 - [ ] That module reads each field's type/range/units from dialect metadata.
 - [ ] Range-check every integer against metadata and fail closed **before** any
       `>>> 0` normalization (normalizing first silently wraps bad input).
-- [ ] `NaN`/`Infinity` preserved end-to-end; never routed through JSON.
+- [ ] `NaN`/`Infinity` preserved losslessly for every float; interpreted as
+      "keep current" **only** in the fields whose semantics define it.
 - [ ] Blank ≠ 0 ≠ absent; no auto-zero-fill of active command fields.
 - [ ] `char[]` handled as text; params type-detected before write.
 - [ ] A **round-trip / property test** covers every field type, including a
       bitmask with bit 31 set, a `NaN` sentinel, an int/float param union, and a
-      full-length `char[]`. Compare NaN-aware (`Object.is`) and at float32
-      precision, not raw `===`.
+      full-length `char[]`. Assert on decoded **field values**, not
+      byte-identical frames (seq/signature/timestamp vary); compare NaN-aware
+      (`Object.is`) and at float32 precision, not raw `===`.
 - [ ] State ownership decided up front; missing input fails closed.
 - [ ] Priority bands on every send; age promotion clamped so background can
       never outrank emergency; periodic sends coalesced per identity.
