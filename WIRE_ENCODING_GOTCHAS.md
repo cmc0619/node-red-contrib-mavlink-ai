@@ -25,11 +25,16 @@ careful" — we tried that and it failed 14 times. The fix is structural:
    metadata. Nodes never do their own `<<`, `>>>`, `parseInt`, or `Number()`
    on a wire value. Fix a rule once; every node inherits it.
 
-2. **One round-trip test, run over every field type.** Assert
-   `encode(decode(x)) === x` (and `decode(encode(v)) === v`) for representative
-   and random values of each type. This single test catches the sign, `NaN`,
-   `char[]`, and overflow families *automatically*, before they ship. Prefer a
-   property-based generator (thousands of random inputs) over hand-picked cases.
+2. **One round-trip test, run over every field type.** Assert that
+   `encode(decode(x))` reproduces `x` (and `decode(encode(v))` reproduces `v`)
+   for representative and random values of each type. Do **not** use raw `===`:
+   the `NaN` sentinel fails `NaN === NaN`, and float fields narrow to IEEE
+   float32 so an arbitrary JS double won't be strictly equal after a round trip.
+   Compare with `Object.is`/`Number.isNaN` for sentinels, at float32 precision
+   for floats (or compare the encoded bytes), and exact equality for integers.
+   This single test catches the sign, `NaN`, `char[]`, and overflow families
+   *automatically*, before they ship. Prefer a property-based generator
+   (thousands of random inputs) over hand-picked cases.
 
 Everything below is what that module and that test must get right.
 
@@ -43,8 +48,12 @@ and JSON are signed. `-1` stored in a `uint8` should be `255`; read back
 carelessly it stays `-1`. A `uint32` value above 2^31 reads as negative.
 **Real bugs:** `#242 unsigned 32-bit bitmask math`, param corruption `#146`.
 **Mitigation:** In the boundary module, convert per the field's declared type.
-Force unsigned 32-bit with `value >>> 0` (not `>> 0`). Range-check against the
-field's min/max from metadata and **fail closed** if out of range — never wrap.
+**Validate the original value first:** reject non-integers and anything outside
+the field's min/max from metadata, failing closed — never normalize before you
+check. `value >>> 0` silently *wraps* out-of-range input (`4294967296` → `0`,
+`-1` → `4294967295`), which would make a later range check pass on a value the
+user never sent. Reserve `>>> 0` for normalizing an already-validated bitwise
+result or a signed decode, not for sanitizing input.
 
 ### A2. Bitwise operators are secretly signed 32-bit
 **What bites:** JS `&`, `|`, `^`, `<<`, `>>` coerce operands to **signed**
@@ -154,11 +163,13 @@ MAVLink spec for framing/ACK rules — don't reconstruct them from memory.
 
 - [ ] All JS↔wire conversion goes through **one** type-aware boundary module.
 - [ ] That module reads each field's type/range/units from dialect metadata.
-- [ ] `>>> 0` on every unsigned-32 result; range-check every integer, fail closed.
+- [ ] Range-check every integer against metadata and fail closed **before** any
+      `>>> 0` normalization (normalizing first silently wraps bad input).
 - [ ] `NaN`/`Infinity` preserved end-to-end; never routed through JSON.
 - [ ] Blank ≠ 0 ≠ absent; no auto-zero-fill of active command fields.
 - [ ] `char[]` handled as text; params type-detected before write.
 - [ ] A **round-trip / property test** covers every field type, including a
       bitmask with bit 31 set, a `NaN` sentinel, an int/float param union, and a
-      full-length `char[]`.
+      full-length `char[]`. Compare NaN-aware (`Object.is`) and at float32
+      precision, not raw `===`.
 - [ ] State ownership decided up front; missing input fails closed.
