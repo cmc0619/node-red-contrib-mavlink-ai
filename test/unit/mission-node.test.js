@@ -167,14 +167,14 @@ function setupWithSends({ profile, config } = {}) {
 }
 
 test('mission node explicit profile drives defaults, lock key, and sends', async () => {
-  const fence = profileStub('p2', 'Fence GCS', { defaultTargetSystem: 9, defaultMissionType: 'fence' });
-  const { RED, conn, node } = setupWithSends({ profile: fence, config: { profile: 'p2' } });
+  const fence = profileStub('p2', 'Fence GCS', { defaultTargetSystem: 9 });
+  const { RED, conn, node } = setupWithSends({ profile: fence, config: { profile: 'p2', missionType: 'fence' } });
   await RED.inject(node, { payload: { action: 'clear' } });
   const sent = conn.sent[0];
   assert.strictEqual(sent.name, 'MISSION_CLEAR_ALL');
   assert.strictEqual(sent.vehicleProfile, 'p2');
   assert.strictEqual(sent.fields.target_system, 9);
-  assert.strictEqual(sent.fields.mission_type, 1); // fence, from the override's defaults
+  assert.strictEqual(sent.fields.mission_type, 1); // fence, from the node's Mission Type
   assert.match(conn.lockNames[0], /:p2:/);
 });
 
@@ -188,14 +188,14 @@ test('mission node rejects an unresolvable profile with PROFILE_UNRESOLVED', asy
 });
 
 test('mission node route-resolves the target profile when no override is set', async () => {
-  const routed = profileStub('p_routed', 'Routed Rally', { defaultMissionType: 'rally' });
-  const { RED, conn, node } = setupWithSends({});
+  const routed = profileStub('p_routed', 'Routed Rally', {});
+  const { RED, conn, node } = setupWithSends({ config: { missionType: 'rally' } });
   conn.getProfileForPacket = ({ sysid }) => (sysid === 2 ? routed : conn.profile);
   await RED.inject(node, { payload: { action: 'clear', target_system: 2 } });
   const sent = conn.sent[0];
   assert.strictEqual(sent.vehicleProfile, 'p_routed');
   assert.strictEqual(sent.fields.target_system, 2);
-  assert.strictEqual(sent.fields.mission_type, 2); // rally, from the routed profile's defaults
+  assert.strictEqual(sent.fields.mission_type, 2); // rally, from the node's Mission Type (profile no longer carries it)
   assert.match(conn.lockNames[0], /:p_routed:/);
 });
 

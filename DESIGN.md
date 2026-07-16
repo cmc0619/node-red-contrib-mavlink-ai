@@ -411,7 +411,6 @@ Responsibilities:
 - Default target system.
 - Default target component.
 - Preferred mission item message type.
-- Default mission type.
 - Heartbeat identity defaults.
 - Protocol/debug preferences.
 ```
@@ -429,7 +428,6 @@ Source component ID
 Default target system
 Default target component
 Preferred mission item type: MISSION_ITEM_INT | MISSION_ITEM
-Default mission type: mission | fence | rally | all
 Heartbeat MAV_TYPE
 Heartbeat autopilot type
 Protocol debug enabled
@@ -446,7 +444,6 @@ Source component ID: 190
 Default target system: 1
 Default target component: 1
 Preferred mission item type: MISSION_ITEM_INT
-Default mission type: mission
 Heartbeat MAV_TYPE: MAV_TYPE_GCS
 Heartbeat autopilot type: MAV_AUTOPILOT_INVALID
 ```

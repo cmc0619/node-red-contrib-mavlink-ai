@@ -40,6 +40,14 @@ module.exports = function registerMavlinkAiMission(RED) {
      */
     node.profileRef = config.profile || '';
     node.action = config.action || 'download';
+    /**
+     * Which MAVLink list this workflow operates on (MAV_MISSION_TYPE):
+     * mission/fence/rally/all. Owned by this behavior node, not the Vehicle
+     * Profile — a mission is a per-operation choice, and one profile may back
+     * several Mission nodes handling different list types. `msg.payload.mission_type`
+     * still overrides per message; `all` is clear-only (rejected for upload).
+     */
+    node.missionType = config.missionType || 'mission';
     // 10s default (#58): legacy parity and safe for real radio/serial links.
     node.timeoutMs = toInt(config.timeoutMs, 10000);
     node.maxRetries = toInt(config.maxRetries, 3);
@@ -102,7 +110,7 @@ module.exports = function registerMavlinkAiMission(RED) {
         }));
       }
 
-      const missionTypeName = payload.mission_type || defaults.defaultMissionType || 'mission';
+      const missionTypeName = payload.mission_type || node.missionType || 'mission';
       const bundle = profile && profile.getDialect ? profile.getDialect() : null;
       let missionTypeNum;
       try {
