@@ -54,6 +54,7 @@ test('a debug-enabled profile logs inbound and outbound protocol traffic', async
 
   await conn.send({ name: 'COMMAND_LONG', target_system: 3, target_component: 1, fields: { command: 400, param1: 1 } });
   await conn.send({ name: 'HEARTBEAT', fields: HB });
+  await conn.send({ name: 'COMMAND_LONG', target_system: 0, target_component: 0, fields: { command: 400, param1: 1 } });
   const peer = new MavlinkCodec({ bundle: loadDialect('common'), version: 'v2' });
   conn._transport.emit('data', enc(peer, 'HEARTBEAT', HB, { sysid: 3, compid: 1 }));
   await delay(10);
@@ -61,9 +62,11 @@ test('a debug-enabled profile logs inbound and outbound protocol traffic', async
   const sent = logs.find((l) => /send COMMAND_LONG to sysid=3 compid=1/.test(l));
   const recv = logs.find((l) => /recv HEARTBEAT from sysid=3 compid=1/.test(l));
   const bcast = logs.find((l) => /send HEARTBEAT \(broadcast\)/.test(l));
+  const zeroBcast = logs.find((l) => /send COMMAND_LONG \(broadcast\)/.test(l));
   assert.ok(sent, `expected an addressed outbound debug line, got: ${JSON.stringify(logs)}`);
   assert.ok(recv, `expected an inbound debug line, got: ${JSON.stringify(logs)}`);
   assert.ok(bcast, `an unaddressed send must log as broadcast, not a default target: ${JSON.stringify(logs)}`);
+  assert.ok(zeroBcast, `a target_system 0 send must log as broadcast, not to sysid=0: ${JSON.stringify(logs)}`);
   assert.match(sent, /\[DbgVeh\]/);
 });
 

@@ -1792,11 +1792,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
       }
       const tag = `mavlink debug [${profile.name || profile.id}]`;
       /**
-       * An outbound message with no addressed target (`sysid` undefined) is a
-       * broadcast/fan-out, not a send to the profile's default vehicle — say so
-       * rather than logging the profile-default target as if it were addressed.
+       * An outbound message with no addressed target (`sysid` undefined), or an
+       * explicit `target_system` of 0, is a broadcast/fan-out — the UDP
+       * transport treats 0 as broadcast, so it is not a unicast to sysid 0. Say
+       * so rather than logging a misleading default/zero target as addressed.
        */
-      if (direction === 'send' && sysid === undefined) {
+      if (direction === 'send' && (sysid === undefined || sysid === 0)) {
         node.log(`${tag} send ${messageName} (broadcast)`);
         return;
       }
