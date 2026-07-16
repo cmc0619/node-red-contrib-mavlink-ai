@@ -1,0 +1,226 @@
+<script type="text/javascript">
+  RED.nodes.registerType('mavlink-ai-formation', {
+    category: 'MAVLink AI',
+    paletteLabel: 'MAVLink Formation',
+    color: '#FFD6A5',
+    defaults: {
+      name: { value: '' },
+      connection: {
+        value: '',
+        type: 'mavlink-ai-connection',
+        required: false,
+        /**
+         * Follow-leader needs a live telemetry connection; geometric modes are
+         * a stateless transform and never use it. Validate against the live shape.
+         */
+        validate: function (v) {
+          const $live = $('#node-input-shape');
+          const shape = $live.length ? $live.val() : this.shape;
+          return shape !== 'follow-leader' || (v !== '' && v != null);
+        }
+      },
+      shape: { value: 'wedge' },
+      followerShape: { value: 'wedge' },
+      spacing: { value: 10, validate: RED.validators.number() },
+      anchorMode: { value: 'msg' },
+      anchorLat: { value: '' },
+      anchorLon: { value: '' },
+      anchorAlt: { value: '' },
+      headingSource: { value: 'north' },
+      headingDeg: { value: 0 },
+      leaderSysid: { value: 1, validate: RED.validators.number() },
+      updateHz: { value: 2, validate: RED.validators.number() },
+      minMoveM: { value: 1, validate: RED.validators.number() },
+      staleAction: { value: 'successor' },
+      staleMs: { value: 5000, validate: RED.validators.number() },
+      expireMs: { value: 30000, validate: RED.validators.number() },
+      slotAssign: { value: 'auto' },
+      slots: { value: '' },
+      command: { value: 'MAV_CMD_DO_REPOSITION' },
+      sendAs: { value: 'int' },
+      frame: { value: 'MAV_FRAME_GLOBAL' },
+      dryRun: { value: false }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: 'font-awesome/fa-sitemap',
+    label: function () {
+      if (this.name) {
+        return this.name;
+      }
+      return this.shape === 'follow-leader' ? 'follow leader' : 'formation ' + this.shape;
+    },
+    oneditprepare: function () {
+      /**
+       * Mode-driven panel: the Formation dropdown reveals only the fields that
+       * apply, so the follow-leader controls never clutter the geometric config
+       * and vice versa (same refresh() pattern as the payload/fanout nodes).
+       */
+      function refresh() {
+        const shape = $('#node-input-shape').val();
+        const follow = shape === 'follow-leader';
+        $('.mav-form-follow').toggle(follow);
+        $('.mav-form-geo').toggle(!follow);
+        $('.mav-form-fixed-anchor').toggle(!follow && $('#node-input-anchorMode').val() === 'fixed');
+        $('.mav-form-explicit').toggle(!follow && $('#node-input-slotAssign').val() === 'explicit');
+        /**
+         * Only offer heading sources that apply to the mode: a geometric shape
+         * has no leader, and follow-leader has no msg-carried heading. Disable the
+         * incompatible options and reset an invalid saved selection, so the
+         * runtime never silently reinterprets it (leader→north / msg→leader).
+         */
+        const validHeadings = follow ? ['fixed', 'leader'] : ['north', 'fixed', 'msg'];
+        const $heading = $('#node-input-headingSource');
+        $heading.find('option').each(function () {
+          $(this).prop('disabled', validHeadings.indexOf($(this).val()) === -1);
+        });
+        if (validHeadings.indexOf($heading.val()) === -1) {
+          $heading.val(follow ? 'leader' : 'north');
+        }
+        $('.mav-form-fixed-heading').toggle($heading.val() === 'fixed');
+      }
+      $('#node-input-shape').on('change', refresh);
+      $('#node-input-anchorMode').on('change', refresh);
+      $('#node-input-headingSource').on('change', refresh);
+      $('#node-input-slotAssign').on('change', refresh);
+      refresh();
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="mavlink-ai-formation">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Formation">
+  </div>
+  <div class="form-row">
+    <label for="node-input-shape">Formation</label>
+    <select id="node-input-shape" style="width:70%;">
+      <option value="line">Line (abreast)</option>
+      <option value="column">Column (trail)</option>
+      <option value="grid">Grid</option>
+      <option value="wedge">Wedge (V)</option>
+      <option value="circle">Circle</option>
+      <option value="follow-leader">Follow leader (live)</option>
+    </select>
+  </div>
+  <div class="form-row mav-form-follow">
+    <label for="node-input-followerShape">Follower shape</label>
+    <select id="node-input-followerShape" style="width:70%;">
+      <option value="line">Line (abreast)</option>
+      <option value="column">Column (trail)</option>
+      <option value="grid">Grid</option>
+      <option value="wedge">Wedge (V)</option>
+      <option value="circle">Circle (around leader)</option>
+    </select>
+  </div>
+  <div class="form-row mav-form-follow">
+    <label for="node-input-connection">Connection</label>
+    <input type="text" id="node-input-connection">
+  </div>
+  <div class="form-row mav-form-follow">
+    <label for="node-input-leaderSysid">Leader sysid</label>
+    <input type="number" id="node-input-leaderSysid" min="1" placeholder="1">
+  </div>
+  <div class="form-row">
+    <label for="node-input-spacing">Spacing (m)</label>
+    <input type="number" id="node-input-spacing" min="0" placeholder="10">
+  </div>
+  <div class="form-row mav-form-geo">
+    <label for="node-input-anchorMode">Anchor</label>
+    <select id="node-input-anchorMode" style="width:70%;">
+      <option value="msg">From msg.payload.origin</option>
+      <option value="fixed">Fixed point</option>
+    </select>
+  </div>
+  <div class="form-row mav-form-fixed-anchor">
+    <label for="node-input-anchorLat">Anchor lat</label>
+    <input type="number" id="node-input-anchorLat" step="any" placeholder="e.g. 39.100">
+  </div>
+  <div class="form-row mav-form-fixed-anchor">
+    <label for="node-input-anchorLon">Anchor lon</label>
+    <input type="number" id="node-input-anchorLon" step="any" placeholder="e.g. -75.100">
+  </div>
+  <div class="form-row mav-form-fixed-anchor">
+    <label for="node-input-anchorAlt">Anchor alt (m)</label>
+    <input type="number" id="node-input-anchorAlt" step="any" placeholder="AMSL — every vehicle inherits it">
+  </div>
+  <div class="form-row">
+    <label for="node-input-headingSource">Heading</label>
+    <select id="node-input-headingSource" style="width:70%;">
+      <option value="north">North (up)</option>
+      <option value="fixed">Fixed heading</option>
+      <option value="msg" class="mav-form-geo-opt">From msg.payload.heading</option>
+      <option value="leader" class="mav-form-follow-opt">Leader heading</option>
+    </select>
+  </div>
+  <div class="form-row mav-form-fixed-heading">
+    <label for="node-input-headingDeg">Heading (°)</label>
+    <input type="number" id="node-input-headingDeg" step="any" placeholder="0 = north, clockwise">
+  </div>
+  <div class="form-row mav-form-geo">
+    <label for="node-input-slotAssign">Slots</label>
+    <select id="node-input-slotAssign" style="width:70%;">
+      <option value="auto">Auto (by sysid order)</option>
+      <option value="explicit">Explicit map</option>
+    </select>
+  </div>
+  <div class="form-row mav-form-explicit">
+    <label for="node-input-slots">Slot map</label>
+    <input type="text" id="node-input-slots" placeholder='{"3": 1, "5": 2} (sysid → slot index)'>
+  </div>
+  <div class="form-row mav-form-follow">
+    <label for="node-input-updateHz">Update (Hz)</label>
+    <input type="number" id="node-input-updateHz" min="0" step="any" placeholder="2">
+  </div>
+  <div class="form-row mav-form-follow">
+    <label for="node-input-minMoveM">Min move (m)</label>
+    <input type="number" id="node-input-minMoveM" min="0" step="any" placeholder="1">
+  </div>
+  <div class="form-row mav-form-follow">
+    <label for="node-input-staleAction">Leader stale</label>
+    <select id="node-input-staleAction" style="width:70%;">
+      <option value="successor">Promote next sysid (leader + 1)</option>
+      <option value="hold">Hold (stop emitting)</option>
+      <option value="stop">Stop</option>
+    </select>
+  </div>
+  <div class="form-row mav-form-follow">
+    <label for="node-input-staleMs">Stale after (ms)</label>
+    <input type="number" id="node-input-staleMs" min="0" placeholder="5000">
+  </div>
+  <div class="form-row mav-form-follow">
+    <label for="node-input-expireMs">Expire after (ms)</label>
+    <input type="number" id="node-input-expireMs" min="0" placeholder="30000">
+  </div>
+  <div class="form-row">
+    <label for="node-input-command">Command</label>
+    <input type="text" id="node-input-command" placeholder="MAV_CMD_DO_REPOSITION">
+  </div>
+  <div class="form-row">
+    <label for="node-input-sendAs">Send as</label>
+    <select id="node-input-sendAs" style="width:70%;">
+      <option value="int">COMMAND_INT (position, x/y in degE7)</option>
+      <option value="long">COMMAND_LONG</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-input-frame">Frame</label>
+    <input type="text" id="node-input-frame" placeholder="MAV_FRAME_GLOBAL">
+  </div>
+  <div class="form-row">
+    <label for="node-input-dryRun" title="Ask a downstream fan-out to echo the built messages instead of sending">Dry-run</label>
+    <input type="checkbox" id="node-input-dryRun" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
+  <div class="form-tips" style="margin-top:8px;">
+    Wire this node's output into a <b>MAVLink AI Fanout</b> node (its <code>targets</code> feed it directly), then Fanout into <b>MAVLink AI Out</b>. This node computes <i>where</i> each vehicle goes; Fanout owns send, per-vehicle ACKs, and pacing.
+  </div>
+</script>
+
+<script type="text/html" data-help-name="mavlink-ai-formation">
+  <p>Computes one global position target per vehicle from a <b>formation shape</b> and emits a <b>MAVLink AI Fanout</b>-shaped payload (<code>{ command, targets, ... }</code>). Wire <b>formation → fanout → out</b> to move a swarm into formation: this node computes <i>where</i>, and Fanout owns sending, per-vehicle <code>COMMAND_ACK</code> aggregation, pacing, and dry-run.</p>
+  <p><b>Geometric shapes</b> (line, column, grid, wedge, circle) are a stateless transform. Send an input carrying the vehicle list — <code>msg.payload.sysids</code>, a <b>MAVLink AI Swarm</b> registry output (<code>payload.vehicles</code>) wired straight in, or <code>payload.targets</code> — plus an <b>anchor</b>. The anchor is either a fixed configured point or <code>msg.payload.origin</code> (<code>{lat, lon, alt}</code>); every vehicle inherits the anchor altitude so the formation is level. The heading rotates the whole pattern (north-up, a fixed heading, or <code>msg.payload.heading</code>). Slot 0 sits on the anchor; the rest fan out. Slot assignment is deterministic by sysid order, or an explicit <code>{"sysid": slot}</code> map pins known vehicles (&#34;sysid 3 is always left wing&#34;).</p>
+  <p><b>Follow leader</b> mode holds a live registry on the selected <b>Connection</b>. It tracks the leader sysid's <code>GLOBAL_POSITION_INT</code> and re-emits follower targets as the leader moves — rate limited to <b>Update (Hz)</b> and a <b>Min move (m)</b> threshold so a jittering leader can&#39;t burst the link. Followers arrange in the chosen <b>Follower shape</b> around the leader, at the leader&#39;s altitude and heading; the leader itself is never commanded. An input message forces an immediate re-emit.</p>
+  <p><b>When the leader goes stale</b> (no telemetry within <b>Stale after</b>): <b>Promote next sysid</b> makes the next present vehicle the leader (&#34;leader + 1&#34;, wrapping) and continues; <b>Hold</b>/<b>Stop</b> cease emitting until a leader reports again. This is the safety-critical control — the default promotes so followers aren&#39;t left chasing a leader whose position has gone silent.</p>
+  <p>This is <b>supervisory</b>: goal updates at a few Hz via <code>DO_REPOSITION</code>, not a control loop. Each vehicle&#39;s own autopilot flies the path. Use <b>Dry-run</b> (and a downstream Fanout in dry-run) to see the full per-sysid target table before anything reaches a vehicle.</p>
+</script>
