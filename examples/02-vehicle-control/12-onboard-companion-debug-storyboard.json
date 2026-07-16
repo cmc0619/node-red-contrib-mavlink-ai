@@ -17,7 +17,6 @@
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
-    "defaultMissionType": "mission",
     "firmware": "ardupilot",
     "debugProtocol": false,
     "vehicleFamily": "generic"

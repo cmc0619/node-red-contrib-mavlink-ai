@@ -132,6 +132,7 @@
     "connection": "mission23_conn",
     "profile": "mission23_profile",
     "action": "download",
+    "missionType": "mission",
     "timeoutMs": 10000,
     "maxRetries": 3,
     "x": 440,
@@ -196,7 +197,6 @@
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
-    "defaultMissionType": "mission",
     "debugProtocol": false,
     "vehicleFamily": "generic"
   },

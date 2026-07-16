@@ -40,6 +40,14 @@ module.exports = function registerMavlinkAiMission(RED) {
      */
     node.profileRef = config.profile || '';
     node.action = config.action || 'download';
+    /**
+     * Which MAVLink list this workflow operates on (MAV_MISSION_TYPE):
+     * mission/fence/rally/all. Owned by this behavior node, not the Vehicle
+     * Profile — a mission is a per-operation choice, and one profile may back
+     * several Mission nodes handling different list types. `msg.payload.mission_type`
+     * still overrides per message; `all` is clear-only (rejected for upload).
+     */
+    node.missionType = config.missionType || 'mission';
     // 10s default (#58): legacy parity and safe for real radio/serial links.
     node.timeoutMs = toInt(config.timeoutMs, 10000);
     node.maxRetries = toInt(config.maxRetries, 3);
@@ -102,7 +110,16 @@ module.exports = function registerMavlinkAiMission(RED) {
         }));
       }
 
-      const missionTypeName = payload.mission_type || defaults.defaultMissionType || 'mission';
+      /**
+       * Presence-based, not truthy: a caller may pass the numeric
+       * MAV_MISSION_TYPE `0` (= mission) to override a node configured for
+       * fence/rally/all, and `||` would drop that valid `0` as "absent". Only
+       * undefined/null/'' fall through to the node's Mission Type, then the
+       * 'mission' default.
+       */
+      const payloadType = payload.mission_type;
+      const hasPayloadType = payloadType !== undefined && payloadType !== null && payloadType !== '';
+      const missionTypeName = hasPayloadType ? payloadType : node.missionType || 'mission';
       const bundle = profile && profile.getDialect ? profile.getDialect() : null;
       let missionTypeNum;
       try {

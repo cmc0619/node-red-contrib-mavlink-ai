@@ -16,7 +16,6 @@
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
-    "defaultMissionType": "mission",
     "debugProtocol": false,
     "vehicleFamily": "generic"
   },
@@ -89,6 +88,7 @@
     "name": "Mission",
     "connection": "ai_conn_udp",
     "action": "download",
+    "missionType": "mission",
     "timeoutMs": 3000,
     "maxRetries": 3,
     "x": 330,

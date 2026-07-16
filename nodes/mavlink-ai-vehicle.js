@@ -128,7 +128,6 @@ module.exports = function registerMavlinkAiProfile(RED) {
     node.defaultTargetSystem = targetUint8(config.defaultTargetSystem, 'Default target system', 1);
     node.defaultTargetComponent = targetUint8(config.defaultTargetComponent, 'Default target component', 1);
     node.preferredMissionItemType = config.preferredMissionItemType || 'MISSION_ITEM_INT';
-    node.defaultMissionType = config.defaultMissionType || 'mission';
     node.debugProtocol = toBool(config.debugProtocol, false);
 
     /**
@@ -190,7 +189,6 @@ module.exports = function registerMavlinkAiProfile(RED) {
       defaultTargetSystem: node.defaultTargetSystem,
       defaultTargetComponent: node.defaultTargetComponent,
       preferredMissionItemType: node.preferredMissionItemType,
-      defaultMissionType: node.defaultMissionType,
       debugProtocol: node.debugProtocol
     });
 

@@ -167,14 +167,15 @@ function setupWithSends({ profile, config } = {}) {
 }
 
 test('mission node explicit profile drives defaults, lock key, and sends', async () => {
-  const fence = profileStub('p2', 'Fence GCS', { defaultTargetSystem: 9, defaultMissionType: 'fence' });
-  const { RED, conn, node } = setupWithSends({ profile: fence, config: { profile: 'p2' } });
+  const fence = profileStub('p2', 'Fence GCS', { defaultTargetSystem: 9 });
+  const { RED, conn, node } = setupWithSends({ profile: fence, config: { profile: 'p2', missionType: 'fence' } });
   await RED.inject(node, { payload: { action: 'clear' } });
   const sent = conn.sent[0];
   assert.strictEqual(sent.name, 'MISSION_CLEAR_ALL');
   assert.strictEqual(sent.vehicleProfile, 'p2');
   assert.strictEqual(sent.fields.target_system, 9);
-  assert.strictEqual(sent.fields.mission_type, 1); // fence, from the override's defaults
+  /** mission_type 1 = fence, resolved from the node's Mission Type field. */
+  assert.strictEqual(sent.fields.mission_type, 1);
   assert.match(conn.lockNames[0], /:p2:/);
 });
 
@@ -188,15 +189,28 @@ test('mission node rejects an unresolvable profile with PROFILE_UNRESOLVED', asy
 });
 
 test('mission node route-resolves the target profile when no override is set', async () => {
-  const routed = profileStub('p_routed', 'Routed Rally', { defaultMissionType: 'rally' });
-  const { RED, conn, node } = setupWithSends({});
+  const routed = profileStub('p_routed', 'Routed Rally', {});
+  const { RED, conn, node } = setupWithSends({ config: { missionType: 'rally' } });
   conn.getProfileForPacket = ({ sysid }) => (sysid === 2 ? routed : conn.profile);
   await RED.inject(node, { payload: { action: 'clear', target_system: 2 } });
   const sent = conn.sent[0];
   assert.strictEqual(sent.vehicleProfile, 'p_routed');
   assert.strictEqual(sent.fields.target_system, 2);
-  assert.strictEqual(sent.fields.mission_type, 2); // rally, from the routed profile's defaults
+  /** mission_type 2 = rally, from the node's Mission Type — the profile no longer carries it. */
+  assert.strictEqual(sent.fields.mission_type, 2);
   assert.match(conn.lockNames[0], /:p_routed:/);
+});
+
+test('a numeric payload.mission_type 0 overrides a node configured for another list', async () => {
+  /**
+   * Presence-based defaulting: the numeric MAV_MISSION_TYPE 0 (= mission) is a
+   * valid override and must not be dropped as falsy — a `||` default would send
+   * the node's configured type instead (Codex review). Node is set to fence (1);
+   * an explicit 0 must reach the wire as mission (0), not fence.
+   */
+  const { RED, conn, node } = setupWithSends({ config: { missionType: 'fence' } });
+  await RED.inject(node, { payload: { action: 'clear', mission_type: 0 } });
+  assert.strictEqual(conn.sent[0].fields.mission_type, 0);
 });
 
 test('the best-effort clear stamps the NORMAL band explicitly (#241)', async () => {
