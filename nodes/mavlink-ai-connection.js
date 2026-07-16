@@ -703,6 +703,24 @@ module.exports = function registerMavlinkAiConnection(RED) {
      *   LOCAL_IDENTITY_INVALID | LOCAL_IDENTITY_NOT_ATTACHED | MULTI_IDENTITY_DISABLED
      */
     node.resolveOutboundIdentity = (ref) => {
+      /**
+       * A connection constructed (or deactivated) on a dependency failure keeps
+       * its live API with no resolvable default identity (#238). Workflows call
+       * this before send() and immediately dereference the result
+       * (.getIdentity()), so a null default must throw the structured stored
+       * reason here — not surface later as a TypeError that leaks workflow
+       * locks (Codex review). The explicit-ref path below also compares against
+       * the default, so the guard covers both.
+       */
+      if (!isIdentityNode(node.localIdentity)) {
+        const e = node._inactiveError;
+        throw e
+          ? new MavlinkError(e.code, e.message, e.context)
+          : new MavlinkError(
+              'LOCAL_IDENTITY_REQUIRED',
+              `Connection '${node.name || node.id}' has no default Local Identity.`
+            );
+      }
       if (ref === undefined || ref === null || ref === '') {
         return node.localIdentity;
       }

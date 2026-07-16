@@ -152,6 +152,9 @@ test('connection refuses to start with no default identity (#228)', async () => 
   /** #238: constructed deactivated — the rejection names the missing dependency. */
   assert.strictEqual(connection._active, false);
   await assert.rejects(connection.send({ name: 'HEARTBEAT', fields: {} }), (e) => e.code === 'LOCAL_IDENTITY_REQUIRED');
+  /** Workflows resolve the identity before send() and dereference the result —
+   * a null default must throw the structured reason, never return null. */
+  assert.throws(() => connection.resolveOutboundIdentity(), (e) => e.code === 'LOCAL_IDENTITY_REQUIRED');
   await RED.close(connection);
 });
 
