@@ -495,6 +495,33 @@ test('validateMissionItems rejects an unknown MAV_CMD name against the dialect (
   assert.doesNotThrow(() => validateMissionItems([{ command: 'MAV_CMD_NAV_WAYPONT' }]));
 });
 
+test('validateMissionItems rejects an unknown or non-integer frame against the dialect (#236)', () => {
+  /**
+   * frame is an int MAVLink enum: a typoed MAV_FRAME name or a fractional
+   * number must fail before MISSION_COUNT, not later when the encoder
+   * normalizes the item mid-handshake — same rule as the command check.
+   */
+  const enums = loadDialect('ardupilotmega').enums;
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT' }], enums));
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, frame: 3 }], enums), 'a numeric id passes through');
+  assert.throws(
+    () => validateMissionItems([{ command: 16, frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INTT' }], enums),
+    (e) => e.code === 'INVALID_FIELD' && e.context.field === 'frame' && /not a known MAV_FRAME/.test(e.message)
+  );
+  assert.throws(
+    () => validateMissionItems([{ command: 16, frame: 3.5 }], enums),
+    (e) => e.code === 'INVALID_FIELD' && e.context.field === 'frame'
+  );
+  /** A command name pasted into the frame field is cross-enum — rejected. */
+  assert.throws(
+    () => validateMissionItems([{ command: 16, frame: 'MAV_CMD_NAV_WAYPOINT' }], enums),
+    (e) => e.code === 'INVALID_FIELD' && e.context.field === 'frame'
+  );
+  /** Without enums: integers and non-blank names pass (resolved downstream), fractions fail. */
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INTT' }]));
+  assert.throws(() => validateMissionItems([{ command: 16, frame: 3.5 }]), (e) => e.context.field === 'frame');
+});
+
 test('MissionClear times out cleanly with no ACK (#59)', async () => {
   const conn = new FakeConnection();
   const wf = new MissionClear(downloadOpts(conn, { timeoutMs: 20, maxRetries: 0 }));
