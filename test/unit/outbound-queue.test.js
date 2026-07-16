@@ -162,7 +162,8 @@ test('onWrite fires only for actually-written buffers, never for coalesced drops
   const firstHb = queue.enqueue(Buffer.from([10]), 3, undefined, { coalesceKey: 'hb', onWrite: () => onWrote.push(10) });
   const secondHb = queue.enqueue(Buffer.from([11]), 3, undefined, { coalesceKey: 'hb', onWrite: () => onWrote.push(11) });
 
-  await firstHb; // superseded: resolves, but must NOT fire onWrite
+  /** Superseded: its promise resolves, but it must NOT fire onWrite. */
+  await firstHb;
   release();
   await Promise.all([inflight, secondHb]);
 
