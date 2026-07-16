@@ -174,7 +174,8 @@ test('mission node explicit profile drives defaults, lock key, and sends', async
   assert.strictEqual(sent.name, 'MISSION_CLEAR_ALL');
   assert.strictEqual(sent.vehicleProfile, 'p2');
   assert.strictEqual(sent.fields.target_system, 9);
-  assert.strictEqual(sent.fields.mission_type, 1); // fence, from the node's Mission Type
+  /** mission_type 1 = fence, resolved from the node's Mission Type field. */
+  assert.strictEqual(sent.fields.mission_type, 1);
   assert.match(conn.lockNames[0], /:p2:/);
 });
 
@@ -195,7 +196,8 @@ test('mission node route-resolves the target profile when no override is set', a
   const sent = conn.sent[0];
   assert.strictEqual(sent.vehicleProfile, 'p_routed');
   assert.strictEqual(sent.fields.target_system, 2);
-  assert.strictEqual(sent.fields.mission_type, 2); // rally, from the node's Mission Type (profile no longer carries it)
+  /** mission_type 2 = rally, from the node's Mission Type — the profile no longer carries it. */
+  assert.strictEqual(sent.fields.mission_type, 2);
   assert.match(conn.lockNames[0], /:p_routed:/);
 });
 
