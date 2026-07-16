@@ -130,7 +130,14 @@ test('connection refuses to start on an identity-invalid default identity (#90, 
     connection.errors.some((e) => /LOCAL_IDENTITY_INVALID/.test(String(e))),
     'connection logged the identity error'
   );
-  await assert.rejects(connection.send({ name: 'HEARTBEAT', fields: {} }), (e) => e.code === 'CONNECTION_INVALID');
+  /** #238: a dependency failure constructs DEACTIVATED (not no-op'ed), so the
+   * send rejection carries the specific stored reason and the connection can
+   * reactivate once the identity is fixed on a later deploy. */
+  assert.strictEqual(connection._active, false);
+  await assert.rejects(connection.send({ name: 'HEARTBEAT', fields: {} }), (e) => e.code === 'LOCAL_IDENTITY_INVALID');
+  /** An INVALID (present) default must also throw from the resolver — ack
+   * workflows derive source ids from it before send. */
+  assert.throws(() => connection.resolveOutboundIdentity(), (e) => e.code === 'LOCAL_IDENTITY_INVALID');
   await RED.close(connection);
 });
 
@@ -145,7 +152,12 @@ test('connection refuses to start with no default identity (#228)', async () => 
     bindPort: 0
   });
   assert.ok(connection.errors.some((e) => /LOCAL_IDENTITY_REQUIRED/.test(String(e))));
-  await assert.rejects(connection.send({ name: 'HEARTBEAT', fields: {} }), (e) => e.code === 'CONNECTION_INVALID');
+  /** #238: constructed deactivated — the rejection names the missing dependency. */
+  assert.strictEqual(connection._active, false);
+  await assert.rejects(connection.send({ name: 'HEARTBEAT', fields: {} }), (e) => e.code === 'LOCAL_IDENTITY_REQUIRED');
+  /** Workflows resolve the identity before send() and dereference the result —
+   * a null default must throw the structured reason, never return null. */
+  assert.throws(() => connection.resolveOutboundIdentity(), (e) => e.code === 'LOCAL_IDENTITY_REQUIRED');
   await RED.close(connection);
 });
 
