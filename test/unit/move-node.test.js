@@ -37,7 +37,7 @@ function setup(moveConfig, { withConnection = false } = {}) {
 }
 
 test('local position build-only emits mavlink/send with negated z', async () => {
-  const { RED, node } = setup({ coordinate: 'local', preset: 'position', altitude: '10', north: '5' });
+  const { RED, node } = setup({ coordinate: 'local', preset: 'position', altitude: '10', north: '5', east: '0' });
   const { collected } = await RED.inject(node, { payload: {} });
   const out = collected[0].payload;
   assert.strictEqual(collected[0].topic, 'mavlink/send');
@@ -55,6 +55,7 @@ test('acceleration preset passes the af vector through the node (#128)', async (
     preset: 'acceleration',
     frame: 'MAV_FRAME_LOCAL_NED',
     accelNorth: '1.5',
+    accelEast: '0',
     accelUp: '2'
   });
   const { collected } = await RED.inject(node, { payload: {} });
@@ -65,7 +66,7 @@ test('acceleration preset passes the af vector through the node (#128)', async (
 
 test('force preset via msg.payload sets the force bit (#128)', async () => {
   const { RED, node } = setup({ coordinate: 'local', preset: 'position', frame: 'MAV_FRAME_LOCAL_NED' });
-  const { collected } = await RED.inject(node, { payload: { preset: 'force', accelNorth: 3 } });
+  const { collected } = await RED.inject(node, { payload: { preset: 'force', accelNorth: 3, accelEast: 0, accelUp: 0 } });
   const out = collected[0].payload;
   assert.strictEqual(out.fields.afx, 3);
   assert.strictEqual(out.fields.type_mask & 0b0000_0010_0000_0000, 0b0000_0010_0000_0000);
@@ -89,7 +90,7 @@ test('global coordinate builds SET_POSITION_TARGET_GLOBAL_INT with degE7', async
 
 test('with a connection the node sends directly and emits nothing', async () => {
   const { RED, node, conn } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', climb: '0.5' },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0.5' },
     { withConnection: true }
   );
   const { collected } = await RED.inject(node, { payload: {} });
@@ -103,7 +104,7 @@ test('with a connection the node sends directly and emits nothing', async () => 
 
 test('a one-shot send that fails after a connection redeploy still emits the structured error (#128)', async () => {
   const { RED, node, conn } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1' },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0' },
     { withConnection: true }
   );
 
@@ -126,7 +127,7 @@ test('a one-shot send that fails after a connection redeploy still emits the str
 });
 
 test('msg.payload overrides editor values', async () => {
-  const { RED, node } = setup({ coordinate: 'local', preset: 'position', altitude: '1' });
+  const { RED, node } = setup({ coordinate: 'local', preset: 'position', altitude: '1', east: '0' });
   const { collected } = await RED.inject(node, { payload: { altitude: 20, north: 3 } });
   const out = collected[0].payload;
   assert.strictEqual(out.fields.z, -20);
@@ -135,8 +136,31 @@ test('msg.payload overrides editor values', async () => {
 
 test('custom preset uses the raw type_mask from the payload', async () => {
   const { RED, node } = setup({ coordinate: 'local', preset: 'custom' });
-  const { collected } = await RED.inject(node, { payload: { type_mask: 0 } });
+  /** type_mask 0 clears every ignore bit, so all axes are active and must be
+   * supplied — a fully-zero setpoint is a real command, not a blank one (#235). */
+  const { collected } = await RED.inject(node, {
+    payload: {
+      type_mask: 0,
+      north: 0, east: 0, altitude: 0,
+      velNorth: 0, velEast: 0, climb: 0,
+      accelNorth: 0, accelEast: 0, accelUp: 0,
+      yaw: 0, yawRate: 0
+    }
+  });
   assert.strictEqual(collected[0].payload.fields.type_mask, 0);
+});
+
+test('a whitespace-only active field is rejected, not sent as 0 (#248 review)', async () => {
+  /**
+   * The node coerces fields through toNum(..., undefined) before buildSetpoint.
+   * A whitespace-only value used to become a real 0 (Number(' ') === 0) and slip
+   * past the guard; toNum now treats it as blank, so the active-field guard fires.
+   */
+  const { RED, node } = setup({ coordinate: 'local', preset: 'position', north: '5', east: '   ', altitude: '10' });
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'BAD_SETPOINT_FIELD');
+  assert.ok(collected[0].payload.context.fields.includes('east'), 'names the blank axis');
 });
 
 test('a bad custom type_mask emits a structured error', async () => {
@@ -149,7 +173,7 @@ test('a bad custom type_mask emits a structured error', async () => {
 
 test('streaming resends the setpoint at the configured rate until stopped (#128)', async (t) => {
   const { RED, node, conn } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', stream: true, streamRateHz: 50 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -166,7 +190,7 @@ test('streaming resends the setpoint at the configured rate until stopped (#128)
 
 test('msg.payload.stream=false stops a running stream (#128)', async (t) => {
   const { RED, node } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', stream: true, streamRateHz: 50 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -178,7 +202,7 @@ test('msg.payload.stream=false stops a running stream (#128)', async (t) => {
 
 test('msg.payload.stream="false" (string) also stops a running stream (#128)', async (t) => {
   const { RED, node } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', stream: true, streamRateHz: 50 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -191,7 +215,7 @@ test('msg.payload.stream="false" (string) also stops a running stream (#128)', a
 
 test('a slow send is not piled up — ticks are skipped while one is in flight (#128)', async (t) => {
   const { RED, node, conn } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', stream: true, streamRateHz: 50 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -214,7 +238,7 @@ test('a slow send is not piled up — ticks are skipped while one is in flight (
 
 test('an unrelated deploy (flows:started, no dependency change) keeps a running stream alive (#128)', async (t) => {
   const { RED, node } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', stream: true, streamRateHz: 50 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -230,7 +254,7 @@ test('an unrelated deploy (flows:started, no dependency change) keeps a running 
 
 test('redeploying the referenced profile (flows:started, new config node) tears down the stream (#128)', async (t) => {
   const { RED, node } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', stream: true, streamRateHz: 50 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -251,7 +275,7 @@ test('redeploying the referenced profile (flows:started, new config node) tears 
 
 test('a stream send that rejects after the stream is stopped emits no stale error (#128)', async (t) => {
   const { RED, node, conn } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', stream: true, streamRateHz: 50 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -274,7 +298,7 @@ test('a stream send that rejects after the stream is stopped emits no stale erro
 });
 
 test('streaming without a connection is a structured error (#128)', async () => {
-  const { RED, node } = setup({ coordinate: 'local', preset: 'velocity', stream: true });
+  const { RED, node } = setup({ coordinate: 'local', preset: 'velocity', velNorth: '0', velEast: '0', climb: '0', stream: true });
   const { collected } = await RED.inject(node, { payload: {} });
   assert.strictEqual(collected[0].topic, 'mavlink/error');
   assert.strictEqual(collected[0].payload.code, 'STREAM_NEEDS_CONNECTION');
@@ -283,7 +307,7 @@ test('streaming without a connection is a structured error (#128)', async () => 
 
 test('closing the node stops the stream (stop-on-deploy guard) (#128)', async () => {
   const { RED, node } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', stream: true, streamRateHz: 50 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
     { withConnection: true }
   );
   await RED.inject(node, { payload: {} });
@@ -294,7 +318,7 @@ test('closing the node stops the stream (stop-on-deploy guard) (#128)', async ()
 
 test('msg.payload.stream=true streams even from a one-shot node and each input refreshes it (#128)', async (t) => {
   const { RED, node } = setup(
-    { coordinate: 'local', preset: 'position', altitude: '5', streamRateHz: 50 },
+    { coordinate: 'local', preset: 'position', north: '0', east: '0', altitude: '5', streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -311,7 +335,7 @@ test('refreshing a running stream does not force an extra immediate send — the
    * start should send immediately. Later refreshes must update the streamed
    * setpoint for the next scheduled tick, not fire an out-of-band send. */
   const { RED, node, conn } = setup(
-    { coordinate: 'local', preset: 'position', altitude: '5', stream: true, streamRateHz: 0.2 },
+    { coordinate: 'local', preset: 'position', north: '0', east: '0', altitude: '5', stream: true, streamRateHz: 0.2 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -327,7 +351,7 @@ test('refreshing a running stream does not force an extra immediate send — the
 
 test('a plain input keeps a payload-started stream alive and refreshes it (not one-shot) (#128)', async (t) => {
   const { RED, node, conn } = setup(
-    { coordinate: 'local', preset: 'position', altitude: '5', streamRateHz: 50 },
+    { coordinate: 'local', preset: 'position', north: '0', east: '0', altitude: '5', streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -351,7 +375,8 @@ test('a firmware-unsupported setpoint raises an advisory warning but still sends
     sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   const node = RED.create('mavlink-ai-move', {
-    id: 'm1', profile: 'p1', connection: '', coordinate: 'local', preset: 'force', frame: 'MAV_FRAME_LOCAL_NED', accelNorth: '1'
+    id: 'm1', profile: 'p1', connection: '', coordinate: 'local', preset: 'force', frame: 'MAV_FRAME_LOCAL_NED',
+    accelNorth: '1', accelEast: '0', accelUp: '0'
   });
 
   const { collected } = await RED.inject(node, { payload: {} });
@@ -364,7 +389,7 @@ test('a firmware-unsupported setpoint raises an advisory warning but still sends
   assert.strictEqual(node.warnings.length, 1, 'repeat input does not re-warn');
 
   /** A clean setpoint clears the dedup key so a later bad one warns again. */
-  await RED.inject(node, { payload: { preset: 'velocity', velNorth: 1 } });
+  await RED.inject(node, { payload: { preset: 'velocity', velNorth: 1, velEast: 0, climb: 0 } });
   await RED.inject(node, { payload: {} });
   assert.strictEqual(node.warnings.length, 2, 'warning returns after the set changes');
 });
