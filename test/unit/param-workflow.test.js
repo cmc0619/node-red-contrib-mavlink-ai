@@ -194,25 +194,30 @@ test('ParamSet flags applied=true across the float32 wire round-trip (#25)', asy
   assert.strictEqual(res.payload.applied, true);
 });
 
-test('Param read/set matches param ids case-insensitively (#26)', async () => {
-  const conn = new FakeConnection();
-  const read = new ParamRead({ connection: conn, targetSystem: 1, targetComponent: 1, paramId: 'rc1_min' });
-  const p = read.run();
-  conn.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 1100 }));
-  const res = await p;
-  assert.strictEqual(res.payload.param_id, 'RC1_MIN');
+test('Param ids go out verbatim and echoes match exactly (case-sensitive wire field) (#26)', async () => {
   /**
    * The outbound request carries the id VERBATIM — param ids are a
    * case-sensitive char[16] on the wire, so uppercasing made vehicles with
-   * lowercase ids unaddressable. Only inbound matching is case-insensitive.
+   * lowercase ids unaddressable — and the echo is matched exactly: folding
+   * case could settle a workflow on an unsolicited value for a case-distinct
+   * parameter and report the wrong outcome.
    */
+  const conn = new FakeConnection();
+  const read = new ParamRead({ connection: conn, targetSystem: 1, targetComponent: 1, paramId: 'rc1_min' });
+  const p = read.run();
+  /** A case-different id is a DIFFERENT parameter: it must not settle the read. */
+  conn.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 999 }));
+  conn.deliverParamValue(paramValue({ id: 'rc1_min', value: 1100 }));
+  const res = await p;
+  assert.strictEqual(res.payload.param_id, 'rc1_min');
+  assert.strictEqual(res.payload.param_value, 1100);
   const req = conn.sent.find((m) => m.name === 'PARAM_REQUEST_READ');
   assert.strictEqual(req.fields.param_id, 'rc1_min');
 
   const conn2 = new FakeConnection();
   const set = new ParamSet({ connection: conn2, targetSystem: 1, targetComponent: 1, paramId: 'rc1_min', value: 1200 });
   const p2 = set.run();
-  conn2.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 1200 }));
+  conn2.deliverParamValue(paramValue({ id: 'rc1_min', value: 1200 }));
   const res2 = await p2;
   assert.strictEqual(res2.payload.applied, true);
 });

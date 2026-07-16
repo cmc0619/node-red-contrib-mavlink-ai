@@ -1,7 +1,7 @@
 'use strict';
 
 const { MavlinkError, errorPayload, toMavlinkError } = require('../lib/util/errors');
-const { firstDefined, toInt, toBool } = require('../lib/util/validation');
+const { firstDefined, toInt, toNum, toBool } = require('../lib/util/validation');
 const { registerEditorApi } = require('../lib/editor-api');
 const { resolveFlightMode, splitPx4CustomMode } = require('../lib/command/flight-modes');
 const { CommandSend } = require('../lib/command/command-workflow');
@@ -178,10 +178,12 @@ module.exports = function registerMavlinkAiCommand(RED) {
       /**
        * DO_REPOSITION param4 is yaw in RADIANS (per the dialect definition),
        * while every friendly yaw input in this suite is degrees — convert here.
-       * NaN (the default) = keep the current yaw mode; a raw `param4` override
-       * stays untouched (radians, spec units).
+       * toNum's blank-aware coercion keeps an absent/blank yaw (dashboard form
+       * fields arrive as '') at NaN = "keep the current yaw mode", instead of
+       * Number('') === 0 silently commanding a yaw to north; NaN degrees stays
+       * NaN radians. A raw `param4` override elsewhere is untouched (radians).
        */
-      param4: Number.isFinite(Number(p.yaw)) ? (Number(p.yaw) * Math.PI) / 180 : NaN
+      param4: (toNum(p.yaw, NaN) * Math.PI) / 180
     }),
     change_speed: (p) => ({
       command: 'MAV_CMD_DO_CHANGE_SPEED',
