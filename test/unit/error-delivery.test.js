@@ -199,3 +199,31 @@ test('out node surfaces a failed listener start (UDP_NOT_STARTED / TCP_NOT_LISTE
     assert.strictEqual(err.code, code);
   }
 });
+
+test('out node forwards a clamped msg.priority to the connection (#241)', async () => {
+  /**
+   * The advanced override: msg.priority picks the outbound band, clamped to
+   * [0, 3]; absent means "no override" so the queue default applies. The
+   * command node stamps this on critical build-only commands.
+   */
+  const captured = [];
+  const RED = new MockRED().loadNodes();
+  RED.nodes.registerType('cap-connection', function CapConnection(config) {
+    RED.nodes.createNode(this, config);
+    this.name = 'cap';
+    this.statusState = 'connected';
+    this.emitter = new EventEmitter();
+    this.send = (message, options) => {
+      captured.push(options && options.priority);
+      return Promise.resolve();
+    };
+    this.sendRaw = this.send;
+  });
+  RED.create('cap-connection', { id: 'cap1' });
+  const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'cap1' });
+
+  await RED.inject(node, { topic: 'mavlink/send', priority: 0, payload: { name: 'HEARTBEAT', fields: {} } });
+  await RED.inject(node, { topic: 'mavlink/send', priority: 99, payload: { name: 'HEARTBEAT', fields: {} } });
+  await RED.inject(node, { topic: 'mavlink/send', payload: { name: 'HEARTBEAT', fields: {} } });
+  assert.deepStrictEqual(captured, [0, 3, undefined]);
+});

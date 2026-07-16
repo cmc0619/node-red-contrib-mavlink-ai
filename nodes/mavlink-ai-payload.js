@@ -7,6 +7,7 @@ const { toNum, toBool, firstDefined } = require('../lib/util/validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { watchConfigBadge } = require('../lib/util/node-lifecycle');
+const { commandPriorityFor } = require('../lib/runtime/send-priority');
 
 /**
  * mavlink-ai-payload.
@@ -230,6 +231,8 @@ module.exports = function registerMavlinkAiPayload(RED) {
           });
         }
         try {
+          /** Band from the shared policy (#241): the parachute verb resolves
+           * to a CRITICAL MAV_CMD; camera/gimbal/servo verbs ride NORMAL. */
           await connection.send(
             {
               name: built.name,
@@ -237,7 +240,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
               localIdentity: payload.localIdentity,
               fields: built.fields
             },
-            { msg }
+            { msg, priority: commandPriorityFor(bundle ? bundle.enums : null, built.fields.command) }
           );
           node.status({ fill: 'green', shape: 'dot', text: `sent ${action}` });
           return done();

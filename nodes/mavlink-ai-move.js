@@ -5,6 +5,7 @@ const { toNum, toBool, firstDefined } = require('../lib/util/validation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { watchProfileBadge } = require('../lib/util/node-lifecycle');
+const { PRIORITY } = require('../lib/runtime/send-priority');
 
 /**
  * mavlink-ai-move.
@@ -253,6 +254,8 @@ module.exports = function registerMavlinkAiMove(RED) {
       const connection = node.connection;
       if (connection) {
         try {
+          /** Setpoints ride the ELEVATED band (#241): their cadence keeps
+           * OFFBOARD/GUIDED alive, so they must not sit behind bulk traffic. */
           await connection.send(
             {
               name: built.name,
@@ -260,7 +263,7 @@ module.exports = function registerMavlinkAiMove(RED) {
               localIdentity: payload.localIdentity,
               fields: built.fields
             },
-            { msg }
+            { msg, priority: PRIORITY.ELEVATED }
           );
           node.status({ fill: 'green', shape: 'dot', text: `sent ${labelFor(built.name)}` });
           return done();
@@ -360,7 +363,7 @@ function streamTick(node) {
   const connection = node.connection;
   const gen = node._streamGen;
   connection
-    .send({ name: s.name, vehicleProfile: s.vehicleProfile, localIdentity: s.localIdentity, fields: s.fields }, {})
+    .send({ name: s.name, vehicleProfile: s.vehicleProfile, localIdentity: s.localIdentity, fields: s.fields }, { priority: PRIORITY.ELEVATED })
     .then(() => {
       if (node._streamGen !== gen) {
         return;
