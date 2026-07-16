@@ -194,24 +194,33 @@ module.exports = function registerMavlinkAiSwarm(RED) {
       attachedTo = node.connection;
     }
 
-    attach();
-    if (RED.events && typeof RED.events.on === 'function') {
-      RED.events.on('flows:started', attach);
-      node.on('close', function removeAttachWatcher() {
-        RED.events.removeListener('flows:started', attach);
-      });
-    }
-
+    /**
+     * With a malformed `groups` config the node fails closed entirely (#204):
+     * it does not attach/subscribe and does not start the change/interval
+     * emit timers, so it can never auto-emit an ungrouped `swarm/vehicles`
+     * snapshot (which bypasses the input handler's guard) — a broken group
+     * config must not widen the output to every vehicle. The input handler
+     * still answers with INVALID_CONFIG.
+     */
     const timers = [];
-    if (node.emitOnChange) {
-      timers.push(setInterval(emitIfChanged, CHANGE_TICK_MS));
-    }
-    if (node.intervalMs > 0) {
-      timers.push(setInterval(() => emitSnapshot(), node.intervalMs));
-    }
-    for (const t of timers) {
-      if (typeof t.unref === 'function') {
-        t.unref();
+    if (!node._configError) {
+      attach();
+      if (RED.events && typeof RED.events.on === 'function') {
+        RED.events.on('flows:started', attach);
+        node.on('close', function removeAttachWatcher() {
+          RED.events.removeListener('flows:started', attach);
+        });
+      }
+      if (node.emitOnChange) {
+        timers.push(setInterval(emitIfChanged, CHANGE_TICK_MS));
+      }
+      if (node.intervalMs > 0) {
+        timers.push(setInterval(() => emitSnapshot(), node.intervalMs));
+      }
+      for (const t of timers) {
+        if (typeof t.unref === 'function') {
+          t.unref();
+        }
       }
     }
 

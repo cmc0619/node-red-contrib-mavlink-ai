@@ -102,12 +102,12 @@ test('a fractional/unsafe Number on a 64-bit field is rejected, not silently tru
     () => enc(codec(), 'SYSTEM_TIME', { time_unix_usec: 1.5, time_boot_ms: 1 }),
     (e) => e.code === 'FIELD_NOT_INTEGER'
   );
-  // Above 2^53 a Number has already lost bits — require a string/BigInt.
+  /** Above 2^53 a Number has already lost bits — require a string/BigInt. */
   assert.throws(
     () => enc(codec(), 'SYSTEM_TIME', { time_unix_usec: 9007199254740993, time_boot_ms: 1 }),
     (e) => e.code === 'FIELD_NOT_INTEGER'
   );
-  // A safe-integer Number and a decimal string both still work.
+  /** A safe-integer Number and a decimal string both still work. */
   assert.ok(Buffer.isBuffer(enc(codec(), 'SYSTEM_TIME', { time_unix_usec: 1000, time_boot_ms: 1 })));
   assert.ok(Buffer.isBuffer(enc(codec(), 'SYSTEM_TIME', { time_unix_usec: '18446744073709551615', time_boot_ms: 1 })));
 });

@@ -127,9 +127,18 @@ test('mavlink-ai-swarm without a connection emits NO_CONNECTION, not silence (#1
   assert.strictEqual(collected[0].payload.code, 'NO_CONNECTION');
 });
 
-test('malformed groups JSON invalidates the node instead of erasing grouping (#204)', async () => {
-  const { RED, node } = setup({ groups: '{bad json' });
+test('malformed groups JSON invalidates the node and fails fully closed (#204)', async () => {
+  const { RED, conn, node } = setup({ groups: '{bad json', emitOnChange: true, intervalMs: 0 });
+  /**
+   * An input triggers a structured INVALID_CONFIG error, never a snapshot.
+   */
   const { collected } = await RED.inject(node, { payload: { group: 'scouts' } });
   assert.strictEqual(collected[0].topic, 'mavlink/error');
   assert.strictEqual(collected[0].payload.code, 'INVALID_CONFIG');
+  /**
+   * And the node must not attach/subscribe or start the change/interval emit
+   * timers — otherwise it could auto-emit an ungrouped snapshot with no input,
+   * re-widening the output to every vehicle (Codex review on #234).
+   */
+  assert.strictEqual(conn.filters.length, 0, 'no subscription was made on invalid config');
 });

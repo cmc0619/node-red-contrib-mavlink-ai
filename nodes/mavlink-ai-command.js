@@ -259,15 +259,17 @@ module.exports = function registerMavlinkAiCommand(RED) {
     node.timeoutMs = toInt(config.timeoutMs, 3000);
     node.maxRetries = toInt(config.maxRetries, 3);
 
-    // Static param values for a raw MAV_CMD selection (written by the editor).
-    // Friendly preset parameters from the editor (#49): mode, altitude, force,
-    // message_id, rate_hz, angle, ... Stored separately from the raw paramN
-    // fields so switching between preset and raw selections cannot corrupt
-    // saved values. Runtime msg.payload values override these statics.
-    //
-    // Malformed static JSON invalidates the node instead of silently becoming
-    // `{}` and omitting intended parameters (#204). Blank stays the empty
-    // default; imported/API/hand-edited flows bypass the editor validator.
+    /**
+     * Static param values for a raw MAV_CMD selection, plus the friendly preset
+     * parameters (#49: mode, altitude, force, message_id, rate_hz, angle, ...),
+     * both written by the editor. They are stored separately so switching
+     * between preset and raw selections cannot corrupt saved values; runtime
+     * msg.payload values override these statics.
+     *
+     * Malformed static JSON invalidates the node instead of silently becoming
+     * `{}` and omitting intended parameters (#204). Blank stays the empty
+     * default; imported/API/hand-edited flows bypass the editor validator.
+     */
     const parsedParams = parseJsonObjectConfig(config.fields, 'fields');
     const parsedPreset = parseJsonObjectConfig(config.presetFields, 'presetFields');
     const configParams = parsedParams.value;

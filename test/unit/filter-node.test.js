@@ -91,8 +91,10 @@ test('profile filter matches the display name or the config-node id', async () =
 });
 
 test('a malformed id filter drops everything (fails closed) instead of widening (#193)', async () => {
-  // "1,2x" used to silently narrow to [1]; a fully-malformed value used to
-  // become [] = accept everything. Both must now fail the filter closed.
+  /**
+   * "1,2x" used to silently narrow to [1]; a fully-malformed value used to
+   * become [] = accept everything. Both must now fail the filter closed.
+   */
   const { RED, node } = setup({ sysid: '1,2x' });
   assert.strictEqual(await passes(RED, node, msg('HEARTBEAT', { sysid: 1 })), false);
   assert.strictEqual(await passes(RED, node, msg('HEARTBEAT', { sysid: 99 })), false);
