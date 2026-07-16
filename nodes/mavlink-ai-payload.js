@@ -203,9 +203,14 @@ module.exports = function registerMavlinkAiPayload(RED) {
 
       /**
        * With a connection the node sends the command directly; without one it
-       * hands the built COMMAND_LONG to a downstream mavlink-ai-out node.
+       * hands the built COMMAND_LONG to a downstream mavlink-ai-out node. The
+       * connection is captured before any await: the live flows:started refresh
+       * (#238) can null or replace node.connection while a send/ack workflow is
+       * pending, and the catch paths must name the connection actually used —
+       * not TypeError on a stale null and leave done() uncalled.
        */
-      if (node.connection) {
+      const connection = node.connection;
+      if (connection) {
         /**
          * Optional await-ack (#129): confirm the device accepted a command
          * instead of fire-and-forget. Only COMMAND_LONG verbs get a COMMAND_ACK
@@ -214,6 +219,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
          */
         if (node.awaitAck && built.name === 'COMMAND_LONG') {
           return runWithAck(node, msg, send, done, {
+            connection,
             built,
             action,
             targetSystem,
@@ -224,7 +230,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
           });
         }
         try {
-          await node.connection.send(
+          await connection.send(
             {
               name: built.name,
               vehicleProfile: node.profile.id,
@@ -240,7 +246,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
           node.status({ fill: 'red', shape: 'ring', text: e.code });
           return finishError(node, msg, send, done, errorPayload({
             node: 'mavlink-ai-payload',
-            connection: node.connection.name,
+            connection: connection.name,
             code: e.code,
             message: e.message,
             context: e.context
@@ -299,6 +305,13 @@ module.exports = function registerMavlinkAiPayload(RED) {
  */
 async function runWithAck(node, msg, send, done, ctx) {
   /**
+   * The connection captured by the input handler before any await (#238): the
+   * live flows:started refresh can null/replace node.connection while this
+   * workflow is pending, and every use below must be the object the command
+   * was actually sent on.
+   */
+  const connection = ctx.connection;
+  /**
    * Construct the workflow inside the try: `new CommandSend` throws for an
    * unresolvable command (a MAV_CMD_* name the selected/custom dialect doesn't
    * know), and that must surface as a structured `mavlink/error` with a
@@ -310,10 +323,10 @@ async function runWithAck(node, msg, send, done, ctx) {
     // payload request when present (validated as attached/permitted by the
     // connection), else the connection default. Its source ids gate ACK
     // matching (#99).
-    const identity = node.connection.resolveOutboundIdentity(ctx.payload.localIdentity);
+    const identity = connection.resolveOutboundIdentity(ctx.payload.localIdentity);
     const source = identity.getIdentity();
     workflow = new CommandSend({
-      connection: node.connection,
+      connection,
       vehicleProfile: node.profile.id,
       localIdentity: ctx.payload.localIdentity,
       targetSystem: ctx.targetSystem,
@@ -331,7 +344,7 @@ async function runWithAck(node, msg, send, done, ctx) {
     node.status({ fill: 'red', shape: 'ring', text: e.code });
     return finishError(node, msg, send, done, errorPayload({
       node: 'mavlink-ai-payload',
-      connection: node.connection.name,
+      connection: connection.name,
       code: e.code,
       message: e.message,
       context: e.context
@@ -358,7 +371,7 @@ async function runWithAck(node, msg, send, done, ctx) {
     node.status({ fill: 'red', shape: 'ring', text: e.code });
     finishError(node, msg, send, done, errorPayload({
       node: 'mavlink-ai-payload',
-      connection: node.connection.name,
+      connection: connection.name,
       code: e.code,
       message: e.message,
       context: e.context

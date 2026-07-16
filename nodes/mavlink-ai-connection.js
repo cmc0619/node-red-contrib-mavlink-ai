@@ -705,20 +705,30 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node.resolveOutboundIdentity = (ref) => {
       /**
        * A connection constructed (or deactivated) on a dependency failure keeps
-       * its live API with no resolvable default identity (#238). Workflows call
-       * this before send() and immediately dereference the result
-       * (.getIdentity()), so a null default must throw the structured stored
-       * reason here — not surface later as a TypeError that leaks workflow
-       * locks (Codex review). The explicit-ref path below also compares against
-       * the default, so the guard covers both.
+       * its live API with a missing OR invalid default identity (#238).
+       * Workflows call this before send() and use the result's source ids for
+       * ack matching, so an unusable default must throw the structured stored
+       * reason here — never return null (a TypeError that leaks workflow locks)
+       * or an invalid identity (fallback source ids that mismatch every ack).
+       * The explicit-ref path below also compares against the default, so the
+       * guard covers both. An ACTIVE connection always has a valid default
+       * (construction and the reconcile guarantee it), so this never fires on a
+       * healthy link.
        */
-      if (!isIdentityNode(node.localIdentity)) {
+      const dflt = node.localIdentity;
+      if (!isIdentityNode(dflt) || (typeof dflt.isValid === 'function' && !dflt.isValid())) {
         const e = node._inactiveError;
-        throw e
-          ? new MavlinkError(e.code, e.message, e.context)
-          : new MavlinkError(
+        if (e) {
+          throw new MavlinkError(e.code, e.message, e.context);
+        }
+        throw !isIdentityNode(dflt)
+          ? new MavlinkError(
               'LOCAL_IDENTITY_REQUIRED',
               `Connection '${node.name || node.id}' has no default Local Identity.`
+            )
+          : new MavlinkError(
+              'LOCAL_IDENTITY_INVALID',
+              `Local Identity '${dflt.name || dflt.id}' is invalid.`
             );
       }
       if (ref === undefined || ref === null || ref === '') {

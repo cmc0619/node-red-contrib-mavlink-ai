@@ -135,6 +135,9 @@ test('connection refuses to start on an identity-invalid default identity (#90, 
    * reactivate once the identity is fixed on a later deploy. */
   assert.strictEqual(connection._active, false);
   await assert.rejects(connection.send({ name: 'HEARTBEAT', fields: {} }), (e) => e.code === 'LOCAL_IDENTITY_INVALID');
+  /** An INVALID (present) default must also throw from the resolver — ack
+   * workflows derive source ids from it before send. */
+  assert.throws(() => connection.resolveOutboundIdentity(), (e) => e.code === 'LOCAL_IDENTITY_INVALID');
   await RED.close(connection);
 });
 

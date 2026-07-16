@@ -137,3 +137,35 @@ test('payload re-resolves a Connection re-created on a later deploy (#238)', asy
   await RED.inject(node, { payload: {} });
   assert.strictEqual(sent.length, 1, 'sent directly through the recreated connection');
 });
+
+test('a refresh that nulls the connection mid-send still emits a structured error (#238)', async () => {
+  /**
+   * The live flows:started refresh can null/replace node.connection while a
+   * direct send is pending. The handler captures the connection before the
+   * await, so the catch path names the connection actually used instead of
+   * TypeError-ing on the stale null and leaving done() uncalled.
+   */
+  const { RED, node } = setup(profileWithoutComponentDefault('p1'), { action: 'camera_photo', connection: 'c1' });
+  let rejectSend;
+  RED._nodes.set('c1', {
+    id: 'c1',
+    name: 'Conn',
+    send: () => new Promise((_resolve, reject) => { rejectSend = reject; })
+  });
+  RED.events.emit('flows:started');
+  assert.ok(node.connection, 'resolved before the send');
+
+  const injected = RED.inject(node, { payload: {} });
+  await new Promise((r) => setTimeout(r, 0));
+
+  /** The connection config node is removed on a later deploy mid-flight. */
+  RED.remove('c1');
+  RED.events.emit('flows:started');
+  assert.strictEqual(node.connection, null, 'live refresh nulled the reference');
+
+  rejectSend(new Error('link down'));
+  const { collected } = await injected;
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'SEND_FAILED');
+  assert.strictEqual(collected[0].payload.connection, 'Conn', 'names the connection it actually sent on');
+});
