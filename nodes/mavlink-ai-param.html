@@ -459,6 +459,21 @@
         })
           .done(function (resp) {
             if (gen !== ctxRequestId) {
+              /**
+               * Stale generation: the action/profile changed while the
+               * download was in flight, so this handler must not write UI for
+               * the old context — but the download DID succeed and the cache
+               * now exists on disk. Without a nudge the dialog goes dead: the
+               * replacement status check already declined to auto-load again
+               * (one attempt per source, see shouldAutoLoad), so nothing
+               * would populate the controls until a manual click (Codex
+               * review). Re-drive the loaders against the CURRENT context —
+               * each is generation/request-guarded, and the status check now
+               * finds the fresh cache instead of starting a new download.
+               */
+              loadCatalogStatus();
+              loadParamList();
+              loadParamDetail();
               return;
             }
             $status.text('Loaded ' + resp.count + ' parameters (' + resp.sourceKey + ').');
@@ -467,6 +482,11 @@
           })
           .fail(function (xhr) {
             if (gen !== ctxRequestId) {
+              /**
+               * A stale failure needs no nudge: the replacement status check
+               * already rendered the accurate "no catalog cached — click Load
+               * parameters" state, which failing again wouldn't change.
+               */
               return;
             }
             const err = xhr && xhr.responseJSON ? xhr.responseJSON.error : 'download failed';
