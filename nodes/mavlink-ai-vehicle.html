@@ -328,11 +328,11 @@
   </div>
   <input type="hidden" id="node-config-input-dialect">
   <div class="form-row">
-    <label for="node-config-input-defaultTargetSystem">Default target SysID</label>
+    <label for="node-config-input-defaultTargetSystem">Outbound target SysID</label>
     <input type="number" id="node-config-input-defaultTargetSystem">
   </div>
   <div class="form-row">
-    <label for="node-config-input-defaultTargetComponent">Default target CompID</label>
+    <label for="node-config-input-defaultTargetComponent">Outbound target CompID</label>
     <input type="number" id="node-config-input-defaultTargetComponent">
   </div>
   <div class="form-row" style="margin-bottom: 4px;">
@@ -383,8 +383,8 @@
   <h3>Vehicle family</h3>
   <p><b>Copter / Plane / Rover / Boat / Sub / Antenna Tracker</b> select the ArduPilot mode tables and
   parameter metadata for that vehicle; <b>Generic</b> applies no vehicle-specific metadata.</p>
-  <p><b>Target SysID/CompID</b> (commonly <code>1</code>/<code>1</code> for the autopilot) are the
-  <em>default destination for messages you send</em> with this profile — an outbound default, not an
+  <p><b>Outbound target SysID/CompID</b> (commonly <code>1</code>/<code>1</code> for the autopilot) are
+  the <em>default destination for messages you send</em> with this profile — an outbound default, not an
   inbound identity. Which incoming packets are matched to this profile is decided by the
   <b>Connection's route table</b>, not by this field, so on a routed multi-vehicle Connection the
   route's SysID is authoritative and this stays purely an outbound default.</p>
