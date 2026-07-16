@@ -226,10 +226,12 @@
 
       loadCatalog();
 
-      // Advanced disclosure: version preference, mission-item wire type, and
-      // per-profile protocol debug are rarely changed (auto / INT / off suit
-      // almost everyone), so tuck them behind a toggle. Auto-expand when any is
-      // set to a non-default so an existing override is never hidden.
+      /**
+       * Advanced disclosure: version preference, mission-item wire type, and
+       * per-profile protocol debug are rarely changed (auto / INT / off suit
+       * almost everyone), so tuck them behind a toggle. Auto-expand when any is
+       * set to a non-default so an existing override is never hidden.
+       */
       function toggleAdvanced(show) {
         $('.mav-advanced').toggle(show);
         $('#node-mav-advanced-toggle i').toggleClass('fa-caret-right', !show).toggleClass('fa-caret-down', show);
@@ -326,11 +328,11 @@
   </div>
   <input type="hidden" id="node-config-input-dialect">
   <div class="form-row">
-    <label for="node-config-input-defaultTargetSystem">Target SysID</label>
+    <label for="node-config-input-defaultTargetSystem">Default target SysID</label>
     <input type="number" id="node-config-input-defaultTargetSystem">
   </div>
   <div class="form-row">
-    <label for="node-config-input-defaultTargetComponent">Target CompID</label>
+    <label for="node-config-input-defaultTargetComponent">Default target CompID</label>
     <input type="number" id="node-config-input-defaultTargetComponent">
   </div>
   <div class="form-row" style="margin-bottom: 4px;">

@@ -1704,7 +1704,13 @@ module.exports = function registerMavlinkAiConnection(RED) {
       } catch (err) {
         return Promise.reject(toMavlinkError(err, 'ENCODE_FAILED'));
       }
-      logProtocolDebug(profile, 'send', message.name, targetSystem, targetComponent);
+      logProtocolDebug(
+        profile,
+        'send',
+        message.name,
+        routingTargetSystem,
+        routingTargetSystem === undefined ? undefined : targetComponent
+      );
       return node._queue.enqueue(
         buffer,
         options.priority,
@@ -1774,11 +1780,18 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (!profile || !profile.debugProtocol) {
         return;
       }
+      const tag = `mavlink debug [${profile.name || profile.id}]`;
+      /**
+       * An outbound message with no addressed target (`sysid` undefined) is a
+       * broadcast/fan-out, not a send to the profile's default vehicle — say so
+       * rather than logging the profile-default target as if it were addressed.
+       */
+      if (direction === 'send' && sysid === undefined) {
+        node.log(`${tag} send ${messageName} (broadcast)`);
+        return;
+      }
       const rel = direction === 'send' ? 'to' : 'from';
-      node.log(
-        `mavlink debug [${profile.name || profile.id}] ${direction} ${messageName} ${rel} ` +
-          `sysid=${sysid} compid=${compid}`
-      );
+      node.log(`${tag} ${direction} ${messageName} ${rel} sysid=${sysid} compid=${compid}`);
     }
 
     /**
