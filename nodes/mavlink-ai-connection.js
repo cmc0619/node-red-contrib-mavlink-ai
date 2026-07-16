@@ -10,6 +10,7 @@ const { PacketRouter } = require('../lib/routing/packet-router');
 const { SubscriptionRegistry } = require('../lib/runtime/subscription-registry');
 const { OutboundQueue } = require('../lib/runtime/outbound-queue');
 const { LockManager } = require('../lib/runtime/lock-manager');
+const { PRIORITY } = require('../lib/runtime/send-priority');
 const { statusPayload } = require('../lib/util/status');
 const { toInt, toBool, parseIdListStrict } = require('../lib/util/validation');
 const { MavlinkError, toMavlinkError, errorPayload, TRANSPORT_NOT_READY_CODES } = require('../lib/util/errors');
@@ -2005,7 +2006,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
                 fields: identity.getHeartbeatFields(),
                 localIdentity: identity.id
               },
-              { priority: 3, coalesceKey: `heartbeat:${identity.id}` }
+              { priority: PRIORITY.BACKGROUND, coalesceKey: `heartbeat:${identity.id}` }
             )
             .catch((err) => {
               /**

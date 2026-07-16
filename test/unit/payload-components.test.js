@@ -169,3 +169,17 @@ test('a refresh that nulls the connection mid-send still emits a structured erro
   assert.strictEqual(collected[0].payload.code, 'SEND_FAILED');
   assert.strictEqual(collected[0].payload.connection, 'Conn', 'names the connection it actually sent on');
 });
+
+test('build-only output stamps CRITICAL only for safety verbs (#241)', async () => {
+  /** Parachute resolves to a critical MAV_CMD (DO_PARACHUTE) — the stamp rides
+   * the emitted message so Payload -> mavlink-ai-out keeps the critical band. */
+  const parachute = setup(profileWithoutComponentDefault('p1'), { action: 'parachute', parachuteAction: 'release' });
+  const rel = await parachute.RED.inject(parachute.node, { payload: {} });
+  assert.strictEqual(rel.collected[0].topic, 'mavlink/send');
+  assert.strictEqual(rel.collected[0].priority, 0, 'parachute rides CRITICAL');
+
+  /** A camera verb is not critical: no stamp, flows keep control of the field. */
+  const camera = setup(profileWithoutComponentDefault('p2'), { action: 'camera_photo' });
+  const shot = await camera.RED.inject(camera.node, { payload: {} });
+  assert.strictEqual(shot.collected[0].priority, undefined, 'camera carries no stamp');
+});

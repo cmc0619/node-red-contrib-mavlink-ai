@@ -424,3 +424,12 @@ test('move node clears a stale "invalid profile" badge when the profile is fixed
   assert.deepStrictEqual(node.statusHistory.at(-1), {});
   assert.ok(node.profile && node.profile.isValid());
 });
+
+test('build-only output carries the ELEVATED priority stamp (#241)', async () => {
+  /** Move -> mavlink-ai-out must ride the same band as a direct send: the Out
+   * node forwards msg.priority to the outbound queue. */
+  const { RED, node } = setup({ coordinate: 'local', preset: 'position', north: '1', east: '0', altitude: '5' });
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected[0].topic, 'mavlink/send');
+  assert.strictEqual(collected[0].priority, 1, 'setpoints are ELEVATED on the build-only path too');
+});

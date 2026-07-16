@@ -5,6 +5,7 @@ const { firstDefined, toInt, toNum, toBool, parseJsonObjectConfig } = require('.
 const { registerEditorApi } = require('../lib/editor-api');
 const { resolveFlightMode, splitPx4CustomMode } = require('../lib/command/flight-modes');
 const { CommandSend } = require('../lib/command/command-workflow');
+const { PRIORITY, commandPriorityFor } = require('../lib/runtime/send-priority');
 const { watchConfigBadge } = require('../lib/util/node-lifecycle');
 const {
   validateTargetSystem,
@@ -634,6 +635,20 @@ module.exports = function registerMavlinkAiCommand(RED) {
       };
       if (incoming.localIdentity !== undefined && incoming.localIdentity !== null && incoming.localIdentity !== '') {
         msg.payload.localIdentity = incoming.localIdentity;
+      }
+      /**
+       * Stamp the CRITICAL band on the emitted message when the resolved
+       * command is in the shared critical set (#241) — arm/disarm, mode change,
+       * flight termination, parachute. The Out node forwards msg.priority to
+       * the connection queue; non-critical messages carry no stamp so flows
+       * keep full control of the field.
+       */
+      {
+        const buildBundle = node.profile && node.profile.getDialect ? node.profile.getDialect() : null;
+        const priority = commandPriorityFor(buildBundle ? buildBundle.enums : null, fields.command);
+        if (priority === PRIORITY.CRITICAL) {
+          msg.priority = priority;
+        }
       }
 
       node.status({ fill: 'green', shape: 'dot', text: selected });

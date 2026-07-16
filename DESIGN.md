@@ -1512,6 +1512,28 @@ Strict priority alone is unsafe for the background band. Sustained priority ≤2
 - **Age promotion.** A queued item's *effective* priority improves by one band per `agePromotionMs` (default 2000) it has waited; effective-priority ties break in favor of the older item. A parked heartbeat therefore ages up to the flood's band, becomes the oldest item in it, and drains ahead — bounding its worst-case wait instead of allowing indefinite starvation. Promotion is clamped one band above emergency: an item already in band 0 stays there, and a non-emergency item (band ≥1) never ages below band 1 no matter how long it waits. This keeps the emergency band inviolate — an arm/mode/emergency send always cuts through a backlog rather than queueing behind a stale normal/background item that merely aged (the age tie-break means a same-band clamp would not suffice; the floor must sit strictly above band 0).
 - **Drop-superseded coalescing.** Enqueuing with a `coalesceKey` drops any still-queued (not in-flight) item sharing that key, resolving it (the newer send carries the same intent). The heartbeat tick uses `coalesceKey: 'heartbeat'` so at most one heartbeat is ever queued behind a slow transport rather than a growing backlog of stale copies.
 
+### 21.1 Send-priority policy (#241)
+
+Every producer assigns its band explicitly from `lib/runtime/send-priority.js` — the queue default is never relied on implicitly:
+
+```text
+CRITICAL (0)    only the listed MAV_CMDs, matched by resolved numeric id (never
+                guessed from arbitrary messages): COMPONENT_ARM_DISARM (400),
+                DO_SET_MODE (176), DO_FLIGHTTERMINATION (185), DO_PARACHUTE (208).
+                Assigned by the command workflow (command/payload/fan-out
+                await-ack paths, retransmits included), the payload node's
+                direct sends, and stamped as msg.priority on the command node's
+                build-only output for the Out node to forward.
+ELEVATED (1)    Move setpoints (one-shot and streamed): their cadence keeps
+                OFFBOARD/GUIDED alive, so they must not sit behind bulk traffic.
+                Also the age-promotion floor, so nothing non-critical starves.
+NORMAL (2)      mission and param protocol traffic, payload camera/gimbal verbs,
+                non-critical commands.
+BACKGROUND (3)  periodic heartbeats, coalesced per identity.
+```
+
+The Out node honors an advanced explicit override — `msg.priority`, truncated to an integer and clamped to [0, 3]; absent or non-numeric means the queue default — so a flow-authored kill switch can claim the critical band without the policy guessing. Queue priority cannot rescue an already-blocked transport write; the per-write completion deadline (#237, §17) is the guard on that side.
+
 ## 22. Heartbeat Design
 
 > **v3 (#228):** heartbeat *identity* (the `MAV_TYPE`/autopilot fields) is owned

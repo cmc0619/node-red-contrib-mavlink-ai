@@ -3,6 +3,7 @@
 const { badgeForState } = require('../lib/util/status');
 const { safeDetach } = require('../lib/util/node-lifecycle');
 const { TRANSPORT_WAITING_CODES } = require('../lib/util/errors');
+const { clampPriority } = require('../lib/runtime/send-priority');
 
 /**
  * mavlink-ai-out (DESIGN.md §13.2).
@@ -93,10 +94,17 @@ module.exports = function registerMavlinkAiOut(RED) {
         return done();
       }
       try {
+        /**
+         * Advanced explicit priority override (#241): msg.priority picks the
+         * outbound queue band, clamped to the valid range (0 critical .. 3
+         * background); absent or non-numeric means the queue default. The
+         * command node stamps it on critical build-only commands.
+         */
+        const priority = clampPriority(msg.priority);
         if (msg.topic === 'mavlink/raw' || Buffer.isBuffer(msg.payload)) {
-          await node.connection.sendRaw(msg.payload);
+          await node.connection.sendRaw(msg.payload, { priority });
         } else {
-          await node.connection.send(msg.payload);
+          await node.connection.send(msg.payload, { priority });
         }
         sent += 1;
         node._notReadyWarned = false;
