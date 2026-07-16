@@ -34,9 +34,10 @@ const HEARTBEAT_MIN_INTERVAL_MS = 1000;
 const KNOWN_INCOMPAT_FLAGS = 0x01;
 
 /**
- * Stream key for transports that multiplex a single peer's byte stream (udp,
- * serial, tcp-client). They share one decoder; only tcp-server hands out a
- * per-client `clientId` so each client gets its own stream splitter (#147).
+ * Stream key for transports that carry a single peer's byte stream (serial,
+ * tcp-client). They share one decoder; tcp-server keys one per client via its
+ * `clientId` (#147) and UDP one per source endpoint (#262 review) — see
+ * {@link streamKeyFor}.
  */
 const SHARED_STREAM_KEY = '__shared__';
 
@@ -51,10 +52,14 @@ const SHARED_STREAM_KEY = '__shared__';
 const HEARTBEAT_EXPECTED_IDLE_CODES = TRANSPORT_NOT_READY_CODES;
 
 /**
- * Ceiling on live per-client stream decoders. `peer-disconnect` evicts a
+ * Ceiling on live per-stream decoders. `peer-disconnect` evicts a tcp-server
  * client's decoder as soon as its socket closes, but this bounds memory if a
- * burst of short-lived tcp-server clients ever churns faster than eviction
- * (#147). Real deployments have a handful of GCS/bridge clients.
+ * burst of short-lived clients ever churns faster than eviction (#147) — and
+ * bounds UDP per-endpoint decoders outright, since spoofed source addresses
+ * can mint endpoints freely and datagram sources have no disconnect event.
+ * Evicting a live endpoint's decoder only drops any half-buffered garbage; it
+ * rebuilds lazily on that endpoint's next datagram. Real deployments have a
+ * handful of GCS/bridge peers.
  */
 const MAX_STREAM_DECODERS = 256;
 
@@ -2169,7 +2174,9 @@ module.exports = function registerMavlinkAiConnection(RED) {
        * TCP is a byte stream, so each server-mode client needs its own splitter:
        * a shared decoder corrupts framing when client A's half-frame arrives
        * with client B's bytes interleaved between the two `data` events (#147).
-       * Single-peer transports pass `SHARED_STREAM_KEY` and reuse one decoder.
+       * UDP likewise keys a decoder per source endpoint so one peer's bytes
+       * never buffer onto another's (#262 review); single-peer transports pass
+       * `SHARED_STREAM_KEY` and reuse one decoder.
        *
        * @param {string|number} streamKey
        * @returns {object} the stream's decoder
@@ -2230,11 +2237,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
           /** fatal config error already surfaced; don't re-log per datagram */
           return;
         }
-        /**
-         * tcp-server stamps a per-client `clientId`; every other transport
-         * delivers a single peer's stream and shares one decoder (#147).
-         */
-        const streamKey = rinfo && rinfo.clientId != null ? rinfo.clientId : SHARED_STREAM_KEY;
+        const streamKey = streamKeyFor(rinfo, node.transportType);
         let decoder;
         try {
           decoder = ensureDecoder(streamKey);
@@ -2277,18 +2280,17 @@ module.exports = function registerMavlinkAiConnection(RED) {
       });
       node._transport.on('reconnecting', () => {
         /**
-         * The dropped session may have left a partial frame buffered in the
-         * shared stream decoder (tcp-client / serial share one splitter). The
-         * next session's bytes would be appended mid-frame and force a lossy
-         * resync, garbling the first frames — start the new session with clean
-         * framing state instead. Per-client tcp-server decoders are already
-         * dropped on 'peer-disconnect'.
+         * The dropped session may have left a partial frame buffered in a
+         * stream decoder — the shared one (tcp-client / serial), or a
+         * per-endpoint UDP decoder that had a partial/phantom frame pending
+         * when the socket errored (#262 review). The next session's bytes
+         * would be appended mid-frame and force a lossy resync, garbling the
+         * first frames — start the new session with clean framing state for
+         * EVERY stream instead. tcp-server per-client decoders are also
+         * covered: after a server rebind those client sockets are gone, so
+         * their buffered state can only be stale.
          */
-        const shared = node._decoders.get(SHARED_STREAM_KEY);
-        if (shared) {
-          node._decoders.delete(SHARED_STREAM_KEY);
-          shared.destroy();
-        }
+        destroyDecoders();
         setStatus('reconnecting', 'Reconnecting...');
       });
       node._transport.on('error', (err) => {
@@ -2565,6 +2567,31 @@ function describeListening(node, info) {
 }
 
 /**
+ * Stream identity for framing (#147, #262 review): tcp-server keys a decoder
+ * per client via its `clientId`; UDP keys one per source endpoint — datagrams
+ * from different peers are independent streams, so one peer's partial or
+ * phantom bytes can never buffer onto another peer's datagram, and a frame
+ * recovered by the splitter's resync (#153) is always emitted during a read
+ * from its own endpoint. Without this, a phantom header from peer A could sit
+ * buffered until peer B's bytes completed its window, and A's recovered frame
+ * would inherit B's origin — teaching confirmPeer A's sysid at B's endpoint.
+ * Single-peer transports (serial, tcp-client) share one decoder.
+ *
+ * @param {?object} rinfo  the transport 'data' event's source info
+ * @param {string} transportType  the connection's transport type
+ * @returns {string|number} decoder key for this read's stream
+ */
+function streamKeyFor(rinfo, transportType) {
+  if (rinfo && rinfo.clientId != null) {
+    return rinfo.clientId;
+  }
+  if (rinfo && rinfo.address != null && String(transportType).startsWith('udp')) {
+    return `udp:${rinfo.address}:${rinfo.port}`;
+  }
+  return SHARED_STREAM_KEY;
+}
+
+/**
  * Immutable per-read source context (#239): the endpoint that produced one
  * transport read, captured before framing so every packet completed by that
  * read can carry it — through the decoded payload's `transport` (§14.1), the
@@ -2573,6 +2600,10 @@ function describeListening(node, info) {
  * (plus its per-client `clientId`), tcp-client the configured remote; serial
  * has no network endpoint and yields null. Frozen so nothing downstream can
  * mutate the shared reference after packets have been attributed to it.
+ *
+ * Framing state is also keyed by this identity (see {@link streamKeyFor}), so
+ * on multi-peer transports the read that completes a frame is by construction
+ * a read from the same endpoint that started it.
  *
  * @param {?object} rinfo  the transport 'data' event's source info
  * @returns {?object} { remoteAddress, remotePort, clientId? }, or null

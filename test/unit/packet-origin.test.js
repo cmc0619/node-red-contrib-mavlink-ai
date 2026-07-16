@@ -136,6 +136,76 @@ test('rejected diagnostics carry the sender endpoint; a read without one yields 
   assert.strictEqual(conn._transport.peersBySysid.size, 0);
 });
 
+test('one UDP peer\'s buffered phantom bytes never reattribute frames to another peer (#153, #262 review)', async (t) => {
+  /**
+   * Peer A's datagram carries a phantom header (false magic claiming a
+   * 255-byte payload) followed by a complete valid frame — the phantom's
+   * declared window is unsatisfied, so those bytes stay buffered. If UDP
+   * shared one framing stream, peer B's next datagram would complete the
+   * window and the resync would emit A's recovered frame during B's read —
+   * with B's origin, teaching confirmPeer A's sysid at B's endpoint. Framing
+   * is keyed per source endpoint instead: B's datagram decodes independently,
+   * and A's frame is recovered only by A's own next datagram, with A's origin.
+   */
+  const RED = new MockRED().loadNodes();
+  const conn = udpPeerConnection(RED);
+  t.after(() => RED.close(conn));
+
+  const received = [];
+  conn.emitter.on('message', (m) => received.push(m.payload));
+
+  const phantom = Buffer.from([0xfd, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff]);
+  const endpointA = { address: '10.0.0.1', port: 111 };
+  const endpointB = { address: '10.0.0.2', port: 222 };
+
+  conn._transport.emit('data', Buffer.concat([phantom, heartbeatFrom(7)]), endpointA);
+  assert.strictEqual(received.length, 0, "A's frame sits behind the unfilled phantom window");
+
+  /** 300 bytes from B would complete A's phantom window in a shared stream. */
+  conn._transport.emit('data', Buffer.concat(Array.from({ length: 15 }, () => heartbeatFrom(8))), endpointB);
+  const fromB = received.filter((p) => p.sysid === 8);
+  assert.strictEqual(fromB.length, 15, "B's own frames decode fine");
+  assert.strictEqual(received.some((p) => p.sysid === 7), false, "A's frame was NOT released by B's bytes");
+  assert.strictEqual(conn._transport.peersBySysid.has(7), false, "A's sysid was not committed anywhere yet");
+
+  /** A's own next datagram completes its window; the recovered frame is A's. */
+  conn._transport.emit('data', Buffer.concat(Array.from({ length: 15 }, () => heartbeatFrom(7))), endpointA);
+  const fromA = received.filter((p) => p.sysid === 7);
+  assert.ok(fromA.length >= 1, "A's frames recover once A's own bytes complete the window");
+  assert.ok(fromA.every((p) => p.transport.remoteAddress === '10.0.0.1'), "every sysid-7 frame carries A's endpoint");
+  assert.deepStrictEqual(conn._transport.peersBySysid.get(7), { address: '10.0.0.1', port: 111 });
+  assert.deepStrictEqual(conn._transport.peersBySysid.get(8), { address: '10.0.0.2', port: 222 });
+});
+
+test('a reconnect drops per-endpoint framing state, not just the shared stream (#262 review)', async (t) => {
+  /**
+   * A UDP socket rebind invalidates every stream: a per-endpoint decoder that
+   * had a partial or phantom frame buffered when the socket errored must not
+   * survive into the new session, or the endpoint's first post-recovery
+   * datagrams are appended mid-frame and garbled.
+   */
+  const RED = new MockRED().loadNodes();
+  const conn = udpPeerConnection(RED);
+  t.after(() => RED.close(conn));
+
+  const received = [];
+  conn.emitter.on('message', (m) => received.push(m.payload));
+
+  const frame = heartbeatFrom(7);
+  const endpointA = { address: '10.0.0.1', port: 111 };
+  conn._transport.emit('data', frame.subarray(0, 10), endpointA);
+  assert.ok(conn._decoders.size >= 1, 'the endpoint has framing state buffered');
+
+  conn._transport.emit('reconnecting');
+  assert.strictEqual(conn._decoders.size, 0, 'every stream decoder is dropped on reconnect');
+
+  /** A fresh, complete frame from the same endpoint decodes cleanly. */
+  conn._transport.emit('data', frame, endpointA);
+  assert.strictEqual(received.length, 1);
+  assert.strictEqual(received[0].sysid, 7);
+  assert.strictEqual(received[0].transport.remoteAddress, '10.0.0.1');
+});
+
 test('decoded payloads and rejected diagnostics carry the connection identity (#240)', async (t) => {
   /**
    * A Profile can be shared by several Connections and separate links reuse
