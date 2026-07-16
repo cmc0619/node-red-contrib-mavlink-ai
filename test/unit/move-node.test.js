@@ -150,6 +150,19 @@ test('custom preset uses the raw type_mask from the payload', async () => {
   assert.strictEqual(collected[0].payload.fields.type_mask, 0);
 });
 
+test('a whitespace-only active field is rejected, not sent as 0 (#248 review)', async () => {
+  /**
+   * The node coerces fields through toNum(..., undefined) before buildSetpoint.
+   * A whitespace-only value used to become a real 0 (Number(' ') === 0) and slip
+   * past the guard; toNum now treats it as blank, so the active-field guard fires.
+   */
+  const { RED, node } = setup({ coordinate: 'local', preset: 'position', north: '5', east: '   ', altitude: '10' });
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'BAD_SETPOINT_FIELD');
+  assert.ok(collected[0].payload.context.fields.includes('east'), 'names the blank axis');
+});
+
 test('a bad custom type_mask emits a structured error', async () => {
   const { RED, node } = setup({ coordinate: 'local', preset: 'custom', typeMask: '70000' });
   const { collected } = await RED.inject(node, { payload: {} });

@@ -20,6 +20,18 @@ test('toNum preserves fractions and falls back (#29)', () => {
   assert.strictEqual(toNum('nope', 3), 3);
 });
 
+test('toInt/toNum treat a whitespace-only string as blank, not a real 0 (#248)', () => {
+  /**
+   * Number(' ') is 0 (finite), so a whitespace-only field would otherwise coerce
+   * to an intentional 0 and slip past a fallback/validation gate meant to catch a
+   * left-blank value — e.g. a whitespace setpoint axis reaching the Move node.
+   */
+  for (const ws of [' ', '   ', '\t', '\n', ' \t ']) {
+    assert.strictEqual(toInt(ws, 7), 7, `toInt('${ws}') is blank`);
+    assert.strictEqual(toNum(ws, 7), 7, `toNum('${ws}') is blank`);
+  }
+});
+
 test('toBool handles node-red string booleans', () => {
   assert.strictEqual(toBool('true'), true);
   assert.strictEqual(toBool('false'), false);
