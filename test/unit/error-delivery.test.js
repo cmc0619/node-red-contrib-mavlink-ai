@@ -135,3 +135,17 @@ test('out node treats a not-ready transport as "waiting", not an error (no spam)
   assert.strictEqual(second.err, undefined);
   assert.strictEqual(node.warnings.length, 1, 'warn-once — no spam');
 });
+
+test('out node still surfaces a permanent udp-out misconfiguration (UDP_NO_REMOTE)', async () => {
+  /**
+   * Unlike a udp-peer waiting for a peer, a udp-out with no remote configured
+   * can never deliver — that is a real error, so it must reach done(err) and
+   * not be swallowed as a "waiting" state.
+   */
+  const badRemote = Object.assign(new Error('no remote configured'), { code: 'UDP_NO_REMOTE' });
+  const { RED } = setup({ sendError: badRemote });
+  const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
+  const { err } = await RED.inject(node, { topic: 'mavlink/send', payload: { name: 'HEARTBEAT', fields: {} } });
+  assert.ok(err, 'a permanent udp-out misconfiguration surfaces via done(err)');
+  assert.strictEqual(err.code, 'UDP_NO_REMOTE');
+});

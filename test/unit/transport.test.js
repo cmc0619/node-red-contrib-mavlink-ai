@@ -79,6 +79,24 @@ test('udp-peer send before any peer rejects clearly', async () => {
   await transport.stop();
 });
 
+test('udp-out with no remote rejects with UDP_NO_REMOTE, not the transient UDP_NO_PEER', async () => {
+  /**
+   * udp-out never learns a peer, so an empty target set is a permanent
+   * misconfiguration — a distinct code so a fire-and-forget sender surfaces it
+   * instead of quietly waiting for a peer that can never appear.
+   */
+  const transport = new UdpTransport({ mode: 'udp-out', bindAddress: '127.0.0.1', bindPort: 0 });
+  await new Promise((resolve) => {
+    transport.on('listening', resolve);
+    transport.start();
+  });
+  await assert.rejects(
+    () => transport.send(Buffer.from([1])),
+    (err) => err.code === 'UDP_NO_REMOTE'
+  );
+  await transport.stop();
+});
+
 test('serial start without a path errors clearly (does not need serialport)', async () => {
   const transport = new SerialTransport({ serialPath: '' });
   const err = await new Promise((resolve) => {
