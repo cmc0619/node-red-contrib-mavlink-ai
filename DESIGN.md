@@ -1133,7 +1133,12 @@ decode-error diagnostics. Serial has no network endpoint, so these fields are
 absent there. Attribution rule: a packet belongs to the read that *completed*
 its frame — frames concatenated in one read share that read's endpoint, and a
 frame split across reads (abnormal for UDP, routine for TCP) reports the
-completing read's.
+completing read's. Framing state is keyed per stream (per tcp-server client,
+per UDP source endpoint, one shared stream for serial/tcp-client), so the
+completing read is by construction from the same endpoint that started the
+frame — one peer's partial or phantom bytes can never buffer onto another
+peer's datagram, and a frame recovered by the splitter's resync always carries
+its own sender's endpoint.
 
 **64-bit integer fields.** MAVLink `int64_t` / `uint64_t` fields (e.g.
 `time_usec`) carry more range than a JavaScript `Number` can hold without loss
