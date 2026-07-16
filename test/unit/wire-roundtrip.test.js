@@ -38,7 +38,15 @@ function fieldShape(field) {
   if (!m) {
     return { base: field.type, count: 0 };
   }
-  return { base: m[1], count: field.length || 0 };
+  /**
+   * Element count: an explicit bracket count if the type carries one, else the
+   * field metadata. Bundled dialects (mavlink-mappings) store it on `length`;
+   * the custom-XML compiler uses `arrayLength`. Honor all three so the net
+   * exercises arrays regardless of dialect source (Codex review). A per-dialect
+   * assertion below fails loudly if this ever resolves arrays to 0.
+   */
+  const bracket = m[2] ? Number(m[2]) : 0;
+  return { base: m[1], count: bracket || field.arrayLength || field.length || 0 };
 }
 
 /**
@@ -133,6 +141,7 @@ for (const dialect of DIALECTS) {
     const failures = [];
     let messages = 0;
     let fieldsChecked = 0;
+    let arraysChecked = 0;
 
     for (const id of Object.keys(bundle.registry)) {
       const clazz = getMessageClass(bundle, Number(id));
@@ -151,6 +160,9 @@ for (const dialect of DIALECTS) {
       messages += 1;
       for (const field of clazz.FIELDS) {
         fieldsChecked += 1;
+        if (fieldShape(field).count > 0) {
+          arraysChecked += 1;
+        }
         const expected = input[field.source];
         const actual = decoded.fields[field.source];
         if (!fieldEqual(field, expected, actual)) {
@@ -169,6 +181,15 @@ for (const dialect of DIALECTS) {
       0,
       `wire round-trip failures in '${dialect}' (${messages} msgs / ${fieldsChecked} fields):\n` +
         failures.slice(0, 40).join('\n')
+    );
+    /**
+     * Guard against a silent regression to "arrays sampled/compared as scalars"
+     * (e.g. a field-metadata shape change): every bundled dialect has array
+     * fields, so a zero here means the net stopped actually exercising them.
+     */
+    assert.ok(
+      arraysChecked > 0,
+      `'${dialect}': expected the net to verify array fields, but none were exercised`
     );
   });
 }
