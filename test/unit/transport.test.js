@@ -617,3 +617,28 @@ test('tcp-server drops a client already backed up past the backlog cap without w
   assert.strictEqual(backedUp.destroyed, true, 'the backed-up client was dropped');
   assert.ok(errors.some((e) => e.code === 'TCP_CLIENT_BACKPRESSURE'), 'backpressure was surfaced');
 });
+
+test('a serial write whose callback never fires times out with SERIAL_SEND_TIMEOUT (#237)', async (t) => {
+  /**
+   * A dead device the kernel still lists accepts write() and never calls back;
+   * without a deadline that single write holds the shared outbound drain loop
+   * open until the queue fills and every later send rejects.
+   */
+  const transport = new SerialTransport({ serialPath: '/dev/fake', writeTimeoutMs: 20 });
+  transport.port = { isOpen: true, write() {} };
+  /** The deadline timer is unref'd; keep the loop alive so it can fire. */
+  const keepAlive = setInterval(() => {}, 5);
+  t.after(() => clearInterval(keepAlive));
+  await assert.rejects(() => transport.send(Buffer.from([1])), (e) => e.code === 'SERIAL_SEND_TIMEOUT');
+});
+
+test('a UDP send whose callback never fires times out with UDP_SEND_TIMEOUT (#237)', async (t) => {
+  const transport = new UdpTransport({ mode: 'udp-peer', writeTimeoutMs: 20 });
+  transport.socket = { send() {} };
+  transport._bound = true;
+  transport.remoteHost = '127.0.0.1';
+  transport.remotePort = 14550;
+  const keepAlive = setInterval(() => {}, 5);
+  t.after(() => clearInterval(keepAlive));
+  await assert.rejects(() => transport.send(Buffer.from([1])), (e) => e.code === 'UDP_SEND_TIMEOUT');
+});
