@@ -97,33 +97,43 @@ test('udp-out with no remote rejects with UDP_NO_REMOTE, not the transient UDP_N
   await transport.stop();
 });
 
-test('udp-peer send before the socket has started rejects UDP_NOT_STARTED, not UDP_NO_PEER', async () => {
+test('udp-peer send before bind completes rejects UDP_NOT_STARTED, not UDP_NO_PEER', async () => {
   /**
-   * A never-started (or torn-down) socket is null. The transport must reject
-   * that with UDP_NOT_STARTED *before* the empty-target check, so a failed bind
-   * can never masquerade as the transient UDP_NO_PEER that a fire-and-forget
-   * sender silently waits out — a listener that never came up is a real error a
-   * Catch node must see.
+   * start() assigns this.socket synchronously, but bind() is async and may still
+   * fail with EADDRINUSE. A send before 'listening' (socket assigned, not yet
+   * bound) must reject with the distinct UDP_NOT_STARTED *before* the empty-target
+   * check, so a listener that never actually bound can't masquerade as the
+   * transient UDP_NO_PEER the Out node silently waits out (Codex review).
    */
   const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
-  await assert.rejects(
-    () => transport.send(Buffer.from([1])),
-    (err) => err.code === 'UDP_NOT_STARTED'
-  );
+  /** Before start(): socket is null. */
+  await assert.rejects(() => transport.send(Buffer.from([1])), (err) => err.code === 'UDP_NOT_STARTED');
+  /** After start() but before the 'listening' event: socket assigned, not bound. */
+  transport.start();
+  assert.ok(transport.socket, 'start() assigns the socket synchronously');
+  assert.strictEqual(transport._bound, false, 'but it is not bound until listening');
+  await assert.rejects(() => transport.send(Buffer.from([1])), (err) => err.code === 'UDP_NOT_STARTED');
+  await transport.stop();
 });
 
-test('tcp-server send before listen has started rejects TCP_NOT_LISTENING, not TCP_NO_CLIENT', async () => {
+test('tcp-server send before listen completes rejects TCP_NOT_LISTENING, not TCP_NO_CLIENT', async () => {
   /**
-   * A never-started (or torn-down) server is null. The transport must reject
-   * that with TCP_NOT_LISTENING *before* the no-client check, so a failed listen
-   * (a port already in use) can never masquerade as the transient TCP_NO_CLIENT
-   * a fire-and-forget sender silently waits out.
+   * start() assigns this.server synchronously, but listen() is async and may
+   * still fail (e.g. EADDRINUSE). A send before the listen callback (server
+   * assigned, server.listening false) must reject with the distinct
+   * TCP_NOT_LISTENING *before* the no-client check, so a server that never
+   * actually listened can't masquerade as the transient TCP_NO_CLIENT the Out
+   * node silently waits out (Codex review).
    */
-  const transport = new TcpTransport({ mode: 'tcp-server', host: '127.0.0.1' });
-  await assert.rejects(
-    () => transport.send(Buffer.from([1])),
-    (err) => err.code === 'TCP_NOT_LISTENING'
-  );
+  const transport = new TcpTransport({ mode: 'tcp-server', host: '127.0.0.1', port: 0 });
+  /** Before start(): server is null. */
+  await assert.rejects(() => transport.send(Buffer.from([1])), (err) => err.code === 'TCP_NOT_LISTENING');
+  /** After start() but before the 'listening' callback: server assigned, not listening. */
+  transport.start();
+  assert.ok(transport.server, 'start() assigns the server synchronously');
+  assert.strictEqual(transport.server.listening, false, 'but it is not listening yet');
+  await assert.rejects(() => transport.send(Buffer.from([1])), (err) => err.code === 'TCP_NOT_LISTENING');
+  await transport.stop();
 });
 
 test('serial start without a path errors clearly (does not need serialport)', async () => {
@@ -557,7 +567,7 @@ test('tcp-server broadcast is not blocked by a stalled client, which is kicked (
     }
   };
   /** A server with connected clients is, by definition, listening. */
-  transport.server = {};
+  transport.server = { listening: true };
   transport.sockets.add(healthy);
   transport.sockets.add(stalled);
 
@@ -597,7 +607,7 @@ test('tcp-server drops a client already backed up past the backlog cap without w
     }
   };
   /** A server with connected clients is, by definition, listening. */
-  transport.server = {};
+  transport.server = { listening: true };
   transport.sockets.add(healthy);
   transport.sockets.add(backedUp);
 
