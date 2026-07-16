@@ -201,6 +201,18 @@ test('mission node route-resolves the target profile when no override is set', a
   assert.match(conn.lockNames[0], /:p_routed:/);
 });
 
+test('a numeric payload.mission_type 0 overrides a node configured for another list', async () => {
+  /**
+   * Presence-based defaulting: the numeric MAV_MISSION_TYPE 0 (= mission) is a
+   * valid override and must not be dropped as falsy — a `||` default would send
+   * the node's configured type instead (Codex review). Node is set to fence (1);
+   * an explicit 0 must reach the wire as mission (0), not fence.
+   */
+  const { RED, conn, node } = setupWithSends({ config: { missionType: 'fence' } });
+  await RED.inject(node, { payload: { action: 'clear', mission_type: 0 } });
+  assert.strictEqual(conn.sent[0].fields.mission_type, 0);
+});
+
 test('the best-effort clear stamps the NORMAL band explicitly (#241)', async () => {
   /**
    * The wait_ack-false clear bypasses MissionWorkflow._send, so it must carry

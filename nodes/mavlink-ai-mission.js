@@ -110,7 +110,16 @@ module.exports = function registerMavlinkAiMission(RED) {
         }));
       }
 
-      const missionTypeName = payload.mission_type || node.missionType || 'mission';
+      /**
+       * Presence-based, not truthy: a caller may pass the numeric
+       * MAV_MISSION_TYPE `0` (= mission) to override a node configured for
+       * fence/rally/all, and `||` would drop that valid `0` as "absent". Only
+       * undefined/null/'' fall through to the node's Mission Type, then the
+       * 'mission' default.
+       */
+      const payloadType = payload.mission_type;
+      const hasPayloadType = payloadType !== undefined && payloadType !== null && payloadType !== '';
+      const missionTypeName = hasPayloadType ? payloadType : node.missionType || 'mission';
       const bundle = profile && profile.getDialect ? profile.getDialect() : null;
       let missionTypeNum;
       try {
