@@ -444,10 +444,14 @@ test('resolveUploadItems rejects malformed/empty payloads that would implicitly 
 });
 
 test('validateMissionItems rejects non-numeric garbage but preserves NaN sentinels (#236)', () => {
-  /** A NaN sentinel on a param/coord that allows it is first-class "keep current". */
+  /** A NaN sentinel on a float param that allows it is first-class "keep current". */
   assert.doesNotThrow(() => validateMissionItems([{ command: 16, param4: NaN }]));
   assert.doesNotThrow(() => validateMissionItems([{ command: 16, param4: 'NaN' }]));
   assert.doesNotThrow(() => validateMissionItems([{ command: 16, param1: null }]));
+  /** Raw x/y are int32 on the MISSION_ITEM_INT path — a NaN sentinel can't encode
+   * there, so it is NOT allowed and must be caught before the transfer. */
+  assert.throws(() => validateMissionItems([{ command: 16, x: NaN }]), (e) => e.context.field === 'x');
+  assert.throws(() => validateMissionItems([{ command: 16, y: null }]), (e) => e.context.field === 'y');
   /** Garbage that keepNanParam would silently default to 0 is rejected up front. */
   for (const field of ['param1', 'x', 'y', 'z', 'alt']) {
     assert.throws(
@@ -480,6 +484,12 @@ test('validateMissionItems rejects an unknown MAV_CMD name against the dialect (
   assert.throws(
     () => validateMissionItems([{ command: 'MAV_CMD_NAV_WAYPONT' }], enums),
     (e) => e.code === 'INVALID_FIELD' && e.context.field === 'command' && /not a known MAV_CMD/.test(e.message)
+  );
+  /** A name from a *different* enum (a MAV_FRAME pasted as a command) must NOT
+   * resolve as a command via the global index — MavCmd-only resolution. */
+  assert.throws(
+    () => validateMissionItems([{ command: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT' }], enums),
+    (e) => e.code === 'INVALID_FIELD' && e.context.field === 'command'
   );
   /** Without enums the name is accepted (resolved downstream), unchanged behavior. */
   assert.doesNotThrow(() => validateMissionItems([{ command: 'MAV_CMD_NAV_WAYPONT' }]));
