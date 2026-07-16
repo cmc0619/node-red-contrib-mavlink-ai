@@ -10,7 +10,7 @@
     "id": "obs26_note",
     "type": "comment",
     "z": "obs26_flow",
-    "name": "Monitoring only — configure the real fence in the flight controller",
+    "name": "Monitoring only \u2014 configure the real fence in the flight controller",
     "info": "Edit the fenceMeters and altitudeMeters values in Compute distance from home. Output can feed the status dashboard or another UI.",
     "x": 350,
     "y": 40,
@@ -34,20 +34,34 @@
     "outputs": 1,
     "x": 130,
     "y": 120,
-    "wires": [["obs26_calc"]]
+    "wires": [
+      [
+        "obs26_calc"
+      ]
+    ]
   },
   {
     "id": "obs26_reset",
     "type": "inject",
     "z": "obs26_flow",
     "name": "Reset home on next position",
-    "props": [{"p":"resetHome","v":"true","vt":"bool"}],
+    "props": [
+      {
+        "p": "resetHome",
+        "v": "true",
+        "vt": "bool"
+      }
+    ],
     "repeat": "",
     "once": false,
     "topic": "",
     "x": 180,
     "y": 180,
-    "wires": [["obs26_calc"]]
+    "wires": [
+      [
+        "obs26_calc"
+      ]
+    ]
   },
   {
     "id": "obs26_calc",
@@ -58,7 +72,14 @@
     "outputs": 2,
     "x": 440,
     "y": 140,
-    "wires": [["obs26_status"],["obs26_breach"]]
+    "wires": [
+      [
+        "obs26_status"
+      ],
+      [
+        "obs26_breach"
+      ]
+    ]
   },
   {
     "id": "obs26_status",
@@ -86,25 +107,32 @@
   },
   {
     "id": "obs26_profile",
-    "type": "mavlink-ai-profile",
+    "type": "mavlink-ai-vehicle",
     "name": "Geofence monitor GCS",
-    "profileType": "gcs",
     "firmware": "ardupilot",
     "dialectSource": "bundled",
     "dialect": "ardupilotmega",
     "customDialectPath": "",
     "mavlinkVersion": "auto",
-    "sourceSystemId": 255,
-    "sourceComponentId": 190,
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
     "defaultMissionType": "mission",
     "debugProtocol": false,
+    "vehicleFamily": "generic"
+  },
+  {
+    "id": "obs26_profile__identity",
+    "type": "mavlink-ai-local-identity",
+    "name": "Geofence monitor GCS GCS",
+    "role": "gcs",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
+    "heartbeatType": "",
+    "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
     "signOutbound": false,
     "verifyInbound": false,
-    "requireSignature": false,
-    "signingLinkId": 0
+    "requireSignature": false
   },
   {
     "id": "obs26_conn",
@@ -124,6 +152,10 @@
     "acceptedCompids": "",
     "unmatchedPolicy": "default",
     "routeTable": "",
-    "outboundQueue": true
+    "outboundQueue": true,
+    "localIdentity": "obs26_profile__identity",
+    "allowMultipleIdentities": false,
+    "additionalIdentities": "",
+    "signingLinkId": 0
   }
 ]

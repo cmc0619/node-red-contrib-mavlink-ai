@@ -71,7 +71,7 @@ module.exports = function registerMavlinkAiParam(RED) {
       let profile, defaults, targetSystem, targetComponent;
       try {
         ({ profile, defaults, targetSystem, targetComponent } = resolveWorkflowContext(node.connection, {
-          profile: firstDefined(payload.profile, node.profileRef || undefined),
+          profile: firstDefined(payload.vehicleProfile, payload.profile, node.profileRef || undefined),
           targetSystem: payload.target_system,
           targetComponent: payload.target_component
         }));
@@ -127,11 +127,34 @@ module.exports = function registerMavlinkAiParam(RED) {
         send([null, progress, null]);
       };
 
+      // Resolve the Local Identity for this workflow (#228): the explicit
+      // payload request when present, else the connection default. Param
+      // workflows carry it on every send; an unattached/ambiguous request
+      // fails closed here rather than transmitting as the wrong participant.
+      let localIdentity;
+      try {
+        node.connection.resolveOutboundIdentity(payload.localIdentity);
+        localIdentity = payload.localIdentity;
+      } catch (err) {
+        const e = toMavlinkError(err, 'LOCAL_IDENTITY_UNRESOLVED');
+        node.status({ fill: 'red', shape: 'ring', text: e.code });
+        lock.release();
+        return finishError(node, send, done, errorPayload({
+          node: 'mavlink-ai-param',
+          connection: node.connection.name,
+          code: e.code,
+          message: e.message,
+          context: e.context
+        }));
+      }
+
       const opts = {
         connection: node.connection,
         // Carried on every send so the connection encodes with the effective
-        // profile's dialect/identity/signing, not its default.
-        profile: profile ? profile.id : null,
+        // Vehicle Profile's dialect, not its default.
+        vehicleProfile: profile ? profile.id : null,
+        // Explicit identity request passes through; blank means the default.
+        localIdentity,
         targetSystem,
         targetComponent,
         enums: bundle ? bundle.enums : null,

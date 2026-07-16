@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const { EventEmitter } = require('events');
 const { MockRED } = require('../helpers/mock-red');
 const { LockManager } = require('../../lib/runtime/lock-manager');
+const { fakeIdentity } = require('../helpers/v3-config');
 
 /**
  * Error delivery rule (#89, DESIGN.md §14.5.1): a node with a dedicated error
@@ -16,7 +17,7 @@ const { LockManager } = require('../../lib/runtime/lock-manager');
 
 function setup({ sendError } = {}) {
   const RED = new MockRED().loadNodes();
-  const profile = RED.create('mavlink-ai-profile', {
+  const profile = RED.create('mavlink-ai-vehicle', {
     id: 'p1',
     name: 'Copter',
     dialect: 'ardupilotmega',
@@ -44,6 +45,8 @@ function setup({ sendError } = {}) {
     this.sendRaw = this.send;
     this.acquireLock = (key, owner) => this.locks.acquire(key, owner);
     this.releaseLock = (key, owner) => this.locks.release(key, owner);
+    // v3: the connection resolves the outbound Local Identity (#228).
+    this.resolveOutboundIdentity = () => fakeIdentity();
   });
   RED.create('stub-connection', { id: 'conn1' });
   return { RED };

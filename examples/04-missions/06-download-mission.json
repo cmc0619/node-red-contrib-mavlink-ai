@@ -8,21 +8,30 @@
   },
   {
     "id": "ai_profile_copter",
-    "type": "mavlink-ai-profile",
+    "type": "mavlink-ai-vehicle",
     "name": "AI Profile - Copter",
-    "profileType": "gcs",
     "dialect": "ardupilotmega",
     "customDialectPath": "",
     "mavlinkVersion": "auto",
-    "sourceSystemId": 255,
-    "sourceComponentId": 190,
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
     "defaultMissionType": "mission",
+    "debugProtocol": false,
+    "vehicleFamily": "generic"
+  },
+  {
+    "id": "ai_profile_copter__identity",
+    "type": "mavlink-ai-local-identity",
+    "name": "AI Profile - Copter GCS",
+    "role": "gcs",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
     "heartbeatType": "",
     "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
-    "debugProtocol": false
+    "signOutbound": false,
+    "verifyInbound": false,
+    "requireSignature": false
   },
   {
     "id": "ai_conn_udp",
@@ -44,7 +53,11 @@
     "acceptedCompids": "",
     "unmatchedPolicy": "default",
     "routeTable": "",
-    "outboundQueue": true
+    "outboundQueue": true,
+    "localIdentity": "ai_profile_copter__identity",
+    "allowMultipleIdentities": false,
+    "additionalIdentities": "",
+    "signingLinkId": 0
   },
   {
     "id": "n06_inj",

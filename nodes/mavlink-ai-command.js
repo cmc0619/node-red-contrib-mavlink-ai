@@ -331,7 +331,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
         try {
           const resolved = resolveFlightMode(
             defaults.firmware,
-            firstDefined(merged.vehicle_type, defaults.profileType),
+            firstDefined(merged.vehicle_type, defaults.vehicleFamily),
             merged.mode
           );
           params.base_mode = firstDefined(merged.base_mode, resolved.base_mode);
@@ -538,19 +538,34 @@ module.exports = function registerMavlinkAiCommand(RED) {
             'Broadcast (target_system 0) cannot confirm a COMMAND_ACK — use the fan-out node for per-vehicle acks, or disable await ack.');
         }
         const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
+        // The Local Identity this workflow transmits as (#228): the explicit
+        // payload request when present (which must be attached and permitted on
+        // the connection), else the connection's default. Never derived from
+        // the Vehicle Profile. Its source ids also gate ACK matching below.
+        let identity;
+        try {
+          identity = node.connection.resolveOutboundIdentity(incoming.localIdentity);
+        } catch (err) {
+          const e = toMavlinkError(err, 'LOCAL_IDENTITY_UNRESOLVED');
+          return sendError(msg, send, done, e.code, e.message, e.context);
+        }
+        const source = identity.getIdentity();
         let workflow;
         try {
           workflow = new CommandSend({
             connection: node.connection,
             // Canonical config-node id: the connection must encode these sends
-            // with this node's profile, not its own default.
-            profile: node.profile.id,
+            // with this node's Vehicle Profile, not its own default.
+            vehicleProfile: node.profile.id,
+            // Carried on every send only when the caller explicitly requested
+            // an identity; otherwise the connection default applies.
+            localIdentity: incoming.localIdentity,
             targetSystem,
             targetComponent,
             // Our own identity, so an ACK addressed to another GCS sharing this
             // link doesn't settle the workflow (#99).
-            sourceSystem: defaults.sourceSystemId,
-            sourceComponent: defaults.sourceComponentId,
+            sourceSystem: source.sysid,
+            sourceComponent: source.compid,
             command: fields.command,
             fields,
             useInt,
@@ -603,16 +618,21 @@ module.exports = function registerMavlinkAiCommand(RED) {
 
       // --- build-only mode (default): hand off to mavlink-ai-out -------------
       msg.topic = 'mavlink/send';
-      // `profile` carries the config-node id — the canonical reference the
-      // connection resolves a codec by. The name is display-only.
+      // `vehicleProfile` carries the config-node id — the canonical reference
+      // the connection resolves a codec by. The name is display-only. The
+      // local identity is passed through only when the caller explicitly set
+      // one; it is never derived from the Vehicle Profile (#228).
       msg.payload = {
         name: messageName,
-        profile: node.profile && node.profile.id,
-        profile_name: node.profile && node.profile.name,
+        vehicleProfile: node.profile && node.profile.id,
+        vehicleProfileName: node.profile && node.profile.name,
         target_system: targetSystem,
         target_component: targetComponent,
         fields
       };
+      if (incoming.localIdentity !== undefined && incoming.localIdentity !== null && incoming.localIdentity !== '') {
+        msg.payload.localIdentity = incoming.localIdentity;
+      }
 
       node.status({ fill: 'green', shape: 'dot', text: selected });
       send(msg);

@@ -18,20 +18,20 @@ const FIXTURES = path.join(__dirname, '..', 'fixtures', 'dialects');
 
 function setup(routeProfiles) {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_default',
     name: 'Default',
     dialect: 'common',
     mavlinkVersion: 'v2'
   });
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_custom',
     name: 'Custom',
     dialect: 'custom',
     customDialectPath: path.join(FIXTURES, 'custom_addon.xml'),
     mavlinkVersion: 'v2'
   });
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_conflict',
     name: 'Conflict',
     dialect: 'custom',
@@ -40,16 +40,20 @@ function setup(routeProfiles) {
   });
   // Another profile on the same dialect as the default: identical duplicate
   // CRC definitions, which must stay valid.
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_common2',
     name: 'Common2',
     dialect: 'common',
     mavlinkVersion: 'v2'
   });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c1',
     name: 'Routed',
     profile: 'p_default',
+    localIdentity: 'id1',
     transport: 'udp-peer',
     routingMode: 'routed',
     unmatchedPolicy: 'default',

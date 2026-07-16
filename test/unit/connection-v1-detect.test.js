@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const { MockRED } = require('../helpers/mock-red');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
+const { enc } = require('../helpers/v3-config');
 
 /**
  * MAVLink v1 auto-detection through the connection path (#138, #152). The dead
@@ -23,12 +24,15 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function setup() {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'P', dialect: 'common', mavlinkVersion: 'auto',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 7, defaultTargetComponent: 3
+    defaultTargetSystem: 7, defaultTargetComponent: 3
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'C', profile: 'p1', transport: 'udp-peer',
+    id: 'c1', name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp-peer',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   const sent = [];
@@ -46,8 +50,8 @@ test('a real inbound v1 frame flips outbound framing to that peer to v1 (#138, #
   const { RED, conn, sent } = setup();
   t.after(() => RED.close(conn));
 
-  const peer = new MavlinkCodec({ bundle: loadDialect('common'), version: 'v1', sysid: 3, compid: 1 });
-  const v1hb = peer.encode('HEARTBEAT', HB);
+  const peer = new MavlinkCodec({ bundle: loadDialect('common'), version: 'v1' });
+  const v1hb = enc(peer, 'HEARTBEAT', HB, { sysid: 3, compid: 1 });
   assert.strictEqual(v1hb[0], 0xfe);
 
   /** Before any inbound: an "auto" connection frames outbound as v2. */

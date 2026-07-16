@@ -4,38 +4,55 @@
     "type": "tab",
     "label": "MAVLink AI - 19 Calibration (bench only)",
     "disabled": false,
-    "info": "WARNING — bench-only admin workflow (issue #51). MAV_CMD_PREFLIGHT_CALIBRATION recalibrates sensors and MUST NOT run while armed or flying; a bad calibration can make the vehicle unflyable until redone. The gate function refuses to pass the command through unless msg.payload.i_confirm_bench_only === true, and the output is Debug-wired. Set the confirmation deliberately — do not remove the gate."
+    "info": "WARNING \u2014 bench-only admin workflow (issue #51). MAV_CMD_PREFLIGHT_CALIBRATION recalibrates sensors and MUST NOT run while armed or flying; a bad calibration can make the vehicle unflyable until redone. The gate function refuses to pass the command through unless msg.payload.i_confirm_bench_only === true, and the output is Debug-wired. Set the confirmation deliberately \u2014 do not remove the gate."
   },
   {
     "id": "ai_profile_copter",
-    "type": "mavlink-ai-profile",
+    "type": "mavlink-ai-vehicle",
     "name": "AI Profile - Copter",
-    "profileType": "copter",
     "firmware": "ardupilot",
     "dialect": "ardupilotmega",
     "customDialectPath": "",
     "mavlinkVersion": "auto",
-    "sourceSystemId": 255,
-    "sourceComponentId": 190,
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
     "defaultMissionType": "mission",
+    "debugProtocol": false,
+    "vehicleFamily": "copter"
+  },
+  {
+    "id": "ai_profile_copter__identity",
+    "type": "mavlink-ai-local-identity",
+    "name": "AI Profile - Copter Identity",
+    "role": "custom",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
     "heartbeatType": "",
     "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
-    "debugProtocol": false
+    "signOutbound": false,
+    "verifyInbound": false,
+    "requireSignature": false
   },
   {
     "id": "n19_inject",
     "type": "inject",
     "z": "flow19",
     "name": "Gyro calibration (confirmed)",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "payload": "{\"i_confirm_bench_only\":true}",
     "payloadType": "json",
     "x": 190,
     "y": 100,
-    "wires": [["n19_gate"]]
+    "wires": [
+      [
+        "n19_gate"
+      ]
+    ]
   },
   {
     "id": "n19_gate",
@@ -47,7 +64,11 @@
     "noerr": 0,
     "x": 430,
     "y": 100,
-    "wires": [["n19_cal"]]
+    "wires": [
+      [
+        "n19_cal"
+      ]
+    ]
   },
   {
     "id": "n19_cal",
@@ -64,7 +85,11 @@
     "presetFields": "",
     "x": 700,
     "y": 100,
-    "wires": [["n19_dbg"]]
+    "wires": [
+      [
+        "n19_dbg"
+      ]
+    ]
   },
   {
     "id": "n19_dbg",

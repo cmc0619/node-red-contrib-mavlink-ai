@@ -8,6 +8,7 @@ const path = require('path');
 const { MockRED } = require('../helpers/mock-red');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
+const { enc } = require('../helpers/v3-config');
 
 // A standalone custom dialect that only *adds* message id 9100. It must not
 // include the trimmed fixture common.xml: that copy redefines HEARTBEAT and
@@ -47,31 +48,36 @@ const until = (attach, sendOnce, label) =>
 test('routed connection decodes with the matched profile dialect', async (t) => {
   const RED = new MockRED().loadNodes();
 
-  RED.create('mavlink-ai-profile', {
-    id: 'p_min', name: 'Min', profileType: 'gcs', dialect: 'minimal', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p_min', name: 'Min', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
   });
-  RED.create('mavlink-ai-profile', {
-    id: 'p_ardu', name: 'Ardu', profileType: 'copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p_ardu', name: 'Ardu', vehicleFamily: 'copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   // A second minimal profile, distinct from the default, to prove routed decode
   // uses the *matched route's* profile rather than the default.
-  RED.create('mavlink-ai-profile', {
-    id: 'p_min2', name: 'Min2', profileType: 'gcs', dialect: 'minimal', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p_min2', name: 'Min2', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   // A runtime-compiled custom-XML profile. Its message ids exist in no bundled
   // dialect, so this exercises the merged splitter CRC table: without it the
   // packet would be dropped silently before routing.
-  RED.create('mavlink-ai-profile', {
-    id: 'p_custom', name: 'Custom', profileType: 'gcs', dialect: 'custom',
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p_custom', name: 'Custom', vehicleFamily: 'generic', dialect: 'custom',
     customDialectPath: CUSTOM_XML, mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+
+  // The connection needs a Local Identity to open its socket (#228).
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
 
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c_routed', name: 'Routed UDP', profile: 'p_min',
+    id: 'c_routed', name: 'Routed UDP', profile: 'p_min', localIdentity: 'id1',
     transport: 'udp-peer', routingMode: 'routed', unmatchedPolicy: 'default',
     routeTable: JSON.stringify([
       { sysid: 1, compid: '*', profile: 'p_ardu' },
@@ -85,8 +91,8 @@ test('routed connection decodes with the matched profile dialect', async (t) => 
   const port = addr.port;
 
   const ardu = loadDialect('ardupilotmega');
-  const fromSys1 = new MavlinkCodec({ bundle: ardu, version: 'v2', sysid: 1, compid: 1 });
-  const fromSys2 = new MavlinkCodec({ bundle: ardu, version: 'v2', sysid: 2, compid: 1 });
+  const fromSys1 = new MavlinkCodec({ bundle: ardu, version: 'v2' });
+  const fromSys2 = new MavlinkCodec({ bundle: ardu, version: 'v2' });
   const sock = dgram.createSocket('udp4');
   t.after(async () => {
     await RED.close(conn);
@@ -96,7 +102,7 @@ test('routed connection decodes with the matched profile dialect', async (t) => 
   // Case 1: ATTITUDE from sysid 1 routes to the ardupilotmega profile and decodes.
   const attitude = await until(
     (done) => conn.subscribe({ messageNames: ['ATTITUDE'] }, done),
-    () => sock.send(fromSys1.encode('ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }), port, '127.0.0.1'),
+    () => sock.send(enc(fromSys1, 'ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }, { sysid: 1, compid: 1 }), port, '127.0.0.1'),
     'ATTITUDE decode'
   );
   assert.strictEqual(attitude.payload.name, 'ATTITUDE');
@@ -110,7 +116,7 @@ test('routed connection decodes with the matched profile dialect', async (t) => 
   // and that failure produces a structured decode error with packet metadata.
   const decodeError = await until(
     (done) => conn.emitter.on('decodeError', done),
-    () => sock.send(fromSys2.encode('ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }), port, '127.0.0.1'),
+    () => sock.send(enc(fromSys2, 'ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }, { sysid: 2, compid: 1 }), port, '127.0.0.1'),
     'decode error'
   );
   assert.strictEqual(decodeError.payload.code, 'DECODE_FAILED');
@@ -125,10 +131,10 @@ test('routed connection decodes with the matched profile dialect', async (t) => 
   // profile's bundled CRC table has no entry for 9100, so this only works if
   // the connection's splitter uses the merged table across all routed profiles.
   const customBundle = loadDialect('custom', { customDialectPath: CUSTOM_XML });
-  const fromSys3 = new MavlinkCodec({ bundle: customBundle, version: 'v2', sysid: 3, compid: 1 });
+  const fromSys3 = new MavlinkCodec({ bundle: customBundle, version: 'v2' });
   const custom = await until(
     (done) => conn.subscribe({ messageNames: ['CUSTOM_VEHICLE_STATUS'] }, done),
-    () => sock.send(fromSys3.encode('CUSTOM_VEHICLE_STATUS', { mode: 7 }), port, '127.0.0.1'),
+    () => sock.send(enc(fromSys3, 'CUSTOM_VEHICLE_STATUS', { mode: 7 }, { sysid: 3, compid: 1 }), port, '127.0.0.1'),
     'custom dialect decode'
   );
   assert.strictEqual(custom.payload.name, 'CUSTOM_VEHICLE_STATUS');
@@ -138,23 +144,32 @@ test('routed connection decodes with the matched profile dialect', async (t) => 
 });
 
 /**
- * connection.send must encode with the codec of the profile named on the
- * message, not always the default profile (#68). Here the default profile is
- * `minimal` with source sysid 255, while a second profile uses source sysid 42.
- * A HEARTBEAT sent with that profile must go out framed from sysid 42.
+ * Outbound source identity follows the resolved Local Identity, never a Vehicle
+ * Profile (#228). In the old model this test proved that selecting a second
+ * profile changed the outbound *source* sysid; that capability was deliberately
+ * removed — a Vehicle Profile can never change who this runtime is on the wire.
+ * The preserved spirit (one connection transmitting as two identities) is now
+ * expressed with explicit multi-identity bindings: the connection binds an
+ * additional Local Identity and a send addresses it via `msg.localIdentity`.
  */
-test('outbound send honors the message profile codec (#68)', async (t) => {
+test('outbound send transmits as the selected Local Identity, not a profile', async (t) => {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
-    id: 'p_def', name: 'Def', profileType: 'gcs', dialect: 'minimal', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p_def', name: 'Def', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
   });
-  RED.create('mavlink-ai-profile', {
-    id: 'p_alt', name: 'Alt', profileType: 'gcs', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
-    sourceSystemId: 42, sourceComponentId: 200, defaultTargetSystem: 1, defaultTargetComponent: 1
+  // Two Local Identities: the default (255/190) and an alternate (42/200).
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id_def', name: 'Def', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id_alt', name: 'Alt', role: 'custom', sourceSystemId: 42, sourceComponentId: 200
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c_send', name: 'Send UDP', profile: 'p_def',
+    id: 'c_send', name: 'Send UDP', profile: 'p_def', localIdentity: 'id_def',
+    // Explicit multi-identity binding: the connection may also transmit as id_alt.
+    allowMultipleIdentities: true,
+    additionalIdentities: JSON.stringify([{ identity: 'id_alt', allowOutbound: true }]),
     transport: 'udp-peer', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
@@ -170,24 +185,23 @@ test('outbound send honors the message profile codec (#68)', async (t) => {
   };
   t.after(async () => RED.close(conn));
 
-  // Default profile: source sysid 255 (offset 5 in a v2 frame).
+  // No identity override: the connection's default identity, source sysid 255.
   await conn.send({ name: 'HEARTBEAT', fields: { type: 'MAV_TYPE_GCS' } });
   assert.strictEqual(sent[sent.length - 1][5], 255);
 
-  // Named profile: source sysid 42.
-  await conn.send({ name: 'HEARTBEAT', profile: 'p_alt', fields: { type: 'MAV_TYPE_GCS' } });
+  // Explicit second identity by id: source sysid 42 (offset 5 in a v2 frame).
+  await conn.send({ name: 'HEARTBEAT', localIdentity: 'id_alt', fields: { type: 'MAV_TYPE_GCS' } });
   assert.strictEqual(sent[sent.length - 1][5], 42);
 
-  // Legacy: a unique profile *name* still resolves (back-compat for flows
-  // authored before message.profile carried the config-node id).
-  await conn.send({ name: 'HEARTBEAT', profile: 'Alt', fields: { type: 'MAV_TYPE_GCS' } });
+  // A unique identity *name* resolves too (back-compat for flows that name it).
+  await conn.send({ name: 'HEARTBEAT', localIdentity: 'Alt', fields: { type: 'MAV_TYPE_GCS' } });
   assert.strictEqual(sent[sent.length - 1][5], 42);
 
-  // An explicitly requested profile that resolves to nothing must reject the
-  // send — never silently encode with the default profile.
+  // An explicitly requested identity that resolves to nothing must reject the
+  // send — never silently transmit as the default identity.
   await assert.rejects(
-    conn.send({ name: 'HEARTBEAT', profile: 'NoSuchProfile', fields: { type: 'MAV_TYPE_GCS' } }),
-    (err) => err.code === 'PROFILE_UNRESOLVED'
+    conn.send({ name: 'HEARTBEAT', localIdentity: 'NoSuchIdentity', fields: { type: 'MAV_TYPE_GCS' } }),
+    (err) => err.code === 'LOCAL_IDENTITY_UNRESOLVED'
   );
 });
 
@@ -199,16 +213,19 @@ test('outbound send honors the message profile codec (#68)', async (t) => {
  */
 test('route entries resolve legacy unique profile names to the real profile', async (t) => {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
-    id: 'p_min', name: 'Min', profileType: 'gcs', dialect: 'minimal', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p_min', name: 'Min', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
   });
-  RED.create('mavlink-ai-profile', {
-    id: 'p_ardu', name: 'Ardu', profileType: 'copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p_ardu', name: 'Ardu', vehicleFamily: 'copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c_names', name: 'Named routes', profile: 'p_min',
+    id: 'c_names', name: 'Named routes', profile: 'p_min', localIdentity: 'id1',
     transport: 'udp-peer', routingMode: 'routed', unmatchedPolicy: 'reject',
     routeTable: JSON.stringify([{ sysid: 1, compid: '*', profile: 'Ardu' }]),
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
@@ -220,10 +237,10 @@ test('route entries resolve legacy unique profile names to the real profile', as
     await new Promise((r) => sock.close(r));
   });
 
-  const fromSys1 = new MavlinkCodec({ bundle: loadDialect('ardupilotmega'), version: 'v2', sysid: 1, compid: 1 });
+  const fromSys1 = new MavlinkCodec({ bundle: loadDialect('ardupilotmega'), version: 'v2' });
   const attitude = await until(
     (done) => conn.subscribe({ messageNames: ['ATTITUDE'] }, done),
-    () => sock.send(fromSys1.encode('ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }), addr.port, '127.0.0.1'),
+    () => sock.send(enc(fromSys1, 'ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }, { sysid: 1, compid: 1 }), addr.port, '127.0.0.1'),
     'ATTITUDE decode via name route'
   );
   // Decoded with the ardupilotmega dialect (the minimal default cannot decode
@@ -246,21 +263,24 @@ test('a route naming an unknown profile rejects its packets and reports loudly',
   const RED = new MockRED().loadNodes();
   // The default profile's dialect COULD decode ATTITUDE — silent fallback
   // would be invisible here, which is exactly the bug this guards against.
-  RED.create('mavlink-ai-profile', {
-    id: 'p_def', name: 'Def', profileType: 'gcs', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p_def', name: 'Def', vehicleFamily: 'generic', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   // Two profiles sharing one name make that name ambiguous as a reference.
-  RED.create('mavlink-ai-profile', {
-    id: 'p_dup1', name: 'Dup', profileType: 'gcs', dialect: 'minimal', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p_dup1', name: 'Dup', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
   });
-  RED.create('mavlink-ai-profile', {
-    id: 'p_dup2', name: 'Dup', profileType: 'gcs', dialect: 'minimal', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p_dup2', name: 'Dup', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c_ghost', name: 'Bad routes', profile: 'p_def',
+    id: 'c_ghost', name: 'Bad routes', profile: 'p_def', localIdentity: 'id1',
     transport: 'udp-peer', routingMode: 'routed', unmatchedPolicy: 'default',
     routeTable: JSON.stringify([
       { sysid: 1, compid: '*', profile: 'Ghost' },
@@ -285,15 +305,15 @@ test('a route naming an unknown profile rejects its packets and reports loudly',
   conn.errors.length = 0;
 
   const ardu = loadDialect('ardupilotmega');
-  const fromSys1 = new MavlinkCodec({ bundle: ardu, version: 'v2', sysid: 1, compid: 1 });
-  const fromSys2 = new MavlinkCodec({ bundle: ardu, version: 'v2', sysid: 2, compid: 1 });
+  const fromSys1 = new MavlinkCodec({ bundle: ardu, version: 'v2' });
+  const fromSys2 = new MavlinkCodec({ bundle: ardu, version: 'v2' });
 
   // Unresolvable route target: the packet is rejected, not decoded as 'Def'.
   const messages = [];
   conn.subscribe({}, (m) => messages.push(m));
   const rejected1 = await until(
     (done) => conn.emitter.on('rejected', (r) => { if (r.sysid === 1) done(r); }),
-    () => sock.send(fromSys1.encode('ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }), addr.port, '127.0.0.1'),
+    () => sock.send(enc(fromSys1, 'ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }, { sysid: 1, compid: 1 }), addr.port, '127.0.0.1'),
     'rejection for unresolved route profile'
   );
   assert.strictEqual(rejected1.reason, 'profile-unresolved');
@@ -301,7 +321,7 @@ test('a route naming an unknown profile rejects its packets and reports loudly',
   // Ambiguous name: same rejection, not a coin-flip between the two 'Dup's.
   const rejected2 = await until(
     (done) => conn.emitter.on('rejected', (r) => { if (r.sysid === 2) done(r); }),
-    () => sock.send(fromSys2.encode('ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }), addr.port, '127.0.0.1'),
+    () => sock.send(enc(fromSys2, 'ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }, { sysid: 2, compid: 1 }), addr.port, '127.0.0.1'),
     'rejection for ambiguous route profile'
   );
   assert.strictEqual(rejected2.reason, 'profile-unresolved');
@@ -322,12 +342,15 @@ test('a route naming an unknown profile rejects its packets and reports loudly',
  */
 test('fixing a broken route table on redeploy clears the stale error status', async (t) => {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
-    id: 'p_def', name: 'Def', profileType: 'gcs', dialect: 'minimal', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p_def', name: 'Def', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c_late', name: 'Late profile', profile: 'p_def',
+    id: 'c_late', name: 'Late profile', profile: 'p_def', localIdentity: 'id1',
     transport: 'udp-peer', routingMode: 'routed', unmatchedPolicy: 'reject',
     routeTable: JSON.stringify([{ sysid: 1, compid: '*', profile: 'p_late' }]),
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
@@ -343,9 +366,9 @@ test('fixing a broken route table on redeploy clears the stale error status', as
 
   // "Partial redeploy" adds the missing profile; the connection instance
   // persists and the next flows:started re-validates cleanly.
-  RED.create('mavlink-ai-profile', {
-    id: 'p_late', name: 'Late', profileType: 'gcs', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p_late', name: 'Late', vehicleFamily: 'copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.events.emit('flows:started');
   // The pre-error status (listening) is restored, and no new error is logged.
@@ -354,24 +377,29 @@ test('fixing a broken route table on redeploy clears the stale error status', as
 });
 
 /**
- * Workflow profile propagation: the profile named on an outbound message is
- * the effective profile for the WHOLE send — codec (source identity) and
- * target defaults — a plain profile *name* resolves to the real config node,
- * and an explicit reference that resolves to nothing rejects instead of
- * silently sending as the connection default.
+ * Workflow profile propagation: the Vehicle Profile named on an outbound message
+ * is the effective profile for the WHOLE send (codec dialect + target defaults)
+ * — a plain profile *name* resolves to the real config node, and an explicit
+ * reference that resolves to nothing rejects instead of silently sending as the
+ * connection default. In v3 the profile NEVER changes source identity (#228):
+ * source identity follows the connection's resolved Local Identity regardless of
+ * the selected Vehicle Profile.
  */
-test('outbound send resolves profile names, applies profile target defaults, and rejects unknown profiles', async (t) => {
+test('outbound send resolves profile names, keeps source identity, and rejects unknown profiles', async (t) => {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
-    id: 'p_def', name: 'Def', profileType: 'gcs', dialect: 'minimal', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p_def', name: 'Def', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
   });
-  RED.create('mavlink-ai-profile', {
-    id: 'p_alt', name: 'Alt', profileType: 'gcs', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
-    sourceSystemId: 42, sourceComponentId: 200, defaultTargetSystem: 7, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p_alt', name: 'Alt', vehicleFamily: 'generic', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    defaultTargetSystem: 7, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id_def', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c_send2', name: 'Send UDP 2', profile: 'p_def',
+    id: 'c_send2', name: 'Send UDP 2', profile: 'p_def', localIdentity: 'id_def',
     transport: 'udp-peer', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
@@ -387,17 +415,17 @@ test('outbound send resolves profile names, applies profile target defaults, and
 
   /**
    * A profile *name* (what inbound payloads and hand-authored flows carry)
-   * resolves to the real config node: HEARTBEAT is framed from that profile's
-   * source sysid (42). HEARTBEAT is a broadcast with no target_system field, so
-   * it carries no routing target regardless of the profile default (#148) — the
-   * per-profile target-default routing for *addressed* messages is covered in
-   * connection-send-targets.test.js.
+   * resolves to the real config node so its dialect/target defaults apply. The
+   * source identity is still the connection's Local Identity (255) — selecting
+   * the 'Alt' Vehicle Profile can no longer change it (#228). HEARTBEAT is a
+   * broadcast with no target_system field, so it carries no routing target
+   * regardless of the profile default (#148).
    */
   await conn.send({ name: 'HEARTBEAT', profile: 'Alt', fields: { type: 'MAV_TYPE_GCS' } });
-  assert.strictEqual(sent[sent.length - 1].buf[5], 42);
+  assert.strictEqual(sent[sent.length - 1].buf[5], 255);
   assert.strictEqual(sent[sent.length - 1].meta.targetSystem, undefined);
 
-  /** No profile: connection default source identity; a broadcast still has no target. */
+  /** No profile: connection default profile + default identity; broadcast has no target. */
   await conn.send({ name: 'HEARTBEAT', fields: { type: 'MAV_TYPE_GCS' } });
   assert.strictEqual(sent[sent.length - 1].buf[5], 255);
   assert.strictEqual(sent[sent.length - 1].meta.targetSystem, undefined);

@@ -21,24 +21,44 @@
     "type": "inject",
     "z": "obs25_flow",
     "name": "Start recording",
-    "props": [{"p":"recording","v":"true","vt":"bool"}],
+    "props": [
+      {
+        "p": "recording",
+        "v": "true",
+        "vt": "bool"
+      }
+    ],
     "repeat": "",
     "once": false,
     "x": 140,
     "y": 100,
-    "wires": [["obs25_control"]]
+    "wires": [
+      [
+        "obs25_control"
+      ]
+    ]
   },
   {
     "id": "obs25_stop",
     "type": "inject",
     "z": "obs25_flow",
     "name": "Stop recording",
-    "props": [{"p":"recording","v":"false","vt":"bool"}],
+    "props": [
+      {
+        "p": "recording",
+        "v": "false",
+        "vt": "bool"
+      }
+    ],
     "repeat": "",
     "once": false,
     "x": 140,
     "y": 140,
-    "wires": [["obs25_control"]]
+    "wires": [
+      [
+        "obs25_control"
+      ]
+    ]
   },
   {
     "id": "obs25_control",
@@ -49,7 +69,9 @@
     "outputs": 1,
     "x": 360,
     "y": 120,
-    "wires": [[]]
+    "wires": [
+      []
+    ]
   },
   {
     "id": "obs25_in",
@@ -69,7 +91,11 @@
     "outputs": 1,
     "x": 160,
     "y": 210,
-    "wires": [["obs25_format"]]
+    "wires": [
+      [
+        "obs25_format"
+      ]
+    ]
   },
   {
     "id": "obs25_format",
@@ -80,7 +106,11 @@
     "outputs": 1,
     "x": 410,
     "y": 210,
-    "wires": [["obs25_file_out"]]
+    "wires": [
+      [
+        "obs25_file_out"
+      ]
+    ]
   },
   {
     "id": "obs25_file_out",
@@ -95,31 +125,53 @@
     "encoding": "none",
     "x": 660,
     "y": 210,
-    "wires": [[]]
+    "wires": [
+      []
+    ]
   },
   {
     "id": "obs25_fixture",
     "type": "inject",
     "z": "obs25_flow",
     "name": "Replay included fixture at 2x",
-    "props": [{"p":"payload","v":"{\"filename\":\"node_modules/node-red-contrib-mavlink-ai/resources/fixtures/vehicle-status-demo.jsonl\",\"speed\":2}","vt":"json"}],
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"filename\":\"node_modules/node-red-contrib-mavlink-ai/resources/fixtures/vehicle-status-demo.jsonl\",\"speed\":2}",
+        "vt": "json"
+      }
+    ],
     "repeat": "",
     "once": false,
     "x": 190,
     "y": 310,
-    "wires": [["obs25_prepare"]]
+    "wires": [
+      [
+        "obs25_prepare"
+      ]
+    ]
   },
   {
     "id": "obs25_recording",
     "type": "inject",
     "z": "obs25_flow",
     "name": "Replay recorded file at 1x",
-    "props": [{"p":"payload","v":"{\"filename\":\"./mavlink-ai-telemetry.jsonl\",\"speed\":1}","vt":"json"}],
+    "props": [
+      {
+        "p": "payload",
+        "v": "{\"filename\":\"./mavlink-ai-telemetry.jsonl\",\"speed\":1}",
+        "vt": "json"
+      }
+    ],
     "repeat": "",
     "once": false,
     "x": 190,
     "y": 350,
-    "wires": [["obs25_prepare"]]
+    "wires": [
+      [
+        "obs25_prepare"
+      ]
+    ]
   },
   {
     "id": "obs25_prepare",
@@ -130,7 +182,11 @@
     "outputs": 1,
     "x": 450,
     "y": 330,
-    "wires": [["obs25_file_in"]]
+    "wires": [
+      [
+        "obs25_file_in"
+      ]
+    ]
   },
   {
     "id": "obs25_file_in",
@@ -146,19 +202,33 @@
     "allProps": false,
     "x": 650,
     "y": 330,
-    "wires": [["obs25_replay"]]
+    "wires": [
+      [
+        "obs25_replay"
+      ]
+    ]
   },
   {
     "id": "obs25_cancel",
     "type": "inject",
     "z": "obs25_flow",
     "name": "Stop replay",
-    "props": [{"p":"stopReplay","v":"true","vt":"bool"}],
+    "props": [
+      {
+        "p": "stopReplay",
+        "v": "true",
+        "vt": "bool"
+      }
+    ],
     "repeat": "",
     "once": false,
     "x": 410,
     "y": 390,
-    "wires": [["obs25_replay"]]
+    "wires": [
+      [
+        "obs25_replay"
+      ]
+    ]
   },
   {
     "id": "obs25_replay",
@@ -169,7 +239,11 @@
     "outputs": 1,
     "x": 880,
     "y": 350,
-    "wires": [["obs25_debug"]]
+    "wires": [
+      [
+        "obs25_debug"
+      ]
+    ]
   },
   {
     "id": "obs25_debug",
@@ -185,25 +259,32 @@
   },
   {
     "id": "obs25_profile",
-    "type": "mavlink-ai-profile",
+    "type": "mavlink-ai-vehicle",
     "name": "Recorder GCS",
-    "profileType": "gcs",
     "firmware": "ardupilot",
     "dialectSource": "bundled",
     "dialect": "ardupilotmega",
     "customDialectPath": "",
     "mavlinkVersion": "auto",
-    "sourceSystemId": 255,
-    "sourceComponentId": 190,
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
     "defaultMissionType": "mission",
     "debugProtocol": false,
+    "vehicleFamily": "generic"
+  },
+  {
+    "id": "obs25_profile__identity",
+    "type": "mavlink-ai-local-identity",
+    "name": "Recorder GCS GCS",
+    "role": "gcs",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
+    "heartbeatType": "",
+    "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
     "signOutbound": false,
     "verifyInbound": false,
-    "requireSignature": false,
-    "signingLinkId": 0
+    "requireSignature": false
   },
   {
     "id": "obs25_conn",
@@ -223,6 +304,10 @@
     "acceptedCompids": "",
     "unmatchedPolicy": "default",
     "routeTable": "",
-    "outboundQueue": true
+    "outboundQueue": true,
+    "localIdentity": "obs25_profile__identity",
+    "allowMultipleIdentities": false,
+    "additionalIdentities": "",
+    "signingLinkId": 0
   }
 ]

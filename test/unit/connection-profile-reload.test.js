@@ -7,6 +7,7 @@ const { MockRED } = require('../helpers/mock-red');
 const { nextEvent } = require('../helpers/next-event');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
+const { enc } = require('../helpers/v3-config');
 
 /**
  * Editing a profile's dialect and redeploying must update an already-running
@@ -32,20 +33,23 @@ const GNSS_INTEGRITY_MSGID = 441;
  */
 function gnssIntegrityFrame() {
   const dev = loadDialect('development');
-  const codec = new MavlinkCodec({ bundle: dev, version: 'v2', sysid: 1, compid: 1 });
-  return codec.encode('GNSS_INTEGRITY', {});
+  const codec = new MavlinkCodec({ bundle: dev, version: 'v2' });
+  return enc(codec, 'GNSS_INTEGRITY', {}, { sysid: 1, compid: 1 });
 }
 
 test('editing a profile dialect updates a running connection on redeploy (message 441)', async (t) => {
   const RED = new MockRED().loadNodes();
 
   /** Start on `common`. */
-  RED.create('mavlink-ai-profile', {
-    id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'common', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'UDP', profile: 'p1',
+    id: 'c1', name: 'UDP', profile: 'p1', localIdentity: 'id1',
     transport: 'udp-peer', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
@@ -69,9 +73,9 @@ test('editing a profile dialect updates a running connection on redeploy (messag
    * recreates the profile config node under the same id; the connection node is
    * left running (its own config is unchanged).
    */
-  RED.create('mavlink-ai-profile', {
-    id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'development', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Vehicle', dialect: 'development', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.events.emit('flows:started');
 
@@ -94,12 +98,15 @@ test('editing a profile dialect updates a running connection on redeploy (messag
 test('an edited default profile that is now invalid fails the connection closed and releases the transport (#116)', async (t) => {
   const RED = new MockRED().loadNodes();
 
-  RED.create('mavlink-ai-profile', {
-    id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'common', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'UDP', profile: 'p1',
+    id: 'c1', name: 'UDP', profile: 'p1', localIdentity: 'id1',
     transport: 'udp-peer', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
@@ -112,9 +119,9 @@ test('an edited default profile that is now invalid fails the connection closed 
    * default profile that becomes invalid must NOT keep running on the stale
    * dialect (#116): the connection fails closed and releases the socket.
    */
-  RED.create('mavlink-ai-profile', {
-    id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'nonexistent-dialect', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Vehicle', dialect: 'nonexistent-dialect', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   assert.strictEqual(RED.nodes.getNode('p1').isValid(), false);
   RED.events.emit('flows:started');
@@ -143,12 +150,15 @@ test('an edited default profile that is now invalid fails the connection closed 
 test('deleting the default profile deactivates the connection and releases the transport (#116)', async (t) => {
   const RED = new MockRED().loadNodes();
 
-  RED.create('mavlink-ai-profile', {
-    id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'common', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'UDP', profile: 'p1',
+    id: 'c1', name: 'UDP', profile: 'p1', localIdentity: 'id1',
     transport: 'udp-peer', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
@@ -181,12 +191,15 @@ test('deleting the default profile deactivates the connection and releases the t
 test('restoring a valid default profile reactivates a deactivated connection (#116)', async (t) => {
   const RED = new MockRED().loadNodes();
 
-  RED.create('mavlink-ai-profile', {
-    id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'common', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'UDP', profile: 'p1',
+    id: 'c1', name: 'UDP', profile: 'p1', localIdentity: 'id1',
     transport: 'udp-peer', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
@@ -199,9 +212,9 @@ test('restoring a valid default profile reactivates a deactivated connection (#1
   assert.strictEqual(conn._active, false);
 
   /** Re-create the profile under the same id on a later deploy -> reactivate. */
-  RED.create('mavlink-ai-profile', {
-    id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'development', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Vehicle', dialect: 'development', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.events.emit('flows:started');
   /**
@@ -228,12 +241,15 @@ test('restoring a valid default profile reactivates a deactivated connection (#1
 test('rebuilding the profile preserves the codec learned per-peer wire version (#69)', async (t) => {
   const RED = new MockRED().loadNodes();
 
-  RED.create('mavlink-ai-profile', {
-    id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'common', mavlinkVersion: 'auto',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'auto',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'UDP', profile: 'p1',
+    id: 'c1', name: 'UDP', profile: 'p1', localIdentity: 'id1',
     transport: 'udp-peer', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
@@ -241,24 +257,28 @@ test('rebuilding the profile preserves the codec learned per-peer wire version (
 
   /**
    * The connection has learned that sysid 7 speaks MAVLink v1 (0xFE magic), so an
-   * `auto` codec frames sends to it as v1.
+   * `auto` send to it is framed v1. Per-peer wire-version detection now lives on
+   * the connection-owned LinkState (#192, #228), not on the dialect codec.
    */
   const oldCodec = conn._codec;
-  oldCodec.noteInboundMagic(0xfe, 7);
-  assert.strictEqual(oldCodec.effectiveVersion(7), 'v1');
+  const link = conn._link;
+  link.noteInboundMagic(0xfe, 7);
+  assert.strictEqual(link.effectiveVersion('auto', 7), 'v1');
 
   /** Edit the profile (still `auto`) and redeploy without a transport restart. */
-  RED.create('mavlink-ai-profile', {
-    id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'development', mavlinkVersion: 'auto',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Vehicle', dialect: 'development', mavlinkVersion: 'auto',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.events.emit('flows:started');
 
   /**
-   * The codec was rebuilt for the new dialect, but the learned per-peer version
-   * carries over so an immediate send to the v1-only peer is still framed v1 —
-   * not reset to v2 until another inbound frame arrives.
+   * The codec was rebuilt for the new dialect, but the LinkState deliberately
+   * survives the profile edit (#192): it is the same instance and still holds
+   * the learned per-peer version, so an immediate send to the v1-only peer is
+   * still framed v1 — not reset to v2 until another inbound frame arrives.
    */
   assert.notStrictEqual(conn._codec, oldCodec, 'codec was rebuilt');
-  assert.strictEqual(conn._codec.effectiveVersion(7), 'v1');
+  assert.strictEqual(conn._link, link, 'LinkState survives the profile rebuild');
+  assert.strictEqual(conn._link.effectiveVersion('auto', 7), 'v1');
 });

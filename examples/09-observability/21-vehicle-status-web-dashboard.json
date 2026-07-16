@@ -34,7 +34,14 @@
     "outputs": 2,
     "x": 160,
     "y": 120,
-    "wires": [["obs21_store"], ["obs21_errors"]]
+    "wires": [
+      [
+        "obs21_store"
+      ],
+      [
+        "obs21_errors"
+      ]
+    ]
   },
   {
     "id": "obs21_store",
@@ -50,7 +57,9 @@
     "libs": [],
     "x": 480,
     "y": 100,
-    "wires": [[]]
+    "wires": [
+      []
+    ]
   },
   {
     "id": "obs21_errors",
@@ -61,7 +70,9 @@
     "outputs": 1,
     "x": 460,
     "y": 150,
-    "wires": [[]]
+    "wires": [
+      []
+    ]
   },
   {
     "id": "obs21_page_in",
@@ -74,7 +85,11 @@
     "swaggerDoc": "",
     "x": 150,
     "y": 260,
-    "wires": [["obs21_asset_path"]]
+    "wires": [
+      [
+        "obs21_asset_path"
+      ]
+    ]
   },
   {
     "id": "obs21_asset_path",
@@ -85,7 +100,11 @@
     "outputs": 1,
     "x": 390,
     "y": 260,
-    "wires": [["obs21_file"]]
+    "wires": [
+      [
+        "obs21_file"
+      ]
+    ]
   },
   {
     "id": "obs21_file",
@@ -101,7 +120,11 @@
     "allProps": false,
     "x": 630,
     "y": 260,
-    "wires": [["obs21_html_headers"]]
+    "wires": [
+      [
+        "obs21_html_headers"
+      ]
+    ]
   },
   {
     "id": "obs21_html_headers",
@@ -112,7 +135,11 @@
     "outputs": 1,
     "x": 840,
     "y": 260,
-    "wires": [["obs21_page_response"]]
+    "wires": [
+      [
+        "obs21_page_response"
+      ]
+    ]
   },
   {
     "id": "obs21_page_response",
@@ -136,7 +163,11 @@
     "swaggerDoc": "",
     "x": 150,
     "y": 330,
-    "wires": [["obs21_snapshot"]]
+    "wires": [
+      [
+        "obs21_snapshot"
+      ]
+    ]
   },
   {
     "id": "obs21_snapshot",
@@ -147,7 +178,11 @@
     "outputs": 1,
     "x": 410,
     "y": 330,
-    "wires": [["obs21_api_response"]]
+    "wires": [
+      [
+        "obs21_api_response"
+      ]
+    ]
   },
   {
     "id": "obs21_api_response",
@@ -162,27 +197,32 @@
   },
   {
     "id": "obs21_profile",
-    "type": "mavlink-ai-profile",
+    "type": "mavlink-ai-vehicle",
     "name": "Dashboard GCS profile",
-    "profileType": "gcs",
     "firmware": "ardupilot",
     "dialectSource": "bundled",
     "dialect": "ardupilotmega",
     "customDialectPath": "",
     "mavlinkVersion": "auto",
-    "sourceSystemId": 255,
-    "sourceComponentId": 190,
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
     "defaultMissionType": "mission",
+    "debugProtocol": false,
+    "vehicleFamily": "generic"
+  },
+  {
+    "id": "obs21_profile__identity",
+    "type": "mavlink-ai-local-identity",
+    "name": "Dashboard GCS profile GCS",
+    "role": "gcs",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
     "heartbeatType": "",
     "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
-    "debugProtocol": false,
     "signOutbound": false,
     "verifyInbound": false,
-    "requireSignature": false,
-    "signingLinkId": 0
+    "requireSignature": false
   },
   {
     "id": "obs21_conn",
@@ -204,6 +244,10 @@
     "acceptedCompids": "",
     "unmatchedPolicy": "default",
     "routeTable": "",
-    "outboundQueue": true
+    "outboundQueue": true,
+    "localIdentity": "obs21_profile__identity",
+    "allowMultipleIdentities": false,
+    "additionalIdentities": "",
+    "signingLinkId": 0
   }
 ]

@@ -1,0 +1,218 @@
+<script type="text/javascript">
+  (function () {
+    // MAVLink identity ids are uint8s on the wire (#90): accept only integers in
+    // [min, 255]. Blank is allowed (the runtime applies the role preset default).
+    function mavUint8Validator(min) {
+      return function (v) {
+        if (v === undefined || v === null || v === '') {
+          return true;
+        }
+        const n = Number(v);
+        if (!Number.isInteger(n) || n < min || n > 255) {
+          return 'must be an integer between ' + min + ' and 255';
+        }
+        return true;
+      };
+    }
+
+    // Role presets (issue #106/#228). Suggested values only: switching roles
+    // pre-fills a field when it is blank or still equals the previous role's
+    // suggestion; an explicitly customized value is never rewritten.
+    var ROLE_PRESETS = {
+      gcs: { sysid: 255, compid: 190, heartbeatType: 'MAV_TYPE_GCS' },
+      companion: { sysid: 1, compid: 191, heartbeatType: 'MAV_TYPE_ONBOARD_CONTROLLER' },
+      custom: { sysid: 255, compid: 190, heartbeatType: 'MAV_TYPE_GENERIC' }
+    };
+
+    RED.nodes.registerType('mavlink-ai-local-identity', {
+      category: 'config',
+      defaults: {
+        name: { value: '' },
+        role: { value: 'gcs', required: true },
+        sourceSystemId: { value: 255, required: true, validate: mavUint8Validator(1) },
+        /** Source compid 0 is MAV_COMP_ID_ALL (the broadcast component
+         * address), never a valid sender id — same floor the runtime and the
+         * codec enforce (#153). */
+        sourceComponentId: { value: 190, required: true, validate: mavUint8Validator(1) },
+        heartbeatType: { value: '' },
+        heartbeatAutopilot: { value: 'MAV_AUTOPILOT_INVALID' },
+        signOutbound: { value: false },
+        verifyInbound: { value: false },
+        requireSignature: { value: false }
+      },
+      credentials: {
+        signingPassphrase: { type: 'password' }
+      },
+      label: function () {
+        var ids =
+          this.sourceSystemId !== undefined && this.sourceComponentId !== undefined
+            ? ' ' + this.sourceSystemId + '/' + this.sourceComponentId
+            : '';
+        return (this.name || 'MAVLink Local Identity') + ids;
+      },
+      oneditprepare: function () {
+        var $role = $('#node-config-input-role');
+        var $sysid = $('#node-config-input-sourceSystemId');
+        var $compid = $('#node-config-input-sourceComponentId');
+        var $hbType = $('#node-config-input-heartbeatType');
+        var prevRole = $role.val() || 'gcs';
+
+        function preset(role) {
+          return ROLE_PRESETS[role] || ROLE_PRESETS.custom;
+        }
+
+        // Update the role hint and migrate suggested values: a field is only
+        // rewritten when blank or still carrying the previous role's suggestion.
+        function applyRole() {
+          var role = $role.val();
+          $('.mav-role-hint').hide();
+          $('#mav-role-hint-' + role).show();
+          var prev = preset(prevRole);
+          var next = preset(role);
+          if (String($sysid.val()).trim() === '' || Number($sysid.val()) === prev.sysid) {
+            $sysid.val(next.sysid);
+          }
+          if (String($compid.val()).trim() === '' || Number($compid.val()) === prev.compid) {
+            $compid.val(next.compid);
+          }
+          var hb = String($hbType.val()).trim();
+          if (hb === '' || hb === prev.heartbeatType) {
+            $hbType.val(next.heartbeatType);
+          }
+          $hbType.attr('placeholder', next.heartbeatType);
+          prevRole = role;
+        }
+        $role.on('change', applyRole);
+        // Show the hint for the saved role without rewriting saved values.
+        $('.mav-role-hint').hide();
+        $('#mav-role-hint-' + prevRole).show();
+        $hbType.attr('placeholder', preset(prevRole).heartbeatType);
+
+        // Signing detail rows only matter once signing/verification is on.
+        function toggleSigningRows() {
+          var on =
+            $('#node-config-input-signOutbound').is(':checked') ||
+            $('#node-config-input-verifyInbound').is(':checked');
+          $('.mav-signing-detail').toggle(on);
+          $('.mav-signing-require').toggle($('#node-config-input-verifyInbound').is(':checked'));
+        }
+        $('#node-config-input-signOutbound').on('change', toggleSigningRows);
+        $('#node-config-input-verifyInbound').on('change', toggleSigningRows);
+        toggleSigningRows();
+      }
+    });
+  })();
+</script>
+
+<script type="text/html" data-template-name="mavlink-ai-local-identity">
+  <div class="form-row">
+    <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-config-input-name" placeholder="Node-RED GCS">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-role">Role</label>
+    <select id="node-config-input-role">
+      <option value="gcs">GCS (ground control station)</option>
+      <option value="companion">Companion / Onboard controller</option>
+      <option value="custom">Custom</option>
+    </select>
+  </div>
+  <div class="form-tips mav-role-hint" id="mav-role-hint-gcs" style="margin-bottom: 8px; display: none;">
+    A <b>GCS</b> conventionally uses Source SysID <code>255</code> and CompID <code>190</code>, and
+    advertises <code>MAV_TYPE_GCS</code> in its heartbeat.
+  </div>
+  <div class="form-tips mav-role-hint" id="mav-role-hint-companion" style="margin-bottom: 8px; display: none;">
+    A <b>companion computer</b> normally shares its <b>vehicle's SysID</b> (commonly <code>1</code>)
+    and uses its own CompID, commonly <code>191</code> (<code>MAV_COMP_ID_ONBOARD_COMPUTER</code>),
+    so it appears as a component of that vehicle rather than a separate system. Its heartbeat type is
+    <code>MAV_TYPE_ONBOARD_CONTROLLER</code>.
+  </div>
+  <div class="form-tips mav-role-hint" id="mav-role-hint-custom" style="margin-bottom: 8px; display: none;">
+    <b>Custom</b> sets no conventions — pick the SysID/CompID and heartbeat identity this component
+    should report.
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-sourceSystemId">Source SysID</label>
+    <input type="number" id="node-config-input-sourceSystemId" min="1" max="255">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-sourceComponentId">Source CompID</label>
+    <input type="number" id="node-config-input-sourceComponentId" min="0" max="255">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-heartbeatType">HB Type</label>
+    <input type="text" id="node-config-input-heartbeatType" placeholder="MAV_TYPE_GCS">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-heartbeatAutopilot">HB Autopilot</label>
+    <input type="text" id="node-config-input-heartbeatAutopilot" placeholder="MAV_AUTOPILOT_INVALID">
+  </div>
+
+  <hr>
+  <h4 style="margin:6px 0;">MAVLink 2 Signing</h4>
+  <div class="form-row">
+    <label for="node-config-input-signOutbound" title="Sign packets sent as this identity (forces MAVLink 2)">Sign outbound</label>
+    <input type="checkbox" id="node-config-input-signOutbound" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-verifyInbound" title="Check signatures on packets received on connections whose default identity this is">Verify inbound</label>
+    <input type="checkbox" id="node-config-input-verifyInbound" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
+  <div class="form-tips mav-signing-detail" style="margin: -4px 0 8px 105px; width: 70%;">
+    Verifying also enforces the signing spec's <b>anti-replay</b> rules — a signed frame is dropped if
+    its timestamp is older than the last on its <code>(sysid, compid, link&nbsp;id)</code> stream, or
+    more than a minute behind the receiver's clock (rejected as <code>signature-replayed</code>).
+    Replay memory is owned by the Connection and survives profile edits.
+  </div>
+  <div class="form-row mav-signing-require">
+    <label for="node-config-input-requireSignature" title="Reject unsigned inbound packets">Require signature</label>
+    <input type="checkbox" id="node-config-input-requireSignature" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
+  <div class="form-row mav-signing-detail">
+    <label for="node-config-input-signingPassphrase">Passphrase</label>
+    <input type="password" id="node-config-input-signingPassphrase" placeholder="shared secret (stored as a credential)">
+  </div>
+  <div class="form-tips mav-signing-detail">
+    The passphrase is the shared signing key (SHA-256 derived, matching Mission Planner /
+    QGroundControl), stored as an encrypted Node-RED credential — never in exported flow JSON.
+    The signing <b>link ID</b> is set on the Connection: link ids identify channels, so one identity
+    reused on two links does not share a link id.
+  </div>
+</script>
+
+<script type="text/html" data-help-name="mavlink-ai-local-identity">
+  <p>A <b>Local MAVLink Identity</b> is who this Node-RED runtime <em>is</em> when it transmits: the
+  source SysID/CompID stamped into outbound frames, the HEARTBEAT identity it advertises, and the
+  signing credential/policy it authenticates with.</p>
+  <p>It is one of three independent concerns:</p>
+  <ul>
+    <li><b>Local Identity</b> (this node) — who Node-RED is on the wire.</li>
+    <li><b>Vehicle Profile</b> — what vehicle is being addressed and how its protocol metadata
+    (dialect, firmware, modes, parameters) is interpreted.</li>
+    <li><b>Connection</b> — how traffic moves, and which local identities are permitted on that link.</li>
+  </ul>
+  <p>Selecting a Vehicle Profile can never change this identity, and this identity says nothing about
+  the vehicle being controlled — a GCS identity works against copters, planes, rovers, boats, and subs
+  alike.</p>
+  <h3>Roles</h3>
+  <ul>
+    <li><b>GCS</b> — ground control station. Suggested SysID <code>255</code> / CompID <code>190</code>,
+    heartbeat <code>MAV_TYPE_GCS</code>.</li>
+    <li><b>Companion / Onboard controller</b> — an onboard computer riding on the vehicle. It normally
+    shares the <b>vehicle's SysID</b> (commonly <code>1</code>) and uses its own CompID, commonly
+    <code>191</code> (<code>MAV_COMP_ID_ONBOARD_COMPUTER</code>); heartbeat
+    <code>MAV_TYPE_ONBOARD_CONTROLLER</code>.</li>
+    <li><b>Custom</b> — set everything yourself (test rigs, simulated components, custom MAVLink
+    components).</li>
+  </ul>
+  <p>Multiple Local Identity nodes may coexist; a Connection uses exactly one as its required default,
+  and additional identities transmit on a link only through the Connection's explicit
+  <i>Additional Local Identities</i> bindings.</p>
+  <h3>MAVLink 2 signing</h3>
+  <p><b>Sign outbound</b> signs every frame sent as this identity (requires a passphrase — enabling it
+  without one marks the identity invalid and its connections fail closed rather than sending
+  unsigned). <b>Verify inbound</b> checks signatures (and anti-replay) on connections whose default
+  identity this is; <b>Require signature</b> additionally rejects unsigned inbound frames. Sequence
+  numbers, signing timestamps, the link id, and replay memory are channel state owned by the
+  Connection.</p>
+</script>

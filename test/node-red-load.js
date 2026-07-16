@@ -25,7 +25,7 @@ try {
 }
 
 const assert = require('node:assert');
-const profileNode = require('../nodes/mavlink-ai-profile.js');
+const profileNode = require('../nodes/mavlink-ai-vehicle.js');
 const buildNode = require('../nodes/mavlink-ai-build.js');
 
 helper.init(nodeRedPath);
@@ -45,7 +45,7 @@ async function main() {
   await new Promise((resolve) => helper.startServer(resolve));
   try {
     const flow = [
-      { id: 'p1', type: 'mavlink-ai-profile', name: 'Test', dialect: 'common', mavlinkVersion: 'v2' },
+      { id: 'p1', type: 'mavlink-ai-vehicle', name: 'Test', dialect: 'common', mavlinkVersion: 'v2' },
       { id: 'b1', type: 'mavlink-ai-build', name: 'build', profile: 'p1', messageName: 'HEARTBEAT' }
     ];
     await helper.load([profileNode, buildNode], flow);

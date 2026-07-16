@@ -10,7 +10,7 @@
     "id": "param24_note",
     "type": "comment",
     "z": "param24_flow",
-    "name": "Open /mavlink-ai/parameters — protect HTTP nodes and test changes in SITL",
+    "name": "Open /mavlink-ai/parameters \u2014 protect HTTP nodes and test changes in SITL",
     "info": "Setting parameters can make a vehicle unsafe or unbootable. The UI requires SET confirmation, but authentication and network exposure remain the operator's responsibility.",
     "x": 390,
     "y": 40,
@@ -27,7 +27,11 @@
     "swaggerDoc": "",
     "x": 150,
     "y": 110,
-    "wires": [["param24_asset"]]
+    "wires": [
+      [
+        "param24_asset"
+      ]
+    ]
   },
   {
     "id": "param24_asset",
@@ -38,7 +42,11 @@
     "outputs": 1,
     "x": 390,
     "y": 110,
-    "wires": [["param24_file"]]
+    "wires": [
+      [
+        "param24_file"
+      ]
+    ]
   },
   {
     "id": "param24_file",
@@ -54,7 +62,11 @@
     "allProps": false,
     "x": 630,
     "y": 110,
-    "wires": [["param24_html"]]
+    "wires": [
+      [
+        "param24_html"
+      ]
+    ]
   },
   {
     "id": "param24_html",
@@ -65,7 +77,11 @@
     "outputs": 1,
     "x": 840,
     "y": 110,
-    "wires": [["param24_page_response"]]
+    "wires": [
+      [
+        "param24_page_response"
+      ]
+    ]
   },
   {
     "id": "param24_page_response",
@@ -89,7 +105,11 @@
     "swaggerDoc": "",
     "x": 160,
     "y": 170,
-    "wires": [["param24_status"]]
+    "wires": [
+      [
+        "param24_status"
+      ]
+    ]
   },
   {
     "id": "param24_status",
@@ -100,7 +120,11 @@
     "outputs": 1,
     "x": 390,
     "y": 170,
-    "wires": [["param24_status_response"]]
+    "wires": [
+      [
+        "param24_status_response"
+      ]
+    ]
   },
   {
     "id": "param24_status_response",
@@ -124,7 +148,11 @@
     "swaggerDoc": "",
     "x": 170,
     "y": 250,
-    "wires": [["param24_validate"]]
+    "wires": [
+      [
+        "param24_validate"
+      ]
+    ]
   },
   {
     "id": "param24_validate",
@@ -135,7 +163,14 @@
     "outputs": 2,
     "x": 460,
     "y": 250,
-    "wires": [["param24_param"],["param24_action_response"]]
+    "wires": [
+      [
+        "param24_param"
+      ],
+      [
+        "param24_action_response"
+      ]
+    ]
   },
   {
     "id": "param24_action_response",
@@ -162,7 +197,17 @@
     "maxRetries": 3,
     "x": 730,
     "y": 240,
-    "wires": [["param24_store_result"],["param24_store_progress"],["param24_store_error"]]
+    "wires": [
+      [
+        "param24_store_result"
+      ],
+      [
+        "param24_store_progress"
+      ],
+      [
+        "param24_store_error"
+      ]
+    ]
   },
   {
     "id": "param24_store_result",
@@ -173,7 +218,11 @@
     "outputs": 1,
     "x": 1010,
     "y": 210,
-    "wires": [["param24_debug"]]
+    "wires": [
+      [
+        "param24_debug"
+      ]
+    ]
   },
   {
     "id": "param24_store_progress",
@@ -184,7 +233,9 @@
     "outputs": 1,
     "x": 1020,
     "y": 250,
-    "wires": [[]]
+    "wires": [
+      []
+    ]
   },
   {
     "id": "param24_store_error",
@@ -195,7 +246,11 @@
     "outputs": 1,
     "x": 1010,
     "y": 290,
-    "wires": [["param24_debug"]]
+    "wires": [
+      [
+        "param24_debug"
+      ]
+    ]
   },
   {
     "id": "param24_debug",
@@ -211,25 +266,32 @@
   },
   {
     "id": "param24_profile",
-    "type": "mavlink-ai-profile",
+    "type": "mavlink-ai-vehicle",
     "name": "Parameter GCS",
-    "profileType": "gcs",
     "firmware": "ardupilot",
     "dialectSource": "bundled",
     "dialect": "ardupilotmega",
     "customDialectPath": "",
     "mavlinkVersion": "auto",
-    "sourceSystemId": 255,
-    "sourceComponentId": 190,
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
     "defaultMissionType": "mission",
     "debugProtocol": false,
+    "vehicleFamily": "generic"
+  },
+  {
+    "id": "param24_profile__identity",
+    "type": "mavlink-ai-local-identity",
+    "name": "Parameter GCS GCS",
+    "role": "gcs",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
+    "heartbeatType": "",
+    "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
     "signOutbound": false,
     "verifyInbound": false,
-    "requireSignature": false,
-    "signingLinkId": 0
+    "requireSignature": false
   },
   {
     "id": "param24_conn",
@@ -249,6 +311,10 @@
     "acceptedCompids": "",
     "unmatchedPolicy": "default",
     "routeTable": "",
-    "outboundQueue": true
+    "outboundQueue": true,
+    "localIdentity": "param24_profile__identity",
+    "allowMultipleIdentities": false,
+    "additionalIdentities": "",
+    "signingLinkId": 0
   }
 ]

@@ -15,20 +15,22 @@ const { MockRED } = require('../helpers/mock-red');
 
 function setup() {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1',
     name: 'P',
     dialect: 'common',
     mavlinkVersion: 'v2',
-    sourceSystemId: 255,
-    sourceComponentId: 190,
     defaultTargetSystem: 7,
     defaultTargetComponent: 3
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c1',
     name: 'C',
     profile: 'p1',
+    localIdentity: 'id1',
     transport: 'udp-peer',
     bindAddress: '127.0.0.1',
     bindPort: 0,
@@ -207,12 +209,15 @@ test('an addressed message still routes to its target via the profile default (#
 
 test('under auto version, a broadcast is framed with the connection default, not the routing target peer (#148)', async (t) => {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'pa', name: 'Auto', dialect: 'common', mavlinkVersion: 'auto',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 7, defaultTargetComponent: 3
+    defaultTargetSystem: 7, defaultTargetComponent: 3
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'ida', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'ca', name: 'CA', profile: 'pa', transport: 'udp-peer',
+    id: 'ca', name: 'CA', profile: 'pa', localIdentity: 'ida', transport: 'udp-peer',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   const sent = [];
@@ -221,8 +226,8 @@ test('under auto version, a broadcast is framed with the connection default, not
 
   /** The default target sysid 7 speaks v2, but the connection's last-detected
    * default is v1. A broadcast must use the connection default, not sysid 7's. */
-  conn._codec.noteInboundMagic(0xfd, 7);
-  conn._codec.noteInboundMagic(0xfe, 9);
+  conn._link.noteInboundMagic(0xfd, 7);
+  conn._link.noteInboundMagic(0xfe, 9);
 
   await conn.send({ name: 'HEARTBEAT', fields: { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 } });
   assert.strictEqual(sent[sent.length - 1].meta.targetSystem, undefined);

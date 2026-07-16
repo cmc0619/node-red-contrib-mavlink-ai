@@ -6,14 +6,15 @@ const path = require('path');
 const { compileXmlDialect } = require('../../lib/dialects/xml-dialect-compiler');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
+const { LinkState } = require('../../lib/protocol/link-state');
 
 const DIR = path.join(__dirname, '..', 'fixtures', 'dialects');
 const fixture = (name) => path.join(DIR, name);
 
 /** Encode then decode a message through a codec, returning the decoded payload. */
 function roundTrip(bundle, name, fields) {
-  const codec = new MavlinkCodec({ bundle, version: 'v2', sysid: 42, compid: 1 });
-  const buf = codec.encode(name, fields, {});
+  const codec = new MavlinkCodec({ bundle, version: 'v2' });
+  const buf = codec.encode(name, fields, { sysid: 42, compid: 1, link: new LinkState() });
   let decoded = null;
   let error = null;
   const dec = codec.createDecoder(

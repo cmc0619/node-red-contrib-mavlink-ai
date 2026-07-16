@@ -21,48 +21,108 @@
     "type": "inject",
     "z": "mission23_flow",
     "name": "Upload 3-waypoint mission",
-    "props": [{"p":"topic","v":"upload_mission","vt":"str"},{"p":"payload","v":"{\"waypoints\":[{\"lat\":39.1000,\"lon\":-75.1000,\"alt\":30,\"command\":\"MAV_CMD_NAV_TAKEOFF\"},{\"lat\":39.1005,\"lon\":-75.1005,\"alt\":40},{\"lat\":39.1000,\"lon\":-75.1000,\"alt\":0,\"command\":\"MAV_CMD_NAV_LAND\"}]}","vt":"json"}],
+    "props": [
+      {
+        "p": "topic",
+        "v": "upload_mission",
+        "vt": "str"
+      },
+      {
+        "p": "payload",
+        "v": "{\"waypoints\":[{\"lat\":39.1000,\"lon\":-75.1000,\"alt\":30,\"command\":\"MAV_CMD_NAV_TAKEOFF\"},{\"lat\":39.1005,\"lon\":-75.1005,\"alt\":40},{\"lat\":39.1000,\"lon\":-75.1000,\"alt\":0,\"command\":\"MAV_CMD_NAV_LAND\"}]}",
+        "vt": "json"
+      }
+    ],
     "repeat": "",
     "once": false,
     "x": 180,
     "y": 110,
-    "wires": [["mission23_node"]]
+    "wires": [
+      [
+        "mission23_node"
+      ]
+    ]
   },
   {
     "id": "mission23_download",
     "type": "inject",
     "z": "mission23_flow",
     "name": "Download to verify",
-    "props": [{"p":"topic","v":"download_mission","vt":"str"},{"p":"payload","v":"{}","vt":"json"}],
+    "props": [
+      {
+        "p": "topic",
+        "v": "download_mission",
+        "vt": "str"
+      },
+      {
+        "p": "payload",
+        "v": "{}",
+        "vt": "json"
+      }
+    ],
     "repeat": "",
     "once": false,
     "x": 160,
     "y": 160,
-    "wires": [["mission23_node"]]
+    "wires": [
+      [
+        "mission23_node"
+      ]
+    ]
   },
   {
     "id": "mission23_clear_ack",
     "type": "inject",
     "z": "mission23_flow",
     "name": "Clear and wait for ACK",
-    "props": [{"p":"topic","v":"clear_mission","vt":"str"},{"p":"payload","v":"{\"wait_ack\":true,\"timeout_ms\":10000}","vt":"json"}],
+    "props": [
+      {
+        "p": "topic",
+        "v": "clear_mission",
+        "vt": "str"
+      },
+      {
+        "p": "payload",
+        "v": "{\"wait_ack\":true,\"timeout_ms\":10000}",
+        "vt": "json"
+      }
+    ],
     "repeat": "",
     "once": false,
     "x": 180,
     "y": 210,
-    "wires": [["mission23_node"]]
+    "wires": [
+      [
+        "mission23_node"
+      ]
+    ]
   },
   {
     "id": "mission23_clear_best",
     "type": "inject",
     "z": "mission23_flow",
     "name": "Best-effort clear",
-    "props": [{"p":"topic","v":"clear_mission","vt":"str"},{"p":"payload","v":"{}","vt":"json"}],
+    "props": [
+      {
+        "p": "topic",
+        "v": "clear_mission",
+        "vt": "str"
+      },
+      {
+        "p": "payload",
+        "v": "{}",
+        "vt": "json"
+      }
+    ],
     "repeat": "",
     "once": false,
     "x": 160,
     "y": 260,
-    "wires": [["mission23_node"]]
+    "wires": [
+      [
+        "mission23_node"
+      ]
+    ]
   },
   {
     "id": "mission23_node",
@@ -76,7 +136,17 @@
     "maxRetries": 3,
     "x": 440,
     "y": 180,
-    "wires": [["mission23_result"],["mission23_progress"],["mission23_error"]]
+    "wires": [
+      [
+        "mission23_result"
+      ],
+      [
+        "mission23_progress"
+      ],
+      [
+        "mission23_error"
+      ]
+    ]
   },
   {
     "id": "mission23_result",
@@ -116,27 +186,32 @@
   },
   {
     "id": "mission23_profile",
-    "type": "mavlink-ai-profile",
+    "type": "mavlink-ai-vehicle",
     "name": "Mission GCS",
-    "profileType": "gcs",
     "firmware": "ardupilot",
     "dialectSource": "bundled",
     "dialect": "ardupilotmega",
     "customDialectPath": "",
     "mavlinkVersion": "auto",
-    "sourceSystemId": 255,
-    "sourceComponentId": 190,
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
     "defaultMissionType": "mission",
+    "debugProtocol": false,
+    "vehicleFamily": "generic"
+  },
+  {
+    "id": "mission23_profile__identity",
+    "type": "mavlink-ai-local-identity",
+    "name": "Mission GCS GCS",
+    "role": "gcs",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
     "heartbeatType": "",
     "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
-    "debugProtocol": false,
     "signOutbound": false,
     "verifyInbound": false,
-    "requireSignature": false,
-    "signingLinkId": 0
+    "requireSignature": false
   },
   {
     "id": "mission23_conn",
@@ -156,6 +231,10 @@
     "acceptedCompids": "",
     "unmatchedPolicy": "default",
     "routeTable": "",
-    "outboundQueue": true
+    "outboundQueue": true,
+    "localIdentity": "mission23_profile__identity",
+    "allowMultipleIdentities": false,
+    "additionalIdentities": "",
+    "signingLinkId": 0
   }
 ]

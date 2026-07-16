@@ -6,6 +6,7 @@ const assert = require('node:assert');
 const { MockRED } = require('../helpers/mock-red');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
+const { enc } = require('../helpers/v3-config');
 
 /**
  * TCP is a byte stream, so a tcp-server connection that funnels every client's
@@ -26,8 +27,8 @@ const common = loadDialect('common');
  * @returns {Buffer} the encoded frame
  */
 function heartbeatFrom(sysid) {
-  const codec = new MavlinkCodec({ bundle: common, version: 'v2', sysid, compid: 1 });
-  return codec.encode('HEARTBEAT', { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 });
+  const codec = new MavlinkCodec({ bundle: common, version: 'v2' });
+  return enc(codec, 'HEARTBEAT', { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 }, { sysid, compid: 1 });
 }
 
 /**
@@ -37,12 +38,15 @@ function heartbeatFrom(sysid) {
  * @returns {object} the connection node
  */
 function tcpServerConnection(RED) {
-  RED.create('mavlink-ai-profile', {
-    id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'common', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'Server', profile: 'p1',
+    id: 'c1', name: 'Server', profile: 'p1', localIdentity: 'id1',
     transport: 'tcp-server', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });

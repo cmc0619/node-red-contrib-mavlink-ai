@@ -216,7 +216,15 @@ module.exports = function registerMavlinkAiPayload(RED) {
           });
         }
         try {
-          await node.connection.send({ name: built.name, profile: node.profile.id, fields: built.fields }, { msg });
+          await node.connection.send(
+            {
+              name: built.name,
+              vehicleProfile: node.profile.id,
+              localIdentity: payload.localIdentity,
+              fields: built.fields
+            },
+            { msg }
+          );
           node.status({ fill: 'green', shape: 'dot', text: `sent ${action}` });
           return done();
         } catch (err) {
@@ -235,12 +243,15 @@ module.exports = function registerMavlinkAiPayload(RED) {
       msg.topic = 'mavlink/send';
       msg.payload = {
         name: built.name,
-        profile: node.profile.id,
-        profile_name: node.profile.name,
+        vehicleProfile: node.profile.id,
+        vehicleProfileName: node.profile.name,
         fields: built.fields,
         target_system: targetSystem,
         target_component: targetComponent
       };
+      if (payload.localIdentity !== undefined && payload.localIdentity !== null && payload.localIdentity !== '') {
+        msg.payload.localIdentity = payload.localIdentity;
+      }
       node.status({ fill: 'green', shape: 'dot', text: action });
       send(msg);
       done();
@@ -287,13 +298,20 @@ async function runWithAck(node, msg, send, done, ctx) {
    */
   let workflow;
   try {
+    // The Local Identity this workflow transmits as (#228): the explicit
+    // payload request when present (validated as attached/permitted by the
+    // connection), else the connection default. Its source ids gate ACK
+    // matching (#99).
+    const identity = node.connection.resolveOutboundIdentity(ctx.payload.localIdentity);
+    const source = identity.getIdentity();
     workflow = new CommandSend({
       connection: node.connection,
-      profile: node.profile.id,
+      vehicleProfile: node.profile.id,
+      localIdentity: ctx.payload.localIdentity,
       targetSystem: ctx.targetSystem,
       targetComponent: ctx.targetComponent,
-      sourceSystem: ctx.defaults.sourceSystemId,
-      sourceComponent: ctx.defaults.sourceComponentId,
+      sourceSystem: source.sysid,
+      sourceComponent: source.compid,
       command: ctx.built.fields.command,
       fields: ctx.built.fields,
       enums: ctx.enums,

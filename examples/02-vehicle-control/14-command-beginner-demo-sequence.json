@@ -4,26 +4,35 @@
     "type": "tab",
     "label": "MAVLink AI - 14 Beginner Demo Sequence",
     "disabled": false,
-    "info": "Beginner choreography demo (issue #52): arm -> takeoff 10m -> spin 360 -> take photo -> land -> disarm. Every step is wired to Debug only — the command nodes build normalized messages but nothing reaches a vehicle until you wire them into a MAVLink AI Out node (or enable Await ack with a connection). Note: flips/rolls are not included as a generic step — on ArduCopter a flip is a MODE (FLIP via Set Mode), not a MAV_CMD, and support is firmware/vehicle-specific."
+    "info": "Beginner choreography demo (issue #52): arm -> takeoff 10m -> spin 360 -> take photo -> land -> disarm. Every step is wired to Debug only \u2014 the command nodes build normalized messages but nothing reaches a vehicle until you wire them into a MAVLink AI Out node (or enable Await ack with a connection). Note: flips/rolls are not included as a generic step \u2014 on ArduCopter a flip is a MODE (FLIP via Set Mode), not a MAV_CMD, and support is firmware/vehicle-specific."
   },
   {
     "id": "ai_profile_copter",
-    "type": "mavlink-ai-profile",
+    "type": "mavlink-ai-vehicle",
     "name": "AI Profile - Copter",
-    "profileType": "copter",
     "firmware": "ardupilot",
     "dialect": "ardupilotmega",
     "customDialectPath": "",
     "mavlinkVersion": "auto",
-    "sourceSystemId": 255,
-    "sourceComponentId": 190,
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
     "defaultMissionType": "mission",
+    "debugProtocol": false,
+    "vehicleFamily": "copter"
+  },
+  {
+    "id": "ai_profile_copter__identity",
+    "type": "mavlink-ai-local-identity",
+    "name": "AI Profile - Copter Identity",
+    "role": "custom",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
     "heartbeatType": "",
     "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
-    "debugProtocol": false
+    "signOutbound": false,
+    "verifyInbound": false,
+    "requireSignature": false
   },
   {
     "id": "n14_i1",

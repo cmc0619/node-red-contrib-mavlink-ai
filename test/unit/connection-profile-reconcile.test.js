@@ -7,6 +7,7 @@ const { MockRED } = require('../helpers/mock-red');
 const { nextEvent } = require('../helpers/next-event');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
+const { enc } = require('../helpers/v3-config');
 
 /**
  * Routed profiles (referenced from the connection's routeTable) and legacy
@@ -32,8 +33,8 @@ const dev = loadDialect('development');
  * @returns {Buffer} the encoded frame
  */
 function attitudeFrom(sysid) {
-  const codec = new MavlinkCodec({ bundle: ardu, version: 'v2', sysid, compid: 1 });
-  return codec.encode('ATTITUDE', { roll: 0, pitch: 0, yaw: 0 });
+  const codec = new MavlinkCodec({ bundle: ardu, version: 'v2' });
+  return enc(codec, 'ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }, { sysid, compid: 1 });
 }
 
 /**
@@ -46,12 +47,12 @@ function attitudeFrom(sysid) {
  * @returns {Buffer} the encoded frame
  */
 function gnssIntegrityFrom(sysid) {
-  const codec = new MavlinkCodec({ bundle: dev, version: 'v2', sysid, compid: 1 });
-  return codec.encode('GNSS_INTEGRITY', {});
+  const codec = new MavlinkCodec({ bundle: dev, version: 'v2' });
+  return enc(codec, 'GNSS_INTEGRITY', {}, { sysid, compid: 1 });
 }
 
 /**
- * Create a mavlink-ai-profile config node with the common identity fields.
+ * Create a mavlink-ai-vehicle config node with the common identity fields.
  *
  * @param {MockRED} RED  the mock runtime
  * @param {string} id  config-node id
@@ -61,14 +62,11 @@ function gnssIntegrityFrom(sysid) {
  * @returns {object} the profile node
  */
 function profile(RED, id, name, dialect, extra = {}) {
-  return RED.create('mavlink-ai-profile', {
+  return RED.create('mavlink-ai-vehicle', {
     id,
     name,
-    profileType: 'gcs',
     dialect,
     mavlinkVersion: 'v2',
-    sourceSystemId: 255,
-    sourceComponentId: 190,
     defaultTargetSystem: 1,
     defaultTargetComponent: 1,
     ...extra
@@ -88,8 +86,11 @@ function routedConnection(RED) {
   profile(RED, 'p_def', 'Def', 'minimal');
   profile(RED, 'pa', 'A', 'ardupilotmega');
   profile(RED, 'pb', 'B', 'ardupilotmega');
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
   return RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'Routed', profile: 'p_def',
+    id: 'c1', name: 'Routed', profile: 'p_def', localIdentity: 'id1',
     transport: 'udp-peer', routingMode: 'routed', unmatchedPolicy: 'reject',
     routeTable: JSON.stringify([
       { sysid: 1, compid: '*', profile: 'pa' },
@@ -220,8 +221,11 @@ test('a deleted profile stops resolving by legacy name after deploy (#118)', (t)
   const RED = new MockRED().loadNodes();
   profile(RED, 'p_def', 'Def', 'minimal');
   profile(RED, 'p2', 'Alt', 'ardupilotmega');
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'Conn', profile: 'p_def',
+    id: 'c1', name: 'Conn', profile: 'p_def', localIdentity: 'id1',
     transport: 'udp-peer', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
@@ -242,8 +246,11 @@ test('renaming a profile invalidates the old name and resolves the new one (#118
   const RED = new MockRED().loadNodes();
   profile(RED, 'p_def', 'Def', 'minimal');
   profile(RED, 'p2', 'Alt', 'ardupilotmega');
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'Conn', profile: 'p_def',
+    id: 'c1', name: 'Conn', profile: 'p_def', localIdentity: 'id1',
     transport: 'udp-peer', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
@@ -265,8 +272,11 @@ test('recreating a profile under the same id returns the current object, never t
   const RED = new MockRED().loadNodes();
   profile(RED, 'p_def', 'Def', 'minimal');
   profile(RED, 'p2', 'Alt', 'ardupilotmega');
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'Conn', profile: 'p_def',
+    id: 'c1', name: 'Conn', profile: 'p_def', localIdentity: 'id1',
     transport: 'udp-peer', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
@@ -286,8 +296,11 @@ test('a name that becomes ambiguous fails PROFILE_AMBIGUOUS even after a cached 
   const RED = new MockRED().loadNodes();
   profile(RED, 'p_def', 'Def', 'minimal');
   profile(RED, 'p2', 'Alt', 'ardupilotmega');
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'Conn', profile: 'p_def',
+    id: 'c1', name: 'Conn', profile: 'p_def', localIdentity: 'id1',
     transport: 'udp-peer', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });

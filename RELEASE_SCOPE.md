@@ -2,6 +2,16 @@
 
 This document captures follow-up decisions that refine `DESIGN.md`.
 
+> **v3 architecture reset (issue #228).** The single combined profile was split
+> into three config nodes — **Local Identity** (source ids, heartbeat, signing
+> policy), **Vehicle Profile** (dialect, firmware, vehicle family, target
+> defaults, mission prefs), and **Connection** (transport + channel state /
+> signing link id). Where sections below say "profile owns dialect / identity",
+> read: the **Vehicle Profile** owns dialect and target metadata, the **Local
+> Identity** owns source identity + heartbeat + signing policy, and the
+> **Connection** owns the signing link id and per-link sequence/replay state.
+> `DESIGN.md` §5.5 is the authoritative model.
+
 ## 1. Dialects and `common.xml`
 
 A MAVLink dialect is an XML message definition file.
@@ -92,7 +102,7 @@ That is compact, but it mixes concerns.
 The v2 model separates concerns:
 
 ```text
-mavlink-ai-profile     config: protocol identity and defaults
+mavlink-ai-vehicle     config: protocol identity and defaults
 mavlink-ai-connection  config: transport/session/resource owner
 mavlink-ai-in          visible: subscribe/receive decoded messages
 mavlink-ai-out         visible: send normalized/raw messages

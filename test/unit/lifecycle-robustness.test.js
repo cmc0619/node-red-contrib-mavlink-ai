@@ -6,6 +6,7 @@ const { EventEmitter } = require('events');
 const { MockRED } = require('../helpers/mock-red');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
+const { enc } = require('../helpers/v3-config');
 
 /**
  * A connection stand-in whose subscribe() captures the callback, so a test can
@@ -79,20 +80,27 @@ test('mavlink-ai-out close still signals done when the connection dereference th
 
 test('connection close completes (done) even when decoder teardown throws (#140)', async (t) => {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
-    id: 'p1', name: 'Vehicle', profileType: 'gcs', dialect: 'common', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'UDP', profile: 'p1',
+    id: 'c1', name: 'UDP', profile: 'p1', localIdentity: 'id1',
     transport: 'udp-peer', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   RED.events.emit('flows:started');
 
   /** The decoder is built lazily on first inbound datagram, so feed one HEARTBEAT. */
-  const hb = new MavlinkCodec({ bundle: loadDialect('common'), version: 'v2', sysid: 1, compid: 1 })
-    .encode('HEARTBEAT', { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 });
+  const hb = enc(
+    new MavlinkCodec({ bundle: loadDialect('common'), version: 'v2' }),
+    'HEARTBEAT',
+    { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 },
+    { sysid: 1, compid: 1 }
+  );
   conn._transport.emit('data', hb);
 
   /** Force the synchronous teardown to throw; close must still release the transport and finish. */

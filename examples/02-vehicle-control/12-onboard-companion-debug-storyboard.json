@@ -8,23 +8,32 @@
   },
   {
     "id": "ai_profile_onboard_preview",
-    "type": "mavlink-ai-profile",
+    "type": "mavlink-ai-vehicle",
     "name": "AI Profile - Onboard Preview",
-    "profileType": "companion-computer",
     "dialectSource": "bundled",
     "dialect": "ardupilotmega",
     "customDialectPath": "",
     "mavlinkVersion": "auto",
-    "sourceSystemId": 191,
-    "sourceComponentId": 191,
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
     "defaultMissionType": "mission",
+    "firmware": "ardupilot",
+    "debugProtocol": false,
+    "vehicleFamily": "generic"
+  },
+  {
+    "id": "ai_profile_onboard_preview__identity",
+    "type": "mavlink-ai-local-identity",
+    "name": "AI Profile - Onboard Preview Companion",
+    "role": "companion",
+    "sourceSystemId": 191,
+    "sourceComponentId": 191,
     "heartbeatType": "MAV_TYPE_ONBOARD_CONTROLLER",
     "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
-    "firmware": "ardupilot",
-    "debugProtocol": false
+    "signOutbound": false,
+    "verifyInbound": false,
+    "requireSignature": false
   },
   {
     "id": "n12_note",

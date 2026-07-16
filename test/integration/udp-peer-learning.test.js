@@ -4,9 +4,12 @@ const test = require('node:test');
 const assert = require('node:assert');
 const dgram = require('dgram');
 
+const { MavLinkPacketSignature } = require('node-mavlink');
+
 const { MockRED } = require('../helpers/mock-red');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
+const { enc } = require('../helpers/v3-config');
 
 /**
  * UDP peer learning trust boundary (#85): a udp-peer connection must only
@@ -39,12 +42,15 @@ const tick = (ms = 50) => new Promise((r) => setTimeout(r, ms));
 
 test('peer learning requires validated packets (#85)', async (t) => {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p1', name: 'P', dialect: 'common', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'C', profile: 'p1',
+    id: 'c1', name: 'C', profile: 'p1', localIdentity: 'id1',
     transport: 'udp-peer', acceptedSysids: '1',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
@@ -52,8 +58,8 @@ test('peer learning requires validated packets (#85)', async (t) => {
   const port = addr.port;
 
   const bundle = loadDialect('common');
-  const fromSys1 = new MavlinkCodec({ bundle, version: 'v2', sysid: 1, compid: 1 });
-  const fromSys2 = new MavlinkCodec({ bundle, version: 'v2', sysid: 2, compid: 1 });
+  const fromSys1 = new MavlinkCodec({ bundle, version: 'v2' });
+  const fromSys2 = new MavlinkCodec({ bundle, version: 'v2' });
   const sock = dgram.createSocket('udp4');
   await new Promise((r) => sock.bind(0, '127.0.0.1', r));
   t.after(async () => {
@@ -64,7 +70,7 @@ test('peer learning requires validated packets (#85)', async (t) => {
 
   // 1. CRC-corrupt frame claiming sysid 1: seen by the transport, but the
   //    splitter drops it, so nothing may be learned.
-  const corrupt = fromSys1.encode('HEARTBEAT', HEARTBEAT);
+  const corrupt = enc(fromSys1, 'HEARTBEAT', HEARTBEAT, { sysid: 1, compid: 1 });
   corrupt[corrupt.length - 1] ^= 0xff; // break the CRC
   await until(
     (done) => transport.on('data', done),
@@ -79,7 +85,7 @@ test('peer learning requires validated packets (#85)', async (t) => {
   //    decodes fine at the framing level but fails routing — still not learned.
   const rejected = await until(
     (done) => conn.emitter.on('rejected', done),
-    () => sock.send(fromSys2.encode('HEARTBEAT', HEARTBEAT), port, '127.0.0.1'),
+    () => sock.send(enc(fromSys2, 'HEARTBEAT', HEARTBEAT, { sysid: 2, compid: 1 }), port, '127.0.0.1'),
     'route rejection'
   );
   assert.strictEqual(rejected.sysid, 2);
@@ -91,7 +97,7 @@ test('peer learning requires validated packets (#85)', async (t) => {
   //    peer and owns its sysid mapping, so addressed sends reach it.
   await until(
     (done) => conn.subscribe({ messageNames: ['HEARTBEAT'], sysid: 1 }, done),
-    () => sock.send(fromSys1.encode('HEARTBEAT', HEARTBEAT), port, '127.0.0.1'),
+    () => sock.send(enc(fromSys1, 'HEARTBEAT', HEARTBEAT, { sysid: 1, compid: 1 }), port, '127.0.0.1'),
     'accepted packet'
   );
   assert.ok(transport.learnedPeer, 'accepted packet sets the fallback peer');
@@ -104,14 +110,17 @@ test('peer learning requires validated packets (#85)', async (t) => {
 
 test('signature-rejected packets do not teach a peer mapping (#85)', async (t) => {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_sig', name: 'Sig', dialect: 'common', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1,
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id_sig', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190,
     verifyInbound: true, requireSignature: true,
     credentials: { signingPassphrase: 'the-shared-secret' }
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c_sig', name: 'CSig', profile: 'p_sig',
+    id: 'c_sig', name: 'CSig', profile: 'p_sig', localIdentity: 'id_sig',
     transport: 'udp-peer',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
@@ -119,11 +128,9 @@ test('signature-rejected packets do not teach a peer mapping (#85)', async (t) =
   const port = addr.port;
 
   const bundle = loadDialect('common');
-  const unsigned = new MavlinkCodec({ bundle, version: 'v2', sysid: 3, compid: 1 });
-  const signed = new MavlinkCodec({
-    bundle, version: 'v2', sysid: 3, compid: 1,
-    signing: { passphrase: 'the-shared-secret', linkId: 1, signOutbound: true }
-  });
+  const signingKey = MavLinkPacketSignature.key('the-shared-secret');
+  const unsigned = new MavlinkCodec({ bundle, version: 'v2' });
+  const signed = new MavlinkCodec({ bundle, version: 'v2' });
   const sock = dgram.createSocket('udp4');
   await new Promise((r) => sock.bind(0, '127.0.0.1', r));
   t.after(async () => {
@@ -135,7 +142,7 @@ test('signature-rejected packets do not teach a peer mapping (#85)', async (t) =
   // Unsigned frame under a require-signature policy: rejected, not learned.
   const rejected = await until(
     (done) => conn.emitter.on('rejected', done),
-    () => sock.send(unsigned.encode('HEARTBEAT', HEARTBEAT), port, '127.0.0.1'),
+    () => sock.send(enc(unsigned, 'HEARTBEAT', HEARTBEAT, { sysid: 3, compid: 1 }), port, '127.0.0.1'),
     'signature rejection'
   );
   assert.strictEqual(rejected.reason, 'signature-required');
@@ -146,7 +153,12 @@ test('signature-rejected packets do not teach a peer mapping (#85)', async (t) =
   // A properly signed frame passes verification and is learned.
   await until(
     (done) => conn.subscribe({ messageNames: ['HEARTBEAT'], sysid: 3 }, done),
-    () => sock.send(signed.encode('HEARTBEAT', HEARTBEAT), port, '127.0.0.1'),
+    () =>
+      sock.send(
+        enc(signed, 'HEARTBEAT', HEARTBEAT, { sysid: 3, compid: 1, signing: { key: signingKey, linkId: 1 } }),
+        port,
+        '127.0.0.1'
+      ),
     'signed packet accepted'
   );
   assert.ok(transport.learnedPeer, 'signed packet sets the fallback peer');

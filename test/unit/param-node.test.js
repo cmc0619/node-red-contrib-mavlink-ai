@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { MockRED } = require('../helpers/mock-red');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
+const { fakeIdentity } = require('../helpers/v3-config');
 
 const NUL = String.fromCharCode(0);
 
@@ -32,6 +33,8 @@ function fakeConnection() {
       cb({ topic: 'mavlink/PARAM_VALUE', payload });
     }
   };
+  // v3: the connection resolves the outbound Local Identity (#228).
+  conn.resolveOutboundIdentity = () => fakeIdentity();
   return conn;
 }
 
@@ -246,7 +249,7 @@ test('param node explicit profile rides on sends and supplies target defaults', 
   const outputs = await run(node, { payload: {} }, () => conn.deliver(paramValue({ value: 1100, sysid: 3 })));
   const req = conn.sent[0];
   assert.strictEqual(req.name, 'PARAM_REQUEST_READ');
-  assert.strictEqual(req.profile, 'p2');
+  assert.strictEqual(req.vehicleProfile, 'p2');
   assert.strictEqual(req.fields.target_system, 3);
   const result = outputs.map((o) => o[0]).filter(Boolean).pop();
   assert.strictEqual(result.payload.param_value, 1100);
@@ -273,6 +276,6 @@ test('param node route-resolves the target to its profile when no override is se
   };
   conn.getProfileForPacket = ({ sysid }) => (sysid === 2 ? routed : conn.profile);
   await run(node, { payload: { target_system: 2 } }, () => conn.deliver(paramValue({ value: 1100, sysid: 2 })));
-  assert.strictEqual(conn.sent[0].profile, 'p_routed');
+  assert.strictEqual(conn.sent[0].vehicleProfile, 'p_routed');
   assert.strictEqual(conn.sent[0].fields.target_system, 2);
 });

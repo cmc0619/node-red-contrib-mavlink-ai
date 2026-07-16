@@ -13,15 +13,18 @@ const { MockRED } = require('../helpers/mock-red');
  */
 
 function profile(RED) {
-  RED.create('mavlink-ai-profile', {
-    id: 'p1', name: 'P', profileType: 'gcs', dialect: 'common', mavlinkVersion: 'v2',
-    sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
 }
 
 function connection(RED, extra) {
   return RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'C', profile: 'p1', transport: 'udp-peer',
+    id: 'c1', name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp-peer',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false,
     ...extra
   });

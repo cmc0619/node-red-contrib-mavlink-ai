@@ -4,26 +4,35 @@
     "type": "tab",
     "label": "MAVLink AI - 30 Shared Connection Subscribers",
     "disabled": false,
-    "info": "Shows that MAVLink In is a subscription, not a connection. One shared Connection decodes the incoming stream once; three MAVLink In nodes each subscribe to a different message and apply their own filters — HEARTBEAT, GLOBAL_POSITION_INT, and COMMAND_ACK. Adding In nodes does not open extra ports or re-decode the bytes. The same connection can be shared across separate flow tabs the same way. Point the connection at your MAVLink source (SITL, a vehicle, or mavlink-router on UDP 14550)."
+    "info": "Shows that MAVLink In is a subscription, not a connection. One shared Connection decodes the incoming stream once; three MAVLink In nodes each subscribe to a different message and apply their own filters \u2014 HEARTBEAT, GLOBAL_POSITION_INT, and COMMAND_ACK. Adding In nodes does not open extra ports or re-decode the bytes. The same connection can be shared across separate flow tabs the same way. Point the connection at your MAVLink source (SITL, a vehicle, or mavlink-router on UDP 14550)."
   },
   {
     "id": "ai_profile_copter",
-    "type": "mavlink-ai-profile",
+    "type": "mavlink-ai-vehicle",
     "name": "AI Profile - Copter",
-    "profileType": "gcs",
     "firmware": "ardupilot",
     "dialect": "ardupilotmega",
     "customDialectPath": "",
     "mavlinkVersion": "auto",
-    "sourceSystemId": 255,
-    "sourceComponentId": 190,
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",
     "defaultMissionType": "mission",
+    "debugProtocol": false,
+    "vehicleFamily": "generic"
+  },
+  {
+    "id": "ai_profile_copter__identity",
+    "type": "mavlink-ai-local-identity",
+    "name": "AI Profile - Copter GCS",
+    "role": "gcs",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
     "heartbeatType": "",
     "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
-    "debugProtocol": false
+    "signOutbound": false,
+    "verifyInbound": false,
+    "requireSignature": false
   },
   {
     "id": "ai_conn_udp",
@@ -45,13 +54,17 @@
     "acceptedCompids": "",
     "unmatchedPolicy": "default",
     "routeTable": "",
-    "outboundQueue": true
+    "outboundQueue": true,
+    "localIdentity": "ai_profile_copter__identity",
+    "allowMultipleIdentities": false,
+    "additionalIdentities": "",
+    "signingLinkId": 0
   },
   {
     "id": "n30_note",
     "type": "comment",
     "z": "flow30",
-    "name": "One shared Connection → three In subscribers",
+    "name": "One shared Connection \u2192 three In subscribers",
     "info": "",
     "x": 260,
     "y": 40,

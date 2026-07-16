@@ -16,11 +16,18 @@ const { MockRED } = require('../helpers/mock-red');
 
 function withProfile() {
   const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-profile', {
+  RED.create('mavlink-ai-vehicle', {
     id: 'p_default',
     name: 'Default',
     dialect: 'common',
     mavlinkVersion: 'v2'
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id_t',
+    name: 'GCS',
+    role: 'custom',
+    sourceSystemId: 255,
+    sourceComponentId: 190
   });
   return RED;
 }
@@ -28,7 +35,10 @@ function withProfile() {
 function connect(RED, config) {
   return RED.create(
     'mavlink-ai-connection',
-    Object.assign({ id: 'c1', name: 'Conn', profile: 'p_default', reconnect: false, heartbeat: false }, config)
+    Object.assign(
+      { id: 'c1', name: 'Conn', profile: 'p_default', localIdentity: 'id_t', reconnect: false, heartbeat: false },
+      config
+    )
   );
 }
 

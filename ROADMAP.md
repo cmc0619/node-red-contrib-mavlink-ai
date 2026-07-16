@@ -14,7 +14,7 @@ implemented in the v2 baseline.
 
 ## Phase 1: Profile layer
 
-- [x] `mavlink-ai-profile` config node
+- [x] `mavlink-ai-vehicle` config node
 - [x] profile type selection
 - [x] dialect selection
 - [x] system/component defaults

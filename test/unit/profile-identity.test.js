@@ -4,153 +4,155 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { MockRED } = require('../helpers/mock-red');
-const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
-const { loadDialect } = require('../../lib/dialects/dialect-loader');
+const { makeIdentity, makeProfile, makeConnection } = require('../helpers/v3-config');
 
 /**
- * Profile identity validation (#90): MAVLink identity fields are wire uint8s.
- * Out-of-range / non-integer values must mark the profile invalid at runtime
- * (imported/API flows bypass the editor), never be silently truncated,
+ * Identity/target validation for the v3 split (#90, #228). MAVLink identity
+ * fields are wire uint8s: out-of-range / non-integer values must fail closed at
+ * runtime (imported/API flows bypass the editor), never be silently truncated,
  * wrapped, or replaced with a default.
+ *
+ * Source identity now lives on the Local Identity config node; target ids and
+ * vehicle family live on the Vehicle Profile.
  */
 
-function makeProfile(overrides) {
+// --- Local Identity source ids ---------------------------------------------
+test('valid boundary source identity values are accepted (#90)', () => {
   const RED = new MockRED().loadNodes();
-  return RED.create(
-    'mavlink-ai-profile',
-    Object.assign(
-      {
-        id: 'p1',
-        name: 'P',
-        dialect: 'ardupilotmega',
-        mavlinkVersion: 'auto'
-      },
-      overrides
-    )
-  );
-}
-
-test('valid boundary identity values are accepted (#90)', () => {
   /** Source compid floor is 1: 0 is MAV_COMP_ID_ALL, a broadcast address (#153). */
-  const profile = makeProfile({
-    sourceSystemId: 1,
-    sourceComponentId: 1,
-    defaultTargetSystem: 0,
-    defaultTargetComponent: 255,
-    signingLinkId: 255
-  });
-  assert.strictEqual(profile.isValid(), true);
-  assert.strictEqual(profile.sourceSystemId, 1);
-  assert.strictEqual(profile.sourceComponentId, 1);
-  assert.strictEqual(profile.defaultTargetSystem, 0);
-  assert.strictEqual(profile.defaultTargetComponent, 255);
-  assert.strictEqual(profile.signingLinkId, 255);
+  const id = makeIdentity(RED, { sourceSystemId: 1, sourceComponentId: 1 });
+  assert.strictEqual(id.isValid(), true);
+  assert.deepStrictEqual(id.getIdentity(), { sysid: 1, compid: 1 });
 });
 
-test('source component 0 (MAV_COMP_ID_ALL) invalidates the profile (#153)', () => {
-  const profile = makeProfile({ sourceComponentId: 0 });
-  assert.strictEqual(profile.isValid(), false);
-  assert.strictEqual(profile.getError().code, 'IDENTITY_INVALID');
+test('source component 0 (MAV_COMP_ID_ALL) invalidates the identity (#153)', () => {
+  const RED = new MockRED().loadNodes();
+  const id = makeIdentity(RED, { sourceComponentId: 0 });
+  assert.strictEqual(id.isValid(), false);
+  assert.strictEqual(id.getError().code, 'IDENTITY_INVALID');
 });
 
-test('blank identity values take the documented defaults (#90)', () => {
-  const profile = makeProfile({});
-  assert.strictEqual(profile.isValid(), true);
-  assert.strictEqual(profile.sourceSystemId, 255);
-  assert.strictEqual(profile.sourceComponentId, 190);
-  assert.strictEqual(profile.defaultTargetSystem, 1);
-  assert.strictEqual(profile.defaultTargetComponent, 1);
+test('blank source identity values take the role preset defaults (#90, #106)', () => {
+  const RED = new MockRED().loadNodes();
+  const gcs = makeIdentity(RED, { role: 'gcs', sourceSystemId: '', sourceComponentId: '' });
+  assert.deepStrictEqual(gcs.getIdentity(), { sysid: 255, compid: 190 });
+  // Companion preset suggests the vehicle sysid (1) and CompID 191.
+  const companion = makeIdentity(RED, { role: 'companion', sourceSystemId: '', sourceComponentId: '' });
+  assert.deepStrictEqual(companion.getIdentity(), { sysid: 1, compid: 191 });
 });
 
-test('companion-computer defaults Source CompID to 191 when blank (#106)', () => {
-  const profile = makeProfile({ profileType: 'companion-computer' });
-  assert.strictEqual(profile.isValid(), true);
-  // 191 = MAV_COMP_ID_ONBOARD_COMPUTER.
-  assert.strictEqual(profile.sourceComponentId, 191);
-  // The source SysID stays at the shared default (a companion normally uses the
-  // vehicle's SysID, which the user configures — the role doesn't force it).
-  assert.strictEqual(profile.sourceSystemId, 255);
+test('an explicit source CompID is not rewritten by the role preset (#106)', () => {
+  const RED = new MockRED().loadNodes();
+  const id = makeIdentity(RED, { role: 'companion', sourceComponentId: 42 });
+  assert.strictEqual(id.getIdentity().compid, 42);
 });
 
-test('an explicit Source CompID is not rewritten for companion-computer (#106)', () => {
-  const profile = makeProfile({ profileType: 'companion-computer', sourceComponentId: 42 });
-  assert.strictEqual(profile.isValid(), true);
-  assert.strictEqual(profile.sourceComponentId, 42);
-});
-
-test('non-companion profiles keep the historical Source CompID default of 190 (#106)', () => {
-  for (const profileType of ['gcs', 'generic', 'copter', 'plane']) {
-    const profile = makeProfile({ profileType });
-    assert.strictEqual(profile.sourceComponentId, 190, `${profileType} should default CompID to 190`);
-  }
-});
-
-test('companion-computer target defaults stay independent of the role (#106)', () => {
-  const profile = makeProfile({ profileType: 'companion-computer' });
-  // Target defaults are the vehicle/autopilot, not the companion's own identity.
-  assert.strictEqual(profile.defaultTargetSystem, 1);
-  assert.strictEqual(profile.defaultTargetComponent, 1);
-});
-
-test('out-of-range and non-integer identity values invalidate the profile (#90)', () => {
+test('out-of-range and non-integer source identity values invalidate the identity (#90)', () => {
+  const RED = new MockRED().loadNodes();
   const bad = [
     { sourceSystemId: 0 }, // 0 = unknown/broadcast, not a valid sender id
     { sourceSystemId: 256 },
     { sourceSystemId: -1 },
     { sourceSystemId: 12.5 },
     { sourceSystemId: 'abc' },
-    { sourceComponentId: 300 },
-    { defaultTargetSystem: 999 },
-    { defaultTargetComponent: -2 },
-    { signingLinkId: 256 },
-    { signingLinkId: 1.5 }
+    { sourceComponentId: 300 }
   ];
   for (const overrides of bad) {
-    const profile = makeProfile(overrides);
-    assert.strictEqual(profile.isValid(), false, `${JSON.stringify(overrides)} should invalidate the profile`);
-    const err = profile.getError();
+    const id = makeIdentity(RED, overrides);
+    assert.strictEqual(id.isValid(), false, `${JSON.stringify(overrides)} should invalidate the identity`);
+    const err = id.getError();
     assert.strictEqual(err.code, 'IDENTITY_INVALID');
     assert.match(err.message, /must be an integer/);
   }
 });
 
-test('every invalid identity field is reported at once (#90)', () => {
-  const profile = makeProfile({ sourceSystemId: 300, signingLinkId: -1 });
-  assert.strictEqual(profile.isValid(), false);
-  const err = profile.getError();
-  assert.match(err.message, /Source system ID/);
-  assert.match(err.message, /Signing link ID/);
-});
-
-test('codec rejects out-of-range source identity (#90)', () => {
-  const bundle = loadDialect('common');
-  assert.throws(() => new MavlinkCodec({ bundle, sysid: 0, compid: 1 }), (e) => e.code === 'IDENTITY_INVALID');
-  assert.throws(() => new MavlinkCodec({ bundle, sysid: 256, compid: 1 }), (e) => e.code === 'IDENTITY_INVALID');
-  assert.throws(() => new MavlinkCodec({ bundle, sysid: 1, compid: 1.5 }), (e) => e.code === 'IDENTITY_INVALID');
-  /** Source compid 0 is MAV_COMP_ID_ALL (broadcast), never a sender id (#153). */
-  assert.throws(() => new MavlinkCodec({ bundle, sysid: 1, compid: 0 }), (e) => e.code === 'IDENTITY_INVALID');
-  const ok = new MavlinkCodec({ bundle, sysid: 255, compid: 1 });
-  assert.strictEqual(ok.sysid, 255);
-  assert.strictEqual(ok.compid, 1);
-});
-
-test('connection refuses to start on an identity-invalid profile (#90)', async () => {
+test("sign-outbound with no passphrase invalidates the identity (fail closed, #91)", () => {
   const RED = new MockRED().loadNodes();
-  const profile = RED.create('mavlink-ai-profile', {
-    id: 'p-bad',
-    name: 'Bad',
-    dialect: 'common',
-    sourceSystemId: 4711
-  });
-  assert.strictEqual(profile.isValid(), false);
+  const id = makeIdentity(RED, { signOutbound: true });
+  assert.strictEqual(id.isValid(), false);
+  assert.strictEqual(id.getError().code, 'IDENTITY_INVALID');
+  assert.match(id.getError().message, /passphrase/);
+});
+
+// --- Vehicle Profile target ids --------------------------------------------
+test('valid boundary target values are accepted (#90)', () => {
+  const RED = new MockRED().loadNodes();
+  const profile = makeProfile(RED, { defaultTargetSystem: 0, defaultTargetComponent: 255 });
+  assert.strictEqual(profile.isValid(), true);
+  const d = profile.getDefaults();
+  assert.strictEqual(d.defaultTargetSystem, 0);
+  assert.strictEqual(d.defaultTargetComponent, 255);
+});
+
+test('blank target values take the documented defaults (#90)', () => {
+  const RED = new MockRED().loadNodes();
+  const profile = makeProfile(RED, {});
+  const d = profile.getDefaults();
+  assert.strictEqual(d.defaultTargetSystem, 1);
+  assert.strictEqual(d.defaultTargetComponent, 1);
+});
+
+test('out-of-range target values invalidate the profile (#90)', () => {
+  const RED = new MockRED().loadNodes();
+  for (const overrides of [{ defaultTargetSystem: 999 }, { defaultTargetComponent: -2 }]) {
+    const profile = makeProfile(RED, overrides);
+    assert.strictEqual(profile.isValid(), false, `${JSON.stringify(overrides)} should invalidate the profile`);
+    assert.strictEqual(profile.getError().code, 'PROFILE_CONFIG_INVALID');
+  }
+});
+
+test('the Vehicle Profile no longer owns source identity (#228)', () => {
+  const RED = new MockRED().loadNodes();
+  const profile = makeProfile(RED, {});
+  const d = profile.getDefaults();
+  assert.strictEqual('sourceSystemId' in d, false);
+  assert.strictEqual('sourceComponentId' in d, false);
+  assert.strictEqual(typeof profile.getHeartbeatFields, 'undefined');
+  assert.strictEqual(typeof profile.getSigningPolicy, 'undefined');
+});
+
+test('legacy profileType is deterministically converted to a vehicle family, with a warning (#228)', () => {
+  const RED = new MockRED().loadNodes();
+  const copter = makeProfile(RED, { profileType: 'copter', vehicleFamily: '' });
+  assert.strictEqual(copter.vehicleFamily, 'copter');
+  assert.ok(copter.warnings.some((w) => /legacy/.test(w) && /copter/.test(w)));
+  // A role-only legacy type carried no vehicle info -> generic.
+  const gcs = makeProfile(RED, { profileType: 'gcs', vehicleFamily: '' });
+  assert.strictEqual(gcs.vehicleFamily, 'generic');
+});
+
+test('legacy identity/signing fields on a profile are ignored with a pointer warning (#228)', () => {
+  const RED = new MockRED().loadNodes();
+  const profile = makeProfile(RED, { sourceSystemId: 7, signOutbound: true, heartbeatType: 'MAV_TYPE_GCS' });
+  assert.ok(profile.warnings.some((w) => /no longer owns local identity/.test(w)));
+  assert.ok(profile.warnings.some((w) => /Local Identity/.test(w)));
+});
+
+// --- Connection fail-closed on bad required config -------------------------
+test('connection refuses to start on an identity-invalid default identity (#90, #228)', async () => {
+  const RED = new MockRED().loadNodes();
+  const identity = makeIdentity(RED, { id: 'id-bad', sourceSystemId: 4711 });
+  assert.strictEqual(identity.isValid(), false);
+  const { connection } = makeConnection(RED, { id: 'c-bad', localIdentity: 'id-bad', bindPort: 0 });
+  assert.ok(
+    connection.errors.some((e) => /LOCAL_IDENTITY_INVALID/.test(String(e))),
+    'connection logged the identity error'
+  );
+  await assert.rejects(connection.send({ name: 'HEARTBEAT', fields: {} }), (e) => e.code === 'CONNECTION_INVALID');
+  await RED.close(connection);
+});
+
+test('connection refuses to start with no default identity (#228)', async () => {
+  const RED = new MockRED().loadNodes();
+  const profile = makeProfile(RED, { id: 'p1' });
   const connection = RED.create('mavlink-ai-connection', {
-    id: 'c1',
+    id: 'c-noid',
     name: 'C',
-    profile: 'p-bad',
+    profile: 'p1',
     transport: 'udp-peer',
     bindPort: 0
   });
-  assert.ok(connection.errors.some((e) => /IDENTITY_INVALID/.test(String(e))), 'connection logged the identity error');
+  assert.ok(connection.errors.some((e) => /LOCAL_IDENTITY_REQUIRED/.test(String(e))));
   await assert.rejects(connection.send({ name: 'HEARTBEAT', fields: {} }), (e) => e.code === 'CONNECTION_INVALID');
   await RED.close(connection);
 });

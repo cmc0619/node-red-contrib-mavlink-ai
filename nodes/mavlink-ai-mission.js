@@ -85,7 +85,7 @@ module.exports = function registerMavlinkAiMission(RED) {
       let profile, defaults, targetSystem, targetComponent;
       try {
         ({ profile, defaults, targetSystem, targetComponent } = resolveWorkflowContext(node.connection, {
-          profile: firstDefined(payload.profile, node.profileRef || undefined),
+          profile: firstDefined(payload.vehicleProfile, payload.profile, node.profileRef || undefined),
           targetSystem: payload.target_system,
           targetComponent: payload.target_component
         }));
@@ -158,17 +158,40 @@ module.exports = function registerMavlinkAiMission(RED) {
         send([null, progress, null]);
       };
 
+      // The Local Identity this workflow transmits as (#228): the explicit
+      // payload request when present, else the connection default. Its source
+      // ids also gate inbound protocol-message addressing checks below.
+      let identity;
+      try {
+        identity = node.connection.resolveOutboundIdentity(payload.localIdentity);
+      } catch (err) {
+        const e = toMavlinkError(err, 'LOCAL_IDENTITY_UNRESOLVED');
+        node.status({ fill: 'red', shape: 'ring', text: e.code });
+        lock.release();
+        return finishError(node, send, done, errorPayload({
+          node: 'mavlink-ai-mission',
+          connection: node.connection.name,
+          code: e.code,
+          message: e.message,
+          context: e.context
+        }));
+      }
+      const source = identity.getIdentity();
+
       const opts = {
         connection: node.connection,
         // Carried on every send so the connection encodes with the effective
-        // profile's dialect/identity/signing, not its default.
-        profile: profile ? profile.id : null,
+        // Vehicle Profile's dialect, not its default.
+        vehicleProfile: profile ? profile.id : null,
+        // Carried on every send only when the caller explicitly requested an
+        // identity; otherwise the connection default applies.
+        localIdentity: payload.localIdentity,
         targetSystem,
         targetComponent,
         // Our own identity, so responses addressed to another GCS on the same
         // vehicle don't advance this workflow.
-        sourceSystem: defaults.sourceSystemId,
-        sourceComponent: defaults.sourceComponentId,
+        sourceSystem: source.sysid,
+        sourceComponent: source.compid,
         missionType: missionTypeName,
         enums: bundle ? bundle.enums : null,
         useInt,
@@ -194,7 +217,7 @@ module.exports = function registerMavlinkAiMission(RED) {
             });
             result = await runTracked(new MissionClear(clearOpts));
           } else {
-            result = await clearMission(node.connection, opts.profile, targetSystem, targetComponent, missionTypeNum, missionTypeName);
+            result = await clearMission(node.connection, opts, targetSystem, targetComponent, missionTypeNum, missionTypeName);
           }
         } else {
           throw Object.assign(new Error(`Unsupported mission action '${action}'.`), { code: 'UNSUPPORTED_ACTION' });
@@ -255,13 +278,16 @@ module.exports = function registerMavlinkAiMission(RED) {
  * message is sent rather than blocking on an ack, since some stacks do not ack
  * a clear of an already-empty mission.
  */
-async function clearMission(connection, profile, targetSystem, targetComponent, missionTypeNum, missionTypeName) {
+async function clearMission(connection, opts, targetSystem, targetComponent, missionTypeNum, missionTypeName) {
   const message = {
     name: 'MISSION_CLEAR_ALL',
     fields: { target_system: targetSystem, target_component: targetComponent, mission_type: missionTypeNum }
   };
-  if (profile != null) {
-    message.profile = profile;
+  if (opts.vehicleProfile != null) {
+    message.vehicleProfile = opts.vehicleProfile;
+  }
+  if (opts.localIdentity != null && opts.localIdentity !== '') {
+    message.localIdentity = opts.localIdentity;
   }
   await connection.send(message);
   return {
