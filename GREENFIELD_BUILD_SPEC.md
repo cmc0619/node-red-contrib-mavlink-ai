@@ -109,6 +109,17 @@ stable machine-readable error code plus a human repair instruction.
 The raw builder is deliberately more permissive than friendly nodes, but it
 still validates wire types and numeric precision safely.
 
+All JavaScript-to-wire conversion (and back) must go through a single
+type-aware boundary module that reads each field's MAVLink type, range, and
+units from dialect metadata; visible nodes must not do their own sign, mask, or
+numeric coercion. Prove it with round-trip tests (`encode(decode(x))`
+reproduces `x`, compared NaN-aware and at float32 precision rather than raw
+`===`) covering every field type, including an unsigned bitmask with bit 31
+set, a `NaN` "keep current" sentinel, an int/float parameter union, and a
+full-length `char[]`. Validate an integer's range before any unsigned
+normalization, so out-of-range input fails closed instead of silently wrapping. See `WIRE_ENCODING_GOTCHAS.md` for the recurring failures this
+prevents.
+
 ## 4. Architecture: three config nodes, one question each
 
 Do not collapse these concerns back into a combined profile.

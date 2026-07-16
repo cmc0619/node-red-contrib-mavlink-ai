@@ -1,0 +1,175 @@
+# Wire-Encoding Gotchas & Mitigations
+
+> A field guide to the recurring, expensive bugs in this project — the ones
+> that cost real compute and review time before we found them. Written for the
+> next builder (human or LLM) doing a clean implementation. Read it **before**
+> writing any node that turns a user value into MAVLink bytes.
+>
+> The single biggest lesson: **JavaScript's number model and MAVLink's exact
+> binary wire format disagree, and JavaScript loses silently.** JS has one
+> number type (a 64-bit float), signed 32-bit bitwise operators, no native
+> unsigned or 64-bit integers, and a `NaN`/`Infinity` that don't survive naive
+> code. MAVLink demands exact-width integers, reserved sentinel values, and
+> correct framing. Almost every bug below is a place where JS produced a
+> *wrong-but-plausible* byte and MAVLink faithfully acted on it.
+
+## The one structural rule that prevents most of this
+
+Roughly **1 in 5 of every bug we fixed** lived on the JS→wire seam, and they
+recurred because each node did its own number handling. The fix is not "be
+careful" — we tried that and it failed 14 times. The fix is structural:
+
+1. **One wire-boundary module.** Every JS→bytes and bytes→JS conversion goes
+   through a single, type-aware codec that knows each field's MAVLink type
+   (`uint8`, `int16`, `uint32`, `float`, `char[]`, bitmask) from dialect
+   metadata. Nodes never do their own `<<`, `>>>`, `parseInt`, or `Number()`
+   on a wire value. Fix a rule once; every node inherits it.
+
+2. **One round-trip test, run over every field type.** Assert that
+   `encode(decode(x))` reproduces `x` (and `decode(encode(v))` reproduces `v`)
+   for representative and random values of each type. Do **not** use raw `===`:
+   the `NaN` sentinel fails `NaN === NaN`, and float fields narrow to IEEE
+   float32 so an arbitrary JS double won't be strictly equal after a round trip.
+   Compare with `Object.is`/`Number.isNaN` for sentinels, at float32 precision
+   for floats (or compare the encoded bytes), and exact equality for integers.
+   This single test catches the sign, `NaN`, `char[]`, and overflow families
+   *automatically*, before they ship. Prefer a property-based generator
+   (thousands of random inputs) over hand-picked cases.
+
+Everything below is what that module and that test must get right.
+
+---
+
+## A. Numeric / wire-representation gotchas (the big category, ~14 bugs)
+
+### A1. Signed vs unsigned integer width
+**What bites:** MAVLink `uint8`/`uint16`/`uint32` fields are unsigned; JS math
+and JSON are signed. `-1` stored in a `uint8` should be `255`; read back
+carelessly it stays `-1`. A `uint32` value above 2^31 reads as negative.
+**Real bugs:** `#242 unsigned 32-bit bitmask math`, param corruption `#146`.
+**Mitigation:** In the boundary module, convert per the field's declared type.
+**Validate the original value first:** reject non-integers and anything outside
+the field's min/max from metadata, failing closed — never normalize before you
+check. `value >>> 0` silently *wraps* out-of-range input (`4294967296` → `0`,
+`-1` → `4294967295`), which would make a later range check pass on a value the
+user never sent. Reserve `>>> 0` for normalizing an already-validated bitwise
+result or a signed decode, not for sanitizing input.
+
+### A2. Bitwise operators are secretly signed 32-bit
+**What bites:** JS `&`, `|`, `^`, `<<`, `>>` coerce operands to **signed**
+32-bit. `1 << 31` is `-2147483648`, not `2147483648`. Any bitmask with the top
+bit set (common in MAVLink mode/type masks) comes out negative and corrupts the
+packet. This surprises even seasoned C programmers — C doesn't do this.
+**Real bug:** `#242 unsigned 32-bit bitmask math throughout the Command editor`.
+**Mitigation:** After any bitmask assembly, apply `>>> 0`. Build masks in the
+boundary module, never inline in a node. Add a round-trip test for a mask with
+bit 31 set.
+
+### A3. `NaN` is a real MAVLink signal, not "no value"
+**What bites:** MAVLink uses `NaN` to mean **"keep current / ignore this
+field"** (e.g. unused position-target axes, "don't change this param",
+gimbal-manager rates). `JSON.stringify(NaN)` is `null`; naive code turns it into
+`0` and commands the *wrong thing* (go to altitude 0, set rate 0).
+**Real bugs:** `#187 reversible NaN/Infinity for floats`, `#173 preserve NaN
+"keep current" params`, `send NaN for unused gimbal-manager rates`,
+`NaN takeoff defaults`.
+**Mitigation:** Never round a wire float through `JSON.stringify`/`parse`.
+Represent and preserve `NaN`/`Infinity` explicitly end-to-end. Treat "field
+omitted" and "field = NaN sentinel" as first-class, distinct from `0`.
+
+### A4. Float32 int/float unions (PX4 parameters)
+**What bites:** A `PARAM_VALUE` is a 32-bit slot that may carry an **integer bit
+pattern reinterpreted as float**. Numerically casting it to a JS number
+corrupts the value; writing back the wrong type corrupts the parameter on the
+vehicle.
+**Real bugs:** `#146 param corruption`, `exact param echo matching`.
+**Mitigation:** Detect the parameter's declared type **before** a write.
+Reinterpret the 4 bytes (bit-level), don't numerically convert. Echo-match the
+value the vehicle reports back to confirm the write took.
+
+### A5. Blank / empty / zero / missing are four different things
+**What bites:** `""`, `0`, `undefined`, and "field absent" get conflated. An
+empty editor field zero-filled into a position target means "fly to (0,0,0)."
+An explicit `0` coordinate is a *valid* command and must not be dropped.
+**Real bugs:** `#235 reject blank/NaN active setpoint fields for every
+frame/mask`, `explicit-zero coords`, `blank-aware goto yaw`.
+**Mitigation:** Distinguish "user left it blank" from "user typed 0." Blank in an
+*active* field fails closed with a clear error; explicit `0` passes through
+unchanged. Never auto-zero-fill an absent field into an origin command.
+
+### A6. `char[]` fields are text, not numbers or enums
+**What bites:** Fixed-length character arrays (e.g. param IDs, status text) got
+run through enum/number resolution and mangled.
+**Real bug:** `#157 never enum/number-resolve char[] field values`.
+**Mitigation:** The boundary module branches on field type. Strings stay
+strings: Latin-1 only, pad/truncate to the declared length, no numeric coercion.
+
+### A7. Numeric fields arrive from the editor as strings
+**What bites:** HTML inputs hand you `"1.5"`, not `1.5`. Needs parsing *and*
+validation; a bare `parseInt` drops decimals, a bare `Number("")` yields `0`.
+**Real bugs:** `#169 accept decimal strings on float fields`, `#189 name the
+field on out-of-range / non-Latin-1 encode errors`.
+**Mitigation:** Parse and range-check at the boundary, with the **field name** in
+any error so the user can fix it. Reject non-finite/out-of-range input closed.
+
+---
+
+## B. Adjacent expensive categories (worth the same treatment)
+
+These aren't sign bugs, but they were costly and share the theme: *a lenient
+default silently did the wrong thing.* Included so the next builder gets the
+whole map.
+
+### B1. State lived on the wrong node (the "signing" saga)
+**What bites:** Signing sequence, timestamp, replay memory, and link ID were
+attached to Local Identity when they belong to the **Connection/channel**. One
+misplacement cascaded into several bugs.
+**Real bugs:** `move signing to Connection`, `register connection credential`,
+`clear hidden requireSignature`.
+**Mitigation:** Fix state ownership on day one (see build-spec §3.3 table). Ask
+"whose lifecycle does this state share?" before choosing where it lives.
+
+### B2. Fail-open defaults on missing/malformed input
+**What bites:** Empty route table routed to everyone; malformed mission items
+triggered an implicit clear; several validation gaps let bad input through.
+**Real bugs:** `#168 empty route table fails closed`, `#236 mission upload fail
+instead of implicit clear`, `swarm fail-closed on invalid groups`, the five
+fail-open gaps in the Codex audit.
+**Mitigation:** Missing/ambiguous/malformed input fails closed with a stable
+error code + repair instruction. Runtime validation is authoritative — imported
+flow JSON bypasses the editor. Never let "empty" mean "all."
+
+### B3. Lifecycle: cleanup, locks, and error handlers
+**What bites:** Unbounded writes, locks released twice or not at all, `error`
+handlers removed during `stop()` causing `uncaughtException`, subscribers
+sharing a mutable decoded payload.
+**Real bugs:** `#237 bound writes + settle in-flight on clear`, `#185 release
+lock once via finally`, `#149 keep error handler through stop`, `#158 clone
+payloads per subscriber`.
+**Mitigation:** Release locks in `finally`. Keep error handlers attached through
+teardown. Clone per-subscriber data. Bound every queue and write.
+
+### B4. Protocol-version & framing fidelity
+**What bites:** Mixing up MAVLink v1/v2 changes which fields exist; unsupported
+incompat flags must be rejected, not ignored.
+**Real bugs:** `#162 detect v1 from wire byte, strip v1 extensions`, `#171 reject
+unsupported incompat flags`, `#167 mission NAK/REQUEST_INT/stale-ACK handling`.
+**Mitigation:** Detect version from the wire magic byte. Consult the official
+MAVLink spec for framing/ACK rules — don't reconstruct them from memory.
+
+---
+
+## Checklist for the next builder
+
+- [ ] All JS↔wire conversion goes through **one** type-aware boundary module.
+- [ ] That module reads each field's type/range/units from dialect metadata.
+- [ ] Range-check every integer against metadata and fail closed **before** any
+      `>>> 0` normalization (normalizing first silently wraps bad input).
+- [ ] `NaN`/`Infinity` preserved end-to-end; never routed through JSON.
+- [ ] Blank ≠ 0 ≠ absent; no auto-zero-fill of active command fields.
+- [ ] `char[]` handled as text; params type-detected before write.
+- [ ] A **round-trip / property test** covers every field type, including a
+      bitmask with bit 31 set, a `NaN` sentinel, an int/float param union, and a
+      full-length `char[]`. Compare NaN-aware (`Object.is`) and at float32
+      precision, not raw `===`.
+- [ ] State ownership decided up front; missing input fails closed.
