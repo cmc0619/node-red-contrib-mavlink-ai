@@ -35,13 +35,7 @@
          * codec enforce (#153). */
         sourceComponentId: { value: 190, required: true, validate: mavUint8Validator(1) },
         heartbeatType: { value: '' },
-        heartbeatAutopilot: { value: 'MAV_AUTOPILOT_INVALID' },
-        signOutbound: { value: false },
-        verifyInbound: { value: false },
-        requireSignature: { value: false }
-      },
-      credentials: {
-        signingPassphrase: { type: 'password' }
+        heartbeatAutopilot: { value: 'MAV_AUTOPILOT_INVALID' }
       },
       label: function () {
         var ids =
@@ -87,18 +81,6 @@
         $('.mav-role-hint').hide();
         $('#mav-role-hint-' + prevRole).show();
         $hbType.attr('placeholder', preset(prevRole).heartbeatType);
-
-        // Signing detail rows only matter once signing/verification is on.
-        function toggleSigningRows() {
-          var on =
-            $('#node-config-input-signOutbound').is(':checked') ||
-            $('#node-config-input-verifyInbound').is(':checked');
-          $('.mav-signing-detail').toggle(on);
-          $('.mav-signing-require').toggle($('#node-config-input-verifyInbound').is(':checked'));
-        }
-        $('#node-config-input-signOutbound').on('change', toggleSigningRows);
-        $('#node-config-input-verifyInbound').on('change', toggleSigningRows);
-        toggleSigningRows();
       }
     });
   })();
@@ -147,36 +129,10 @@
     <label for="node-config-input-heartbeatAutopilot">HB Autopilot</label>
     <input type="text" id="node-config-input-heartbeatAutopilot" placeholder="MAV_AUTOPILOT_INVALID">
   </div>
-
-  <hr>
-  <h4 style="margin:6px 0;">MAVLink 2 Signing</h4>
-  <div class="form-row">
-    <label for="node-config-input-signOutbound" title="Sign packets sent as this identity (forces MAVLink 2)">Sign outbound</label>
-    <input type="checkbox" id="node-config-input-signOutbound" style="display: inline-block; width: auto; vertical-align: top;">
-  </div>
-  <div class="form-row">
-    <label for="node-config-input-verifyInbound" title="Check signatures on packets received on connections whose default identity this is">Verify inbound</label>
-    <input type="checkbox" id="node-config-input-verifyInbound" style="display: inline-block; width: auto; vertical-align: top;">
-  </div>
-  <div class="form-tips mav-signing-detail" style="margin: -4px 0 8px 105px; width: 70%;">
-    Verifying also enforces the signing spec's <b>anti-replay</b> rules — a signed frame is dropped if
-    its timestamp is older than the last on its <code>(sysid, compid, link&nbsp;id)</code> stream, or
-    more than a minute behind the receiver's clock (rejected as <code>signature-replayed</code>).
-    Replay memory is owned by the Connection and survives profile edits.
-  </div>
-  <div class="form-row mav-signing-require">
-    <label for="node-config-input-requireSignature" title="Reject unsigned inbound packets">Require signature</label>
-    <input type="checkbox" id="node-config-input-requireSignature" style="display: inline-block; width: auto; vertical-align: top;">
-  </div>
-  <div class="form-row mav-signing-detail">
-    <label for="node-config-input-signingPassphrase">Passphrase</label>
-    <input type="password" id="node-config-input-signingPassphrase" placeholder="shared secret (stored as a credential)">
-  </div>
-  <div class="form-tips mav-signing-detail">
-    The passphrase is the shared signing key (SHA-256 derived, matching Mission Planner /
-    QGroundControl), stored as an encrypted Node-RED credential — never in exported flow JSON.
-    The signing <b>link ID</b> is set on the Connection: link ids identify channels, so one identity
-    reused on two links does not share a link id.
+  <div class="form-tips" style="margin-top: 8px;">
+    MAVLink 2 <b>signing</b> is configured on the <b>Connection</b>, not here — a link has one
+    shared signing key, so it belongs to the secured link rather than to an identity that may
+    transmit on several links.
   </div>
 </script>
 
@@ -209,10 +165,7 @@
   and additional identities transmit on a link only through the Connection's explicit
   <i>Additional Local Identities</i> bindings.</p>
   <h3>MAVLink 2 signing</h3>
-  <p><b>Sign outbound</b> signs every frame sent as this identity (requires a passphrase — enabling it
-  without one marks the identity invalid and its connections fail closed rather than sending
-  unsigned). <b>Verify inbound</b> checks signatures (and anti-replay) on connections whose default
-  identity this is; <b>Require signature</b> additionally rejects unsigned inbound frames. Sequence
-  numbers, signing timestamps, the link id, and replay memory are channel state owned by the
-  Connection.</p>
+  <p>Signing is configured on the <b>Connection</b>, not on the identity. A MAVLink link has exactly
+  one shared signing key, so the credential and the sign/verify/require policy belong to the secured
+  link — which lets one identity talk signed on one connection and unsigned on another.</p>
 </script>

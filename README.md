@@ -403,28 +403,32 @@ MAVLink orchestration helpers, not a motor-control replacement.
 
 ## MAVLink 2 signing
 
-The **Local Identity** owns the signing credential + policy; the **Connection**
-owns the signing **link id** and the channel state (issue #192). Built on the
-protocol library's signing primitives (no custom crypto layer):
+Signing lives entirely on the **Connection** — a MAVLink link has exactly one
+shared signing key, so it belongs to the secured link, not to an identity that
+may transmit on several links. This lets one identity talk **signed on one
+connection and unsigned on another** (a GCS to a mix of secured and open
+fleets). Built on the protocol library's signing primitives (no custom crypto
+layer):
 
-- **Sign outbound** (on the Local Identity) — appends a valid signature to every
-  encoded packet; this forces MAVLink 2 framing, since signed frames are v2-only.
-- **Verify inbound** (on the Local Identity) — checks signatures on received
-  signed packets; a bad signature is rejected and surfaced on the In node's
-  errors output as `mavlink/rejected` (`reason: "signature-invalid"`).
-  Verification also enforces the signing spec's **anti-replay** rule (below).
-- **Require signature** (on the Local Identity) — with verify on, also rejects
-  *unsigned* inbound packets (`reason: "signature-required"`).
-- **Link ID** (on the Connection) — the 0–255 link id written into outbound
-  signatures; channel-owned, so one identity reused on two connections gets a
-  distinct link id per link.
+- **Sign outbound** — appends a valid signature to every packet sent on this
+  connection; forces MAVLink 2 framing, since signed frames are v2-only. Every
+  identity transmitting on the connection signs with the connection's key.
+- **Verify inbound** — checks signatures on received signed packets; a bad
+  signature is rejected and surfaced on the In node's errors output as
+  `mavlink/rejected` (`reason: "signature-invalid"`). Verification also enforces
+  the signing spec's **anti-replay** rule (below).
+- **Require signature** — with verify on, also rejects *unsigned* inbound packets
+  (`reason: "signature-required"`).
+- **Link ID** — the 0–255 link id written into outbound signatures; give two
+  connections that share a key a distinct link id each.
 
 The shared **passphrase** is the signing key (SHA-256 derived, matching Mission
-Planner / QGroundControl). It is stored as an encrypted Node-RED credential on
-the Local Identity, so it is never written into exported flow JSON. Signing
-timestamps are made strictly monotonic per `(sysid, compid, link id)` by the
-connection's `LinkState`; raw `sendRaw` buffers are sent as-is and are not
-signed.
+Planner / QGroundControl), stored as an encrypted Node-RED credential on the
+Connection, so it is never written into exported flow JSON. Enabling **Sign
+outbound** without a passphrase fails the connection closed rather than sending
+every frame unsigned. Signing timestamps are made strictly monotonic per
+`(sysid, compid, link id)` by the connection's `LinkState`; raw `sendRaw`
+buffers are sent as-is and are not signed.
 
 **Anti-replay.** Verification is not authenticity-only. As the signing spec
 requires, a validly signed frame is discarded when either:

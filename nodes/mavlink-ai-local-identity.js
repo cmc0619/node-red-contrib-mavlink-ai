@@ -1,29 +1,25 @@
 'use strict';
 
-const { MavLinkPacketSignature } = require('node-mavlink');
-const { toBool } = require('../lib/util/validation');
 const { MavlinkError } = require('../lib/util/errors');
 
 /**
  * mavlink-ai-local-identity (issue #228).
  *
  * A Local MAVLink Identity is who this Node-RED runtime *is* when it
- * transmits: the source sysid/compid stamped into outbound frame headers, the
- * HEARTBEAT identity it advertises, and the signing credential/policy it
- * authenticates with. It owns nothing about the vehicle being addressed (that
- * is the Vehicle Profile) and nothing about how bytes move (that is the
- * Connection).
+ * transmits: the source sysid/compid stamped into outbound frame headers and
+ * the HEARTBEAT identity it advertises. It owns nothing about the vehicle being
+ * addressed (that is the Vehicle Profile) and nothing about how bytes move or
+ * how the link is secured (that is the Connection).
  *
  * Multiple Local Identity config nodes may coexist without error — one
  * Node-RED runtime may deliberately act as, say, both a GCS and an onboard
  * companion. Which identities may transmit on a given link is decided by the
  * Connection's explicit bindings, never here.
  *
- * Signing note (#192): the identity owns the shared secret and the
- * sign/verify/require policy, because a credential is naturally reused across
- * links. The signing *link id*, sequence counters, monotonic signing
- * timestamps, and inbound replay memory are channel state and belong to the
- * Connection's LinkState — a link id identifies a channel, not a credential.
+ * Signing lives on the Connection, not here: a MAVLink link has exactly one
+ * signing key shared by both endpoints, so the credential and the
+ * sign/verify/require policy belong to the secured link — letting one identity
+ * talk signed on one connection and unsigned on another.
  */
 
 /** Role presets (issue #106): suggested identity per role. */
@@ -94,23 +90,6 @@ module.exports = function registerMavlinkAiLocalIdentity(RED) {
     node.heartbeatType = config.heartbeatType || preset.heartbeatType;
     node.heartbeatAutopilot = config.heartbeatAutopilot || 'MAV_AUTOPILOT_INVALID';
 
-    // MAVLink 2 signing policy (issue #15). The passphrase is a Node-RED
-    // credential so it is never written into exported flow JSON.
-    node.signOutbound = toBool(config.signOutbound, false);
-    node.verifyInbound = toBool(config.verifyInbound, false);
-    node.requireSignature = toBool(config.requireSignature, false);
-
-    // Sign-outbound with no passphrase cannot do what the setting promises:
-    // every frame would go out unsigned while the user believes traffic is
-    // authenticated. Fail closed (#91): mark the identity invalid, which
-    // prevents connections bound to it from starting.
-    const passphrase = (node.credentials && node.credentials.signingPassphrase) || '';
-    if (node.signOutbound && !passphrase) {
-      problems.push(
-        "'Sign outbound' is enabled but no signing passphrase is set — packets are never sent unsigned under this setting"
-      );
-    }
-
     node._identityError = problems.length
       ? new MavlinkError(
           'IDENTITY_INVALID',
@@ -121,13 +100,6 @@ module.exports = function registerMavlinkAiLocalIdentity(RED) {
     if (node._identityError) {
       node.error(`MAVLink local identity '${node.name || node.id}': ${node._identityError.message}`);
     }
-
-    /**
-     * The 32-byte signing key derived from the passphrase (SHA-256, the same
-     * derivation Mission Planner / QGroundControl use), or null when no
-     * passphrase is configured. Derived once.
-     */
-    const signingKey = passphrase ? MavLinkPacketSignature.key(passphrase) : null;
 
     /** @returns {boolean} whether the identity configuration is valid */
     node.isValid = () => !node._identityError;
@@ -167,38 +139,7 @@ module.exports = function registerMavlinkAiLocalIdentity(RED) {
       // current common message set is version 3 regardless of v1/v2 framing.
       mavlink_version: 3
     });
-
-    /**
-     * The signing policy this identity carries, or null when signing is
-     * entirely off. `key` is the derived 32-byte key (null without a
-     * passphrase). The signing link id is deliberately NOT here — it is
-     * channel state owned by the Connection (#192).
-     *
-     * 'Require signature' is a fail-closed policy: it is meaningless without
-     * inbound verification, so it implies it (#70).
-     *
-     * @returns {?{key: ?Buffer, signOutbound: boolean, verifyInbound: boolean,
-     *   requireSignature: boolean}}
-     */
-    node.getSigningPolicy = () => {
-      const verifyInbound = node.verifyInbound || node.requireSignature;
-      if (!signingKey && !node.signOutbound && !verifyInbound) {
-        return null;
-      }
-      return {
-        key: signingKey,
-        signOutbound: node.signOutbound,
-        verifyInbound,
-        requireSignature: node.requireSignature
-      };
-    };
   }
 
-  // The signing passphrase is a credential so it lives in the encrypted
-  // credential store, never in exported flow JSON (issue #15).
-  RED.nodes.registerType('mavlink-ai-local-identity', MavlinkAiLocalIdentityNode, {
-    credentials: {
-      signingPassphrase: { type: 'password' }
-    }
-  });
+  RED.nodes.registerType('mavlink-ai-local-identity', MavlinkAiLocalIdentityNode);
 };

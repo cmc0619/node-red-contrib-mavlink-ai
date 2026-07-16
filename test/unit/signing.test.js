@@ -7,7 +7,7 @@ const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec, verifyInboundPacket } = require('../../lib/protocol/mavlink-codec');
 const { LinkState } = require('../../lib/protocol/link-state');
 const { MockRED } = require('../helpers/mock-red');
-const { makeIdentity } = require('../helpers/v3-config');
+const { makeIdentity, makeConnection } = require('../helpers/v3-config');
 
 /**
  * MAVLink 2 signing in v3 (#15, #192, #228). Signing state is split by owner:
@@ -183,51 +183,74 @@ test('outbound signing timestamps are monotonic so same-ms bursts are not self-r
   assert.strictEqual(verifyInboundPacket(p2, p).reason, 'signature-valid');
 });
 
-// --- identity threading (#228) ----------------------------------------------
+// --- connection-owned signing (a link has one shared key) --------------------
 
-test('identity exposes null signing policy when nothing is configured (#15)', () => {
+test('connection exposes null signing policy when nothing is configured', async () => {
   const RED = new MockRED().loadNodes();
-  const id = makeIdentity(RED, {});
-  assert.strictEqual(id.getSigningPolicy(), null);
+  const { connection } = makeConnection(RED, {});
+  assert.strictEqual(connection.getSigningPolicy(), null);
+  await RED.close(connection);
 });
 
-test('identity reads the passphrase from credentials, not plain config (#15)', () => {
+test('connection reads the passphrase from credentials, not plain config', async () => {
   const RED = new MockRED().loadNodes();
-  const id = makeIdentity(RED, {
+  const { connection } = makeConnection(RED, {
     signOutbound: true,
     verifyInbound: true,
     requireSignature: true,
     credentials: { signingPassphrase: 'secret' }
   });
-  assert.strictEqual(id.isValid(), true);
-  const p = id.getSigningPolicy();
+  const p = connection.getSigningPolicy();
   assert.ok(Buffer.isBuffer(p.key), 'key is derived from the passphrase');
   assert.deepStrictEqual(p.key, MavLinkPacketSignature.key('secret'));
   assert.strictEqual(p.signOutbound, true);
   assert.strictEqual(p.verifyInbound, true);
   assert.strictEqual(p.requireSignature, true);
+  await RED.close(connection);
 });
 
-test('identity requireSignature implies inbound verification (#70)', () => {
+test('connection requireSignature implies inbound verification (#70)', async () => {
   const RED = new MockRED().loadNodes();
-  const id = makeIdentity(RED, { requireSignature: true, credentials: { signingPassphrase: 'k' } });
-  const p = id.getSigningPolicy();
-  assert.strictEqual(p.verifyInbound, true);
+  const { connection } = makeConnection(RED, { requireSignature: true, credentials: { signingPassphrase: 'k' } });
+  assert.strictEqual(connection.getSigningPolicy().verifyInbound, true);
+  await RED.close(connection);
 });
 
-test('identity with only verify flags (no passphrase) still returns a policy (#15)', () => {
-  // So inbound verification can fail closed rather than silently pass.
+test('connection with only verify flags (no passphrase) still returns a policy', async () => {
+  /** So inbound verification can fail closed rather than silently pass. */
   const RED = new MockRED().loadNodes();
-  const id = makeIdentity(RED, { verifyInbound: true, requireSignature: true });
-  const p = id.getSigningPolicy();
+  const { connection } = makeConnection(RED, { verifyInbound: true, requireSignature: true });
+  const p = connection.getSigningPolicy();
   assert.ok(p);
   assert.strictEqual(p.key, null);
   assert.strictEqual(p.verifyInbound, true);
+  await RED.close(connection);
 });
 
-test('the connection owns the signing link id, not the identity (#192)', () => {
+test('sign-outbound with no passphrase fails the connection closed, not silently unsigned', async () => {
   const RED = new MockRED().loadNodes();
-  const id = makeIdentity(RED, { credentials: { signingPassphrase: 'k' } });
-  const p = id.getSigningPolicy();
-  assert.strictEqual('linkId' in p, false, 'link id is channel state, owned by the Connection');
+  const { connection } = makeConnection(RED, { id: 'c-nokey', signOutbound: true });
+  assert.ok(
+    connection.errors.some((e) => /SIGNING_NO_PASSPHRASE/.test(String(e))),
+    'connection refuses to start rather than send every frame unsigned'
+  );
+  await assert.rejects(connection.send({ name: 'HEARTBEAT', fields: {} }), (e) => e.code === 'CONNECTION_INVALID');
+  await RED.close(connection);
+});
+
+test('one identity, two connections: signed on one, unsigned on the other', async () => {
+  /** The whole point of moving signing to the link: a single GCS identity can
+   *  talk signed to a secured fleet and unsigned to an open one. */
+  const RED = new MockRED().loadNodes();
+  makeIdentity(RED, { id: 'gcs' });
+  const secured = makeConnection(RED, {
+    localIdentity: 'gcs',
+    signOutbound: true,
+    credentials: { signingPassphrase: 'fleet-a' }
+  }).connection;
+  const open = makeConnection(RED, { localIdentity: 'gcs' }).connection;
+  assert.ok(secured.getSigningPolicy() && secured.getSigningPolicy().signOutbound);
+  assert.strictEqual(open.getSigningPolicy(), null);
+  await RED.close(secured);
+  await RED.close(open);
 });

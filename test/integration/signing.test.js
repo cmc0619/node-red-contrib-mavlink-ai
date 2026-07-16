@@ -20,13 +20,12 @@ const HEARTBEAT = {
 };
 
 /**
- * End-to-end MAVLink 2 signing over a real UDP loopback (issue #15). Under the
- * v3 three-node model (#228) the signing *policy* (passphrase, verify, require,
- * signOutbound) lives on the connection's Local Identity, while the signing
- * *link id* lives on the Connection. The connection verifies inbound frames
- * against its default identity's policy: a correctly-signed frame is accepted,
- * and both unsigned and wrongly-signed frames are rejected with a structured
- * `rejected` reason. External signer peers are now plain dialect codecs whose
+ * End-to-end MAVLink 2 signing over a real UDP loopback (issue #15). Signing
+ * (passphrase, verify, require, signOutbound, and the link id) lives entirely on
+ * the Connection — a MAVLink link has one shared signing key. The connection
+ * verifies inbound frames against its own policy: a correctly-signed frame is
+ * accepted, and both unsigned and wrongly-signed frames are rejected with a
+ * structured `rejected` reason. External signer peers are now plain dialect codecs whose
  * signing is supplied per-frame via `enc(..., { signing: { key, linkId } })`.
  */
 test('connection verifies inbound signatures per the identity policy', async (t) => {
@@ -42,26 +41,26 @@ test('connection verifies inbound signatures per the identity policy', async (t)
     defaultTargetComponent: 1
   });
 
-  // Signing policy now belongs to the Local Identity.
   RED.create('mavlink-ai-local-identity', {
     id: 'id_sign',
     name: 'Signer',
     role: 'custom',
     sourceSystemId: 255,
-    sourceComponentId: 190,
-    signOutbound: true,
-    verifyInbound: true,
-    requireSignature: true,
-    credentials: { signingPassphrase: 'shared-link-secret' }
+    sourceComponentId: 190
   });
 
+  // Signing (key + policy + link id) belongs to the Connection: a link has one
+  // shared signing key.
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c_sign',
     name: 'Signed UDP',
     profile: 'p_sign',
     localIdentity: 'id_sign',
-    // The signing link id is connection-owned in v3.
     signingLinkId: 1,
+    signOutbound: true,
+    verifyInbound: true,
+    requireSignature: true,
+    credentials: { signingPassphrase: 'shared-link-secret' },
     transport: 'udp-peer',
     routingMode: 'single-profile',
     unmatchedPolicy: 'default',
@@ -176,10 +175,7 @@ test('routed connection verifies signed frames against the default identity key'
     name: 'GCS',
     role: 'custom',
     sourceSystemId: 255,
-    sourceComponentId: 190,
-    verifyInbound: true,
-    requireSignature: true,
-    credentials: { signingPassphrase: 'link-key' }
+    sourceComponentId: 190
   });
 
   const conn = RED.create('mavlink-ai-connection', {
@@ -187,6 +183,9 @@ test('routed connection verifies signed frames against the default identity key'
     name: 'Routed Signed UDP',
     profile: 'p_default',
     localIdentity: 'id_def',
+    verifyInbound: true,
+    requireSignature: true,
+    credentials: { signingPassphrase: 'link-key' },
     transport: 'udp-peer',
     routingMode: 'routed',
     unmatchedPolicy: 'default',
@@ -285,10 +284,7 @@ test('connection rejects a replayed signed frame', async (t) => {
     name: 'GCS',
     role: 'custom',
     sourceSystemId: 255,
-    sourceComponentId: 190,
-    verifyInbound: true,
-    requireSignature: true,
-    credentials: { signingPassphrase: 'replay-secret' }
+    sourceComponentId: 190
   });
 
   const conn = RED.create('mavlink-ai-connection', {
@@ -297,6 +293,9 @@ test('connection rejects a replayed signed frame', async (t) => {
     profile: 'p_replay',
     localIdentity: 'id_replay',
     signingLinkId: 1,
+    verifyInbound: true,
+    requireSignature: true,
+    credentials: { signingPassphrase: 'replay-secret' },
     transport: 'udp-peer',
     routingMode: 'single-profile',
     unmatchedPolicy: 'default',

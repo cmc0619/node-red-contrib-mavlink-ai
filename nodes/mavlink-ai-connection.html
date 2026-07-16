@@ -160,6 +160,10 @@
             return (Number.isInteger(n) && n >= 0 && n <= 255) || 'must be an integer between 0 and 255';
           }
         },
+        /** MAVLink 2 signing policy — a link has one shared key, so it lives here. */
+        signOutbound: { value: false },
+        verifyInbound: { value: false },
+        requireSignature: { value: false },
         transport: { value: 'udp-peer', required: true },
         routingMode: { value: 'single-profile', required: true },
         bindAddress: { value: '0.0.0.0' },
@@ -220,6 +224,10 @@
         },
         outboundQueue: { value: true }
       },
+      credentials: {
+        /** Shared signing key: a credential so it is never in exported flow JSON. */
+        signingPassphrase: { type: 'password' }
+      },
       label: function () {
         return this.name || 'MAVLink AI Connection';
       },
@@ -232,6 +240,22 @@
        * @returns {void}
        */
       oneditprepare: function () {
+        /**
+         * Signing detail rows (passphrase, link id) only matter once signing or
+         * verification is enabled; Require signature only once verify is on.
+         */
+        function refreshSigning() {
+          const verify =
+            $('#node-config-input-verifyInbound').is(':checked') ||
+            $('#node-config-input-requireSignature').is(':checked');
+          const anySigning = $('#node-config-input-signOutbound').is(':checked') || verify;
+          $('.mav-signing-detail').toggle(anySigning);
+          $('.mav-signing-require').toggle($('#node-config-input-verifyInbound').is(':checked'));
+        }
+        $('#node-config-input-signOutbound').on('change', refreshSigning);
+        $('#node-config-input-verifyInbound').on('change', refreshSigning);
+        refreshSigning();
+
         // Profile config nodes available as route targets. Routes store the
         // config-node id (canonical); the picker shows the display name.
         const profiles = [];
@@ -607,14 +631,39 @@
     <label for="node-config-input-outboundQueue">Queue</label>
     <input type="checkbox" id="node-config-input-outboundQueue" style="display: inline-block; width: auto; vertical-align: top;">
   </div>
+  <hr>
+  <h4 style="margin:6px 0;">MAVLink 2 Signing</h4>
+  <div class="form-tips" style="margin-bottom: 8px;">
+    A MAVLink link has one shared signing key, so signing is configured here — not on the identity.
+    Leave everything off for an unsigned link. Every identity that transmits on this connection signs
+    with this key.
+  </div>
   <div class="form-row">
-    <label for="node-config-input-signingLinkId">Sign Link ID</label>
+    <label for="node-config-input-signOutbound" title="Sign every frame sent on this connection (forces MAVLink 2)">Sign outbound</label>
+    <input type="checkbox" id="node-config-input-signOutbound" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-verifyInbound" title="Check signatures and anti-replay on received frames">Verify inbound</label>
+    <input type="checkbox" id="node-config-input-verifyInbound" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
+  <div class="form-row mav-signing-require">
+    <label for="node-config-input-requireSignature" title="Reject unsigned inbound frames">Require signature</label>
+    <input type="checkbox" id="node-config-input-requireSignature" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
+  <div class="form-row mav-signing-detail">
+    <label for="node-config-input-signingPassphrase">Passphrase</label>
+    <input type="password" id="node-config-input-signingPassphrase" placeholder="shared secret (stored as a credential)">
+  </div>
+  <div class="form-row mav-signing-detail">
+    <label for="node-config-input-signingLinkId">Link ID</label>
     <input type="number" id="node-config-input-signingLinkId" min="0" max="255" placeholder="0">
   </div>
-  <div class="form-tips" style="margin-bottom: 8px;">
-    The MAVLink 2 signing <b>link ID</b> (0–255) written into frames signed on this connection. Link
-    ids identify channels, so each connection owns its own — a signing identity reused on two
-    connections should give them different link ids.
+  <div class="form-tips mav-signing-detail" style="margin-bottom: 8px;">
+    The passphrase is SHA-256 derived (matching Mission Planner / QGroundControl), stored as an
+    encrypted credential — never in exported flow JSON. The <b>link ID</b> (0–255) is written into
+    signed frames; give two connections that share a key different link ids. Verifying also enforces
+    <b>anti-replay</b> — a signed frame is dropped if its timestamp is older than the last on its
+    <code>(sysid, compid, link&nbsp;id)</code> stream, or over a minute behind the clock.
   </div>
 
   <hr>

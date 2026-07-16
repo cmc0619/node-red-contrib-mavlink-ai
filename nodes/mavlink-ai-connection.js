@@ -1,6 +1,7 @@
 'use strict';
 
 const { EventEmitter } = require('events');
+const { MavLinkPacketSignature } = require('node-mavlink');
 const { MavlinkCodec, verifyInboundPacket } = require('../lib/protocol/mavlink-codec');
 const { LinkState } = require('../lib/protocol/link-state');
 const { createTransport } = require('../lib/transport');
@@ -78,7 +79,7 @@ const CLOSE_STOP_TIMEOUT_MS = 5000;
  * @returns {boolean}
  */
 function isIdentityNode(n) {
-  return !!n && typeof n.getIdentity === 'function' && typeof n.getSigningPolicy === 'function';
+  return !!n && typeof n.getIdentity === 'function' && typeof n.getHeartbeatFields === 'function';
 }
 
 /**
@@ -97,16 +98,16 @@ function isProfileNode(n) {
  *
  * The connection config node owns the wire and everything channel-scoped:
  * transport/session, inbound routing, the subscription registry, the outbound
- * queue, heartbeat scheduling, mission locks, the signing link id, and the
- * {@link LinkState} carrying sequence / signing-timestamp / replay / detected-
- * version state (#192). All state is scoped to the instance — no module-level
- * singletons.
+ * queue, heartbeat scheduling, mission locks, MAVLink 2 signing (the shared key,
+ * the sign/verify/require policy, and the link id), and the {@link LinkState}
+ * carrying sequence / signing-timestamp / replay / detected-version state (#192).
+ * All state is scoped to the instance — no module-level singletons.
  *
  * Encoding composes three independently resolved inputs (#228):
  *
  *   Vehicle Profile -> dialect, message definitions, target defaults
- *   Local Identity  -> source ids, heartbeat fields, signing policy/key
- *   Connection      -> transport, queue, link id, channel state
+ *   Local Identity  -> source ids, heartbeat fields
+ *   Connection      -> transport, queue, signing, link id, channel state
  *
  * A connection references exactly one required **default Local Identity**.
  * Additional identities may transmit on this link only through the explicit,
@@ -354,6 +355,53 @@ module.exports = function registerMavlinkAiConnection(RED) {
       }
       node.signingLinkId = linkId;
     }
+
+    /**
+     * MAVLink 2 signing lives on the Connection. A MAVLink link has exactly one
+     * signing key shared by both endpoints, so the credential is a property of
+     * the secured link — not of an identity that may transmit on several links.
+     * This lets one identity talk signed on one connection and unsigned on
+     * another (a GCS to a mix of secured and open fleets). The passphrase is a
+     * Node-RED credential so it is never written into exported flow JSON.
+     */
+    node.signOutbound = toBool(config.signOutbound, false);
+    node.verifyInbound = toBool(config.verifyInbound, false);
+    node.requireSignature = toBool(config.requireSignature, false);
+    const signingPassphrase = (node.credentials && node.credentials.signingPassphrase) || '';
+    if (node.signOutbound && !signingPassphrase) {
+      fatal(
+        'SIGNING_NO_PASSPHRASE',
+        "'Sign outbound' is enabled but no signing passphrase is set — refusing to start rather than send every frame unsigned while the operator believes traffic is authenticated."
+      );
+      registerNoop(node);
+      return;
+    }
+    /**
+     * The 32-byte signing key derived from the passphrase (SHA-256, the same
+     * derivation Mission Planner / QGroundControl use), or null when none is set.
+     */
+    node._signingKey = signingPassphrase ? MavLinkPacketSignature.key(signingPassphrase) : null;
+
+    /**
+     * The signing policy for this connection, or null when signing is entirely
+     * off. 'Require signature' is fail-closed and meaningless without
+     * verification, so it implies inbound verification (#70).
+     *
+     * @returns {?{key: ?Buffer, signOutbound: boolean, verifyInbound: boolean,
+     *   requireSignature: boolean}}
+     */
+    node.getSigningPolicy = () => {
+      const verifyInbound = node.verifyInbound || node.requireSignature;
+      if (!node._signingKey && !node.signOutbound && !verifyInbound) {
+        return null;
+      }
+      return {
+        key: node._signingKey,
+        signOutbound: node.signOutbound,
+        verifyInbound,
+        requireSignature: node.requireSignature
+      };
+    };
 
     /**
      * Additional Local Identity binding specs (#228): the advanced, explicit
@@ -780,15 +828,14 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
-     * The inbound signature-verification policy (#228): the credential and
-     * verify/require flags follow the connection's default Local Identity; the
-     * anti-replay memory is link state keyed by the verification key, so a
-     * profile/identity rebuild under the same key cannot reset it (#192).
+     * The inbound signature-verification policy: the connection's signing
+     * config. The anti-replay memory is link state keyed by the verification
+     * key, so a profile/identity rebuild under the same key cannot reset it (#192).
      *
      * @returns {?object} policy for {@link verifyInboundPacket}, or null
      */
     function inboundPolicy() {
-      const policy = node.localIdentity.getSigningPolicy();
+      const policy = node.getSigningPolicy();
       if (!policy || !policy.verifyInbound) {
         return null;
       }
@@ -1580,7 +1627,11 @@ module.exports = function registerMavlinkAiConnection(RED) {
        */
       const routingTargetSystem = codec.addressesTarget(message.name) ? targetSystem : undefined;
       const { sysid, compid } = identity.getIdentity();
-      const signingPolicy = identity.getSigningPolicy();
+      /**
+       * Signing is a link property: every identity on this connection signs with
+       * the connection's key, not its own (a link has exactly one signing key).
+       */
+      const signingPolicy = node.getSigningPolicy();
       const signing =
         signingPolicy && signingPolicy.signOutbound && signingPolicy.key
           ? { key: signingPolicy.key, linkId: node.signingLinkId }
@@ -1720,15 +1771,16 @@ module.exports = function registerMavlinkAiConnection(RED) {
         return;
       }
 
-      // 3. MAVLink 2 signature verification (issue #15). The verification
-      //    policy/credential follows the connection's default Local Identity
-      //    (#228) — signing authenticates the link participants, not the
-      //    vehicle metadata — and the anti-replay memory lives in the
-      //    LinkState, keyed by the verification key, so it survives
-      //    profile/identity rebuilds (#192). Verification is a no-op (returns
-      //    null) unless the identity enables it, so unsigned setups are
-      //    unaffected. Runs after routing but before decode so an unauthentic
-      //    frame never reaches subscribers.
+      /**
+       * 3. MAVLink 2 signature verification (issue #15). The verification
+       * policy/credential is the connection's own — signing authenticates the
+       * link participants, not the vehicle metadata — and the anti-replay memory
+       * lives in the LinkState, keyed by the verification key, so it survives
+       * profile/identity rebuilds (#192). Verification is a no-op (returns null)
+       * unless the connection enables it, so unsigned setups are unaffected. Runs
+       * after routing but before decode so an unauthentic frame never reaches
+       * subscribers.
+       */
       const sigDecision = verifyInboundPacket(packet, inboundPolicy());
       if (sigDecision && !sigDecision.accepted) {
         node.emitter.emit('rejected', {
