@@ -558,3 +558,25 @@ test('duplicate fan-out target sysids are rejected (ACK aggregation keys by sysi
     (e) => e.code === 'BAD_TARGET' && /Duplicate/.test(e.message)
   );
 });
+
+test('explicit zero param5/6 (equator/prime meridian) survive the alt-only sentinels', () => {
+  const [longMsg] = buildFanout({
+    command: 'MAV_CMD_DO_REPOSITION',
+    useInt: false,
+    targets: [{ sysid: 1, alt: 50 }],
+    base: { param5: 0, param6: 0 },
+    defaults: {}
+  });
+  assert.strictEqual(longMsg.fields.param5, 0);
+  assert.strictEqual(longMsg.fields.param6, 0);
+
+  const [intMsg] = buildFanout({
+    command: 'MAV_CMD_DO_REPOSITION',
+    useInt: true,
+    targets: [{ sysid: 1, alt: 50 }],
+    base: { param5: 0, param6: 0 },
+    defaults: {}
+  });
+  assert.strictEqual(intMsg.fields.x, 0);
+  assert.strictEqual(intMsg.fields.y, 0);
+});

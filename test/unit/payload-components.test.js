@@ -68,3 +68,15 @@ test('the node-configured component wins over the fallback for a gimbal verb (#1
   const { collected } = await RED.inject(node, { payload: { pitch: -20 } });
   assert.strictEqual(collected[0].payload.target_component, 154);
 });
+
+test('camera_photo sequence defaults to 1 only for single captures (spec: 0 for multi-shot)', async () => {
+  const single = setup(profileWithoutComponentDefault('p1'), { action: 'camera_photo' });
+  const one = await single.RED.inject(single.node, { payload: {} });
+  assert.strictEqual(one.collected[0].payload.fields.param3, 1);
+  assert.strictEqual(one.collected[0].payload.fields.param4, 1);
+
+  const burst = setup(profileWithoutComponentDefault('p2'), { action: 'camera_photo' });
+  const many = await burst.RED.inject(burst.node, { payload: { count: 5, interval: 1 } });
+  assert.strictEqual(many.collected[0].payload.fields.param3, 5);
+  assert.strictEqual(many.collected[0].payload.fields.param4, 0);
+});

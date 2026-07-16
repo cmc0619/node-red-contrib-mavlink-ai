@@ -522,3 +522,30 @@ test('fence/rally over a MAVLink 1 link fails with a pointed error, not a bare t
   }
   await assert.rejects(p, (e) => e.code === 'MISSION_TYPE_REQUIRES_MAVLINK2');
 });
+
+test('re-uploading a downloaded float MISSION_ITEM does not rescale its float-degree x/y', () => {
+  /**
+   * extractItem stamps wire provenance; a MISSION_ITEM item's x/y are float
+   * degrees regardless of the uploading profile's INT preference, so the
+   * profile-preference heuristic must not divide them by 1e7.
+   */
+  const roundTrip = buildItemFields(
+    { command: 16, x: 47.397742, y: 8.545594, z: 50, wire_message: 'MISSION_ITEM' },
+    0,
+    false, /** vehicle requests MISSION_ITEM */
+    true /** profile prefers INT */
+  );
+  assert.strictEqual(roundTrip.x, 47.397742);
+  assert.strictEqual(roundTrip.y, 8.545594);
+  /** and a downloaded INT item answered as INT is likewise untouched */
+  const intItem = buildItemFields(
+    { command: 16, x: 473977420, y: 85455940, z: 50, wire_message: 'MISSION_ITEM_INT' },
+    0,
+    true,
+    false
+  );
+  assert.strictEqual(intItem.x, 473977420);
+  /** unlabeled raw x/y still follow the caller-preference rescale */
+  const unlabeled = buildItemFields({ command: 16, x: 473977420, y: 85455940, z: 50 }, 0, false, true);
+  assert.ok(Math.abs(unlabeled.x - 47.397742) < 1e-6);
+});
