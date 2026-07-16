@@ -5,6 +5,28 @@
 > changelog. When older design/roadmap prose conflicts with this document, use
 > this document.
 
+## Pre-1.0 iteration rule
+
+This document establishes the current direction; it is not a promise to
+preserve every implementation choice made while building toward 1.0. Iterate
+freely when new evidence produces a cleaner, safer, or more usable model.
+
+Before 1.0, do not leave migration theatre behind:
+
+- Do not add help text such as “use this feature instead” or “go here for the
+  replacement” when no end user has used the earlier feature.
+- Do not retain aliases, redirects, compatibility paths, deprecated labels, or
+  explanatory archaeology merely to preserve an unreleased intermediate shape.
+- Do not feel obliged to record every implementation correction in a design
+  document, README, help text, or changelog.
+
+User-visible help should describe the currently shipped control and its safe
+use—not the project's internal evolution. Update this specification when a
+change establishes a durable architectural boundary, product constraint, or
+implementation contract. A local correction that does not do that may simply
+replace the old approach. Once 1.0 is released, migration, compatibility, and
+release communication become a different obligation.
+
 ## 1. Goal and boundary
 
 Build a Node-RED MAVLink integration that makes a normal setup easy:
@@ -112,16 +134,16 @@ still validates wire types and numeric precision safely.
 All JavaScript-to-wire conversion (and back) must go through a single
 type-aware boundary module that reads each field's MAVLink type, range, and
 units from dialect metadata; visible nodes must not do their own sign, mask, or
-numeric coercion. Prove it with round-trip tests (`encode(decode(x))`
-reproduces `x`, compared NaN-aware and at float32 precision rather than raw
-`===`) plus canonical payload-byte vectors or an independent-decoder cross-check
-(a round trip alone passes a symmetric codec bug — same wrong byte order both
-ways — so byte-check the payload, though not whole frames whose
-sequence/signature/timestamp vary), covering every field type, including an
-unsigned bitmask with bit 31 set, a `NaN` "keep current" sentinel, an int/float
-parameter union, and a full-length `char[]`. Validate an integer's range before any unsigned
-normalization, so out-of-range input fails closed instead of silently wrapping. See `WIRE_ENCODING_GOTCHAS.md` for the recurring failures this
-prevents.
+numeric coercion. Prove it with round-trip tests (encode(decode(x)) reproduces
+x, compared NaN-aware and at float32 precision rather than raw equality) plus
+canonical payload-byte vectors or an independent-decoder cross-check. A round
+trip alone can bless a symmetric codec bug, so verify payload bytes but not
+whole frames whose sequence/signature/timestamp legitimately vary. Cover every
+field type, including an unsigned bitmask with bit 31 set, a NaN “keep current”
+sentinel where that message field defines it, an int/float parameter union, and
+a full-length char array. Validate an integer's range before any unsigned
+normalization, so out-of-range input fails closed instead of silently wrapping.
+See WIRE_ENCODING_GOTCHAS.md for the recurring failures this prevents.
 
 ## 4. Architecture: three config nodes, one question each
 
@@ -416,4 +438,3 @@ The greenfield driver is ready for a stable single-vehicle release when:
 The final architectural test is simple: **Local Identity owns who Node-RED is;
 Vehicle Profile owns what it addresses; Connection owns the wire and channel
 correctness; visible nodes own behavior.**
-
