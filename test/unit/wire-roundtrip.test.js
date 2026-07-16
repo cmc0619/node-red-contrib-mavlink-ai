@@ -24,11 +24,32 @@ const { enc } = require('../helpers/v3-config');
 
 const DIALECTS = ['common', 'ardupilotmega', 'development'];
 
-/** Decode one framed buffer back to `{ name, fields }` through the codec. */
-function roundtrip(codec, buffer) {
-  return new Promise((resolve) => {
-    const dec = codec.createDecoder((packet) => resolve(codec.decode(packet, { profile: 'RT' })));
-    dec.write(buffer);
+/**
+ * Decode one framed buffer back to `{ name, fields }` through the codec. Rejects
+ * (never hangs) if the splitter drops the frame — CRC/length/msgid regression —
+ * or if `decode` throws, so this exhaustive net reports the offending message
+ * instead of stalling, which is exactly when it must be useful (Codex review).
+ */
+function roundtrip(codec, buffer, label = 'frame') {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`no decoded packet for ${label} — splitter dropped the frame?`)),
+      2000
+    );
+    try {
+      const dec = codec.createDecoder((packet) => {
+        clearTimeout(timer);
+        try {
+          resolve(codec.decode(packet, { profile: 'RT' }));
+        } catch (err) {
+          reject(err);
+        }
+      });
+      dec.write(buffer);
+    } catch (err) {
+      clearTimeout(timer);
+      reject(err);
+    }
   });
 }
 
@@ -84,15 +105,62 @@ function sampleScalar(base) {
   }
 }
 
+/**
+ * A per-index, in-range value for array element `i`. Distinct across indices
+ * (step coprime with the modulus) so a bug that writes element 0 into every
+ * slot, or reads from the wrong offset, cannot round-trip to the same repeated
+ * array and slip through (Codex review).
+ */
+function sampleScalarAt(base, i) {
+  switch (base) {
+    case 'uint8_t':
+    case 'uint8_t_mavlink_version':
+      return (i * 13 + 5) % 250;
+    case 'int8_t':
+      return ((i * 13 + 5) % 200) - 100;
+    case 'uint16_t':
+      return (i * 1237 + 7) % 60000;
+    case 'int16_t':
+      return ((i * 1237 + 7) % 60000) - 30000;
+    case 'uint32_t':
+      return i * 1000003 + 11;
+    case 'int32_t':
+      return i * 1000003 - 500000;
+    case 'uint64_t':
+      return BigInt(i) * 1000003n + 11n;
+    case 'int64_t':
+      return BigInt(i) * 1000003n - 500000n;
+    case 'float':
+    case 'double':
+      return i + 0.5; // float32-exact, distinct per index
+    default:
+      throw new Error(`unhandled array base type '${base}'`);
+  }
+}
+
+/**
+ * An exact-width string of `count` distinct printable Latin-1 chars, so a
+ * `char[N]` field is exercised at full width — an encoder/decoder that drops or
+ * corrupts the final byte of `PARAM_SET.param_id[16]` / `STATUSTEXT.text[50]`
+ * fails instead of passing on a 2-char stub (Codex review; §3.5 checklist).
+ */
+function charSample(count) {
+  let s = '';
+  for (let i = 0; i < count; i += 1) {
+    s += String.fromCharCode(65 + (i % 58)); // 'A'..'z', all printable, none NUL/space
+  }
+  return s;
+}
+
 /** Build a fields object assigning every field a type-appropriate sample value. */
 function sampleFields(clazz) {
   const fields = {};
   for (const field of clazz.FIELDS) {
     const { base, count } = fieldShape(field);
     if (base === 'char') {
-      fields[field.source] = 'RT'; // short string; codec pads/truncates to width
+      fields[field.source] = count > 0 ? charSample(count) : 'RT';
     } else if (count > 0) {
-      fields[field.source] = Array.from({ length: count }, () => sampleScalar(base));
+      fields[field.source] = Array.from({ length: count }, (_v, i) => sampleScalarAt(base, i));
     } else {
       fields[field.source] = sampleScalar(base);
     }
@@ -152,7 +220,7 @@ for (const dialect of DIALECTS) {
       let decoded;
       try {
         const buf = enc(codec, clazz.MSG_NAME, input, { sysid: 1, compid: 1 });
-        decoded = await roundtrip(codec, buf);
+        decoded = await roundtrip(codec, buf, clazz.MSG_NAME);
       } catch (err) {
         failures.push(`${clazz.MSG_NAME}: encode/decode threw — ${err.message}`);
         continue;
