@@ -12,7 +12,16 @@
         required: false,
         /** Await-ack has nothing to send on without a connection; catch it at edit time, not as a runtime NO_CONNECTION (#154). */
         validate: function (v) {
-          return !this.awaitAck || (v !== '' && v != null);
+          /**
+           * Read the live checkbox while the dialog is open — `this.awaitAck`
+           * holds the pre-edit value, so ticking Await ack and leaving the
+           * connection blank would pass validation until the node is reopened.
+           * Outside the dialog (import/deploy checks) fall back to the stored
+           * value; the param node's validators use the same pattern.
+           */
+          const $live = $('#node-input-awaitAck');
+          const awaitAck = $live.length ? $live.is(':checked') : this.awaitAck;
+          return !awaitAck || (v !== '' && v != null);
         }
       },
       command: { value: 'arm', required: true },
@@ -28,7 +37,14 @@
       presetFields: {
         value: '',
         validate: function (v) {
-          if (this.command !== 'reboot' || !v) {
+          /**
+           * Read the live command select while the dialog is open —
+           * `this.command` holds the pre-edit value, so switching to reboot
+           * without confirming would pass validation until reopened.
+           */
+          const $live = $('#node-input-command');
+          const command = $live.length && $live.val() != null ? $live.val() : this.command;
+          if (command !== 'reboot' || !v) {
             return true;
           }
           try {
@@ -257,7 +273,16 @@
           }
         } else if (field.type === 'mode') {
           $input = $('<select></select>').css({ width: '55%' }).addClass('mav-preset-mode');
-          $('<option></option>').val('').text('Loading modes...').appendTo($input);
+          /**
+           * Seed the placeholder with the saved mode so a save landing before
+           * the async modes list arrives keeps it — collecting the bare
+           * 'Loading...' option would silently drop the configured mode.
+           */
+          if (saved !== undefined && saved !== '') {
+            $('<option></option>').val(String(saved)).text(String(saved)).prop('selected', true).appendTo($input);
+          } else {
+            $('<option></option>').val('').text('Loading modes...').appendTo($input);
+          }
         } else {
           $input = $('<input type="number" step="any">')
             .css({ width: '55%' })
@@ -741,6 +766,13 @@
       }
 
       let metadataRequestId = 0;
+      /**
+       * False until the first metadata request settles (either way). While
+       * pending, saving must preserve the node's stored fields/presetFields —
+       * collecting from the not-yet-built form would silently wipe them on a
+       * quick open-and-save.
+       */
+      let metadataSettled = false;
       function loadDialect() {
         const requestId = ++metadataRequestId;
         $.getJSON('mavlink-ai/metadata', currentDialect())
@@ -748,6 +780,7 @@
             if (requestId !== metadataRequestId) {
               return; // a newer request superseded this response
             }
+            metadataSettled = true;
             commands = (data && data.commands) || {};
             enumsByName = (data && data.enums) || {};
             messageList = [];
@@ -761,11 +794,22 @@
             if (requestId !== metadataRequestId) {
               return;
             }
+            metadataSettled = true;
             commands = {};
             enumsByName = {};
             messageList = [];
             buildOptions([]); // presets only if metadata unavailable
           });
+      }
+
+      /**
+       * Seed the (empty) command select with the saved value immediately, so a
+       * save landing before the async metadata response keeps it instead of
+       * persisting a blank required field.
+       */
+      if (node.command) {
+        $('<option></option>').val(node.command).text(node.command).appendTo($command);
+        $command.val(node.command);
       }
 
       $command.on('change', renderParams);
@@ -782,6 +826,10 @@
       refreshAckRows();
 
       this._collectParams = function () {
+        if (!metadataSettled) {
+          /** Metadata still loading: keep the stored raw params untouched. */
+          return node.fields || '';
+        }
         if (!isRaw($command.val())) {
           return '';
         }
@@ -796,6 +844,10 @@
       };
 
       this._collectPresetFields = function () {
+        if (!metadataSettled) {
+          /** Metadata still loading: keep the stored preset values untouched. */
+          return node.presetFields || '';
+        }
         if (isRaw($command.val())) {
           // Keep the saved preset values so switching to raw and back does not
           // wipe them (#49).

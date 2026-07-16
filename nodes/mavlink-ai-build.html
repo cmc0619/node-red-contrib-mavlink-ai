@@ -19,11 +19,27 @@
     oneditprepare: function () {
       const node = this;
       let metadata = { messages: {}, enums: {} };
+      /**
+       * False until the metadata request settles. While pending, saving must
+       * preserve the node's stored values — collecting from the not-yet-built
+       * form would silently wipe messageName/fields on a quick open-and-save.
+       */
+      let metadataLoaded = false;
 
       const $message = $('#node-input-messageName');
       const $fieldsHost = $('#mav-fields');
       const $status = $('#mav-fields-status');
       const $msgDesc = $('#mav-msg-desc');
+
+      /**
+       * Seed the (empty) select with the saved message immediately, so a save
+       * that lands before the async metadata response keeps the saved name
+       * instead of persisting a blank required field.
+       */
+      if (node.messageName) {
+        $('<option></option>').val(node.messageName).text(node.messageName).appendTo($message);
+        $message.val(node.messageName);
+      }
 
       // Parse the saved field values ({ snake_field: value }).
       let savedFields = {};
@@ -185,6 +201,7 @@
               return; // a newer request superseded this response
             }
             metadata = data && data.messages ? data : { messages: {}, enums: {} };
+            metadataLoaded = true;
             populateMessages(selectName);
             renderFields($message.val(), prefill);
             $status.text('');
@@ -223,6 +240,20 @@
         const jsonBox = $('#mav-fields-json');
         if (jsonBox.length) {
           return jsonBox.val(); // fallback JSON mode
+        }
+        if (!metadataLoaded) {
+          /** Metadata still loading: keep the stored fields, don't collect from
+           * a form that was never built. */
+          return node.fields || '';
+        }
+        if (!metadata.messages[$message.val()]) {
+          /**
+           * The saved message is missing from the currently selected dialect,
+           * so renderFields drew no inputs — collecting would silently replace
+           * the stored fields with {}. Keep them: switching the profile back
+           * (or fixing the dialect) restores a fully working node.
+           */
+          return node.fields || '';
         }
         const out = {};
         $fieldsHost.find('[data-field]').each(function () {

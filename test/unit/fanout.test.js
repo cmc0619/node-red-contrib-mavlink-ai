@@ -515,3 +515,67 @@ test('await-acks workflow sends carry the node profile id (#81)', async () => {
     assert.strictEqual(m.vehicleProfile, 'p1');
   }
 });
+
+test('alt-only fan-out targets send "use current position" sentinels, never 0,0', () => {
+  /**
+   * COMMAND_INT: INT32_MAX in x/y means "don't change"; COMMAND_LONG uses NaN
+   * in param5/6. 0 is a real coordinate — a fleet-wide "change altitude only"
+   * must not reposition every vehicle to null island.
+   */
+  const [intMsg] = buildFanout({
+    command: 'MAV_CMD_DO_REPOSITION',
+    useInt: true,
+    targets: [{ sysid: 1, alt: 50 }],
+    base: {},
+    defaults: {}
+  });
+  assert.strictEqual(intMsg.fields.x, 0x7fffffff);
+  assert.strictEqual(intMsg.fields.y, 0x7fffffff);
+  assert.strictEqual(intMsg.fields.z, 50);
+
+  const [longMsg] = buildFanout({
+    command: 'MAV_CMD_DO_REPOSITION',
+    useInt: false,
+    targets: [{ sysid: 1, alt: 50 }],
+    base: {},
+    defaults: {}
+  });
+  assert.ok(Number.isNaN(longMsg.fields.param5), 'param5 is the NaN sentinel');
+  assert.ok(Number.isNaN(longMsg.fields.param6), 'param6 is the NaN sentinel');
+  assert.strictEqual(longMsg.fields.param7, 50);
+});
+
+test('duplicate fan-out target sysids are rejected (ACK aggregation keys by sysid)', () => {
+  assert.throws(
+    () =>
+      buildFanout({
+        command: 'MAV_CMD_COMPONENT_ARM_DISARM',
+        targets: [{ sysid: 1 }, { sysid: 2 }, { sysid: 1 }],
+        base: {},
+        defaults: {}
+      }),
+    (e) => e.code === 'BAD_TARGET' && /Duplicate/.test(e.message)
+  );
+});
+
+test('explicit zero param5/6 (equator/prime meridian) survive the alt-only sentinels', () => {
+  const [longMsg] = buildFanout({
+    command: 'MAV_CMD_DO_REPOSITION',
+    useInt: false,
+    targets: [{ sysid: 1, alt: 50 }],
+    base: { param5: 0, param6: 0 },
+    defaults: {}
+  });
+  assert.strictEqual(longMsg.fields.param5, 0);
+  assert.strictEqual(longMsg.fields.param6, 0);
+
+  const [intMsg] = buildFanout({
+    command: 'MAV_CMD_DO_REPOSITION',
+    useInt: true,
+    targets: [{ sysid: 1, alt: 50 }],
+    base: { param5: 0, param6: 0 },
+    defaults: {}
+  });
+  assert.strictEqual(intMsg.fields.x, 0);
+  assert.strictEqual(intMsg.fields.y, 0);
+});

@@ -19,9 +19,17 @@ const { makeIdentity, makeProfile, makeConnection } = require('../helpers/v3-con
 // --- Local Identity source ids ---------------------------------------------
 test('valid boundary source identity values are accepted (#90)', () => {
   const RED = new MockRED().loadNodes();
-  const id = makeIdentity(RED, { sourceSystemId: 1, sourceComponentId: 0 });
+  /** Source compid floor is 1: 0 is MAV_COMP_ID_ALL, a broadcast address (#153). */
+  const id = makeIdentity(RED, { sourceSystemId: 1, sourceComponentId: 1 });
   assert.strictEqual(id.isValid(), true);
-  assert.deepStrictEqual(id.getIdentity(), { sysid: 1, compid: 0 });
+  assert.deepStrictEqual(id.getIdentity(), { sysid: 1, compid: 1 });
+});
+
+test('source component 0 (MAV_COMP_ID_ALL) invalidates the identity (#153)', () => {
+  const RED = new MockRED().loadNodes();
+  const id = makeIdentity(RED, { sourceComponentId: 0 });
+  assert.strictEqual(id.isValid(), false);
+  assert.strictEqual(id.getError().code, 'IDENTITY_INVALID');
 });
 
 test('blank source identity values take the role preset defaults (#90, #106)', () => {

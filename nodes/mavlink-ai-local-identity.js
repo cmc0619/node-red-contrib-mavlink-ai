@@ -84,7 +84,9 @@ module.exports = function registerMavlinkAiLocalIdentity(RED) {
     }
     // Source sysid 0 means "unknown/broadcast" and is not a valid sender id.
     node.sourceSystemId = identityUint8(config.sourceSystemId, 'Source system ID', preset.sysid, 1);
-    node.sourceComponentId = identityUint8(config.sourceComponentId, 'Source component ID', preset.compid, 0);
+    /** Source compid 0 is MAV_COMP_ID_ALL (the broadcast component address),
+     * never a valid sender id — same floor the codec enforces (#153). */
+    node.sourceComponentId = identityUint8(config.sourceComponentId, 'Source component ID', preset.compid, 1);
 
     // HEARTBEAT identity (issue #195): what this component advertises itself
     // as. This is *local* identity — a GCS or companion must never advertise

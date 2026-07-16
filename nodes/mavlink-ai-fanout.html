@@ -13,7 +13,14 @@
         // Await-acks has nothing to send on without a connection; catch that at
         // edit time instead of a runtime NO_CONNECTION error.
         validate: function (v) {
-          return !this.awaitAck || (v !== '' && v != null);
+          /**
+           * Read the live checkbox while the dialog is open — `this.awaitAck`
+           * holds the pre-edit value, so ticking Await acks and leaving the
+           * connection blank would pass validation until the node is reopened.
+           */
+          const $live = $('#node-input-awaitAck');
+          const awaitAck = $live.length ? $live.is(':checked') : this.awaitAck;
+          return !awaitAck || (v !== '' && v != null);
         }
       },
       mode: { value: 'fanout' },

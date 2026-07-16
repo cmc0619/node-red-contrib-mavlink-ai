@@ -187,10 +187,31 @@
             if (!v) {
               return true;
             }
+            /**
+             * Mirror the runtime's normalizeId rules (route-table.js): blank /
+             * '*' / 'any' / 'all' are wildcards, anything else must be an
+             * integer 0..255. Without this a one-character typo in a route id
+             * passes the dialog and then fails the WHOLE connection at deploy
+             * (ROUTE_TABLE_INVALID).
+             *
+             * @param {*} id  a route row's sysid/compid value
+             * @returns {boolean}
+             */
+            const idOk = function (id) {
+              if (id === undefined || id === null) {
+                return true;
+              }
+              const s = String(id).trim().toLowerCase();
+              if (s === '' || s === '*' || s === 'any' || s === 'all') {
+                return true;
+              }
+              const n = Number(s);
+              return Number.isInteger(n) && n >= 0 && n <= 255;
+            };
             try {
               const arr = JSON.parse(v);
               return Array.isArray(arr) && arr.every(function (r) {
-                return r && typeof r === 'object' && r.profile;
+                return r && typeof r === 'object' && r.profile && idOk(r.sysid) && idOk(r.compid);
               });
             } catch (e) {
               return false;
@@ -383,11 +404,25 @@
         });
 
         // Routed-only vs single-profile-only rows.
+        let lastRoutingMode = $('#node-config-input-routingMode').val();
         $('#node-config-input-routingMode')
           .on('change', function () {
             const routed = $(this).val() === 'routed';
             $('.routed-only').toggle(routed);
             $('.single-profile-only').toggle(!routed);
+            /**
+             * Fail-closed nudge: switching INTO routed mode pre-selects Reject
+             * for unmatched packets, matching the documented routed-mode
+             * default the runtime applies when the property is absent. Only on
+             * a real user switch (never on dialog open — the initial
+             * .trigger('change') sees lastRoutingMode === current), and only
+             * when the policy still sits on the generic default, so a
+             * deliberate "Use default profile" choice is never overridden.
+             */
+            if (routed && lastRoutingMode !== 'routed' && $('#node-config-input-unmatchedPolicy').val() === 'default') {
+              $('#node-config-input-unmatchedPolicy').val('reject');
+            }
+            lastRoutingMode = $(this).val();
           })
           .trigger('change');
 
@@ -634,4 +669,6 @@
   <p>When the profile version is <b>auto</b>, outbound framing follows the peer: packets are MAVLink v2 until inbound traffic shows a v1 peer, then v1 (messages with ids above 255 always stay v2 — v1 framing cannot carry them).</p>
   <p><b>Heartbeat</b> emits a periodic HEARTBEAT so peers see this node as present. <b>HB ms</b> is the interval in milliseconds; HEARTBEAT is a low-rate presence message, so the minimum is <b>1000 ms</b> (the default). Lower values are clamped to 1000 ms and a warning is logged.</p>
   <p><b>Routes</b> (routed mode) map a packet's sysid/compid to the profile that decodes it. Each route references a profile config node by id (the picker handles this); leaving SysID/CompID blank means <code>*</code> (any). A route whose profile no longer exists rejects its packets and raises an error — it never silently falls back to the default profile. Flows edited as JSON may reference a profile by name only if exactly one profile has that name.</p>
+  <p><b>Unmatched</b> (routed mode) decides what happens to a packet no route matches: <b>Reject</b> drops it (fail-closed, recommended — selecting routed mode pre-selects this), <b>Use default profile</b> decodes it with the connection's default profile instead.</p>
+  <p><b>Queue</b> enables the outbound send queue: sends are serialized through one writer with priority bands (emergency commands cut ahead; the heartbeat is coalesced so it can't pile up behind a slow link) and are buffered while the transport is briefly busy. Disabling it writes every send straight to the transport with no ordering or backpressure protection — leave it on unless you are debugging the transport itself.</p>
 </script>

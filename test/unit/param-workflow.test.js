@@ -143,14 +143,45 @@ test('ParamSet confirms via the echoed value and flags applied', async () => {
   assert.strictEqual(set.fields.param_value, 1100);
 });
 
-test('ParamSet flags applied=false when the vehicle clamps the value', async () => {
+test('ParamSet retransmits on a mismatched echo, then reports applied=false with the stored value', async () => {
   const conn = new FakeConnection();
-  const wf = new ParamSet({ connection: conn, targetSystem: 1, targetComponent: 1, paramId: 'RC1_MIN', value: 5000 });
+  const wf = new ParamSet({
+    connection: conn,
+    targetSystem: 1,
+    targetComponent: 1,
+    paramId: 'RC1_MIN',
+    value: 5000,
+    timeoutMs: 10,
+    maxRetries: 1
+  });
+  /** Workflow timers are unref'd; hold a ref'd timer so the loop stays alive. */
+  const keepAlive = setInterval(() => {}, 5);
+  try {
+    const p = wf.run();
+    conn.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 2000 })); // clamped
+    const res = await p;
+    /**
+     * A mismatched echo may be a stale broadcast racing the write (#146), so it
+     * must not settle immediately: PARAM_SET is retransmitted, and only the
+     * final timeout reports the last stored value with applied=false.
+     */
+    assert.strictEqual(res.payload.applied, false);
+    assert.strictEqual(res.payload.param_value, 2000);
+    assert.ok(conn.sent.filter((m) => m.name === 'PARAM_SET').length >= 2, 'PARAM_SET was retransmitted');
+  } finally {
+    clearInterval(keepAlive);
+  }
+});
+
+test('ParamSet ignores a stale echo carrying the old value, then confirms on the real one (#146)', async () => {
+  const conn = new FakeConnection();
+  const wf = new ParamSet({ connection: conn, targetSystem: 1, targetComponent: 1, paramId: 'RC1_MIN', value: 1300 });
   const p = wf.run();
-  conn.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 2000 })); // clamped
+  conn.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 1100 })); // stale broadcast (pre-set value)
+  conn.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 1300 })); // vehicle applies the write
   const res = await p;
-  assert.strictEqual(res.payload.applied, false);
-  assert.strictEqual(res.payload.param_value, 2000);
+  assert.strictEqual(res.payload.applied, true);
+  assert.strictEqual(res.payload.param_value, 1300);
 });
 
 test('ParamSet flags applied=true across the float32 wire round-trip (#25)', async () => {
@@ -163,21 +194,30 @@ test('ParamSet flags applied=true across the float32 wire round-trip (#25)', asy
   assert.strictEqual(res.payload.applied, true);
 });
 
-test('Param read/set matches param ids case-insensitively (#26)', async () => {
+test('Param ids go out verbatim and echoes match exactly (case-sensitive wire field) (#26)', async () => {
+  /**
+   * The outbound request carries the id VERBATIM — param ids are a
+   * case-sensitive char[16] on the wire, so uppercasing made vehicles with
+   * lowercase ids unaddressable — and the echo is matched exactly: folding
+   * case could settle a workflow on an unsolicited value for a case-distinct
+   * parameter and report the wrong outcome.
+   */
   const conn = new FakeConnection();
   const read = new ParamRead({ connection: conn, targetSystem: 1, targetComponent: 1, paramId: 'rc1_min' });
   const p = read.run();
-  conn.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 1100 }));
+  /** A case-different id is a DIFFERENT parameter: it must not settle the read. */
+  conn.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 999 }));
+  conn.deliverParamValue(paramValue({ id: 'rc1_min', value: 1100 }));
   const res = await p;
-  assert.strictEqual(res.payload.param_id, 'RC1_MIN');
-  // The outbound request carries the uppercased id.
+  assert.strictEqual(res.payload.param_id, 'rc1_min');
+  assert.strictEqual(res.payload.param_value, 1100);
   const req = conn.sent.find((m) => m.name === 'PARAM_REQUEST_READ');
-  assert.strictEqual(req.fields.param_id, 'RC1_MIN');
+  assert.strictEqual(req.fields.param_id, 'rc1_min');
 
   const conn2 = new FakeConnection();
   const set = new ParamSet({ connection: conn2, targetSystem: 1, targetComponent: 1, paramId: 'rc1_min', value: 1200 });
   const p2 = set.run();
-  conn2.deliverParamValue(paramValue({ id: 'RC1_MIN', value: 1200 }));
+  conn2.deliverParamValue(paramValue({ id: 'rc1_min', value: 1200 }));
   const res2 = await p2;
   assert.strictEqual(res2.payload.applied, true);
 });
@@ -376,4 +416,64 @@ test('ParamSetAuto.abort during the set rejects after the type was detected', as
   wf.abort('closed');
   await assert.rejects(p, (e) => e.code === 'PARAM_ABORTED');
   assert.deepStrictEqual(conn.sent.map((m) => m.name), ['PARAM_REQUEST_READ', 'PARAM_SET']);
+});
+
+test('projectParam prefers exact wire bits for PX4 byte-union integers (#146)', () => {
+  /**
+   * INT32 -1 arrives as float32 bit pattern 0xFFFFFFFF — a NaN. Through the
+   * JSON-safe decode that is the string "NaN", and Number("NaN") collapses to
+   * the canonical quiet NaN (0x7FC00000 = 2143289344). Only the exact wire
+   * bits the normalizer attaches recover the true value.
+   */
+  const projected = projectParam(
+    { param_id: 'COM_X', param_value: 'NaN', param_value_bits: 0xffffffff, param_type: 6, param_index: 0, param_count: 1 },
+    null,
+    { firmware: 'px4' }
+  );
+  assert.strictEqual(projected.param_value, -1);
+});
+
+test('ParamSet px4 int rides exactFloatBits so -1 reaches the wire byte-exact (#146)', async () => {
+  const conn = new FakeConnection();
+  const wf = new ParamSet({
+    connection: conn,
+    targetSystem: 1,
+    targetComponent: 1,
+    firmware: 'px4',
+    paramId: 'COM_FLTMODE1',
+    value: -1,
+    paramType: 6
+  });
+  const p = wf.run();
+  const sent = conn.sent.find((m) => m.name === 'PARAM_SET');
+  assert.ok(sent, 'PARAM_SET was sent');
+  assert.deepStrictEqual(sent.exactFloatBits, { param_value: 0xffffffff });
+  /** vehicle echoes the union value back (decode attaches the exact bits) */
+  conn.deliverParamValue({
+    name: 'PARAM_VALUE',
+    sysid: 1,
+    compid: 1,
+    fields: {
+      param_id: 'COM_FLTMODE1' + NUL.repeat(4),
+      param_value: 'NaN',
+      param_value_bits: 0xffffffff,
+      param_type: 6,
+      param_index: 0,
+      param_count: 1
+    }
+  });
+  const res = await p;
+  assert.strictEqual(res.payload.applied, true);
+  assert.strictEqual(res.payload.param_value, -1);
+});
+
+test('param ids longer than 16 chars are rejected up front, not after a silent truncation', () => {
+  assert.throws(
+    () => new ParamRead({ connection: new FakeConnection(), targetSystem: 1, targetComponent: 1, paramId: 'THIS_ID_IS_MUCH_TOO_LONG' }),
+    (e) => e.code === 'BAD_PARAM_READ'
+  );
+  assert.throws(
+    () => new ParamSet({ connection: new FakeConnection(), targetSystem: 1, targetComponent: 1, paramId: 'THIS_ID_IS_MUCH_TOO_LONG', value: 1 }),
+    (e) => e.code === 'BAD_PARAM_SET'
+  );
 });

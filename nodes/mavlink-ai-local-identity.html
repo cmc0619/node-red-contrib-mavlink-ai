@@ -30,7 +30,10 @@
         name: { value: '' },
         role: { value: 'gcs', required: true },
         sourceSystemId: { value: 255, required: true, validate: mavUint8Validator(1) },
-        sourceComponentId: { value: 190, required: true, validate: mavUint8Validator(0) },
+        /** Source compid 0 is MAV_COMP_ID_ALL (the broadcast component
+         * address), never a valid sender id — same floor the runtime and the
+         * codec enforce (#153). */
+        sourceComponentId: { value: 190, required: true, validate: mavUint8Validator(1) },
         heartbeatType: { value: '' },
         heartbeatAutopilot: { value: 'MAV_AUTOPILOT_INVALID' },
         signOutbound: { value: false },

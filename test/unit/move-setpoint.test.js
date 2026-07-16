@@ -208,3 +208,44 @@ test('setpointWarnings stays silent for unknown firmwares (#128)', () => {
   assert.deepStrictEqual(setpointWarnings({ firmware: 'generic', typeMask: forceMask, frameName: 'MAV_FRAME_LOCAL_NED' }), []);
   assert.deepStrictEqual(setpointWarnings({ typeMask: forceMask, frameName: 'MAV_FRAME_LOCAL_NED' }), []);
 });
+
+test('a position-driving global setpoint requires finite, in-range lat/lon', () => {
+  /**
+   * num() collapses absent inputs to 0 — for a commanded position that means a
+   * live OFFBOARD/GUIDED vehicle heading for 0N 0E. Must fail loudly instead.
+   */
+  assert.throws(
+    () => buildSetpoint({ coordinate: 'global', preset: 'position', frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT', altitude: 20 }),
+    (e) => e.code === 'BAD_SETPOINT_POSITION'
+  );
+  assert.throws(
+    () =>
+      buildSetpoint({
+        coordinate: 'global',
+        preset: 'position',
+        frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT',
+        lat: 91,
+        lon: 0,
+        altitude: 20
+      }),
+    (e) => e.code === 'BAD_SETPOINT_POSITION'
+  );
+  /** velocity-only masks ignore position: no coordinates required */
+  const vel = buildSetpoint({
+    coordinate: 'global',
+    preset: 'velocity',
+    frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT',
+    velNorth: 1
+  });
+  assert.strictEqual(vel.name, 'SET_POSITION_TARGET_GLOBAL_INT');
+  /** valid coordinates still build */
+  const ok = buildSetpoint({
+    coordinate: 'global',
+    preset: 'position',
+    frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT',
+    lat: 47.397742,
+    lon: 8.545594,
+    altitude: 20
+  });
+  assert.strictEqual(ok.fields.lat_int, 473977420);
+});

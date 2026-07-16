@@ -463,3 +463,89 @@ test('mission workflow without a profile sends no profile reference', async () =
   await p;
   assert.ok(!('profile' in conn.sent[0]));
 });
+
+test('download never downgrades to float MISSION_REQUEST after an INT item already arrived', async () => {
+  const conn = new FakeConnection();
+  const wf = new MissionDownload(downloadOpts(conn, { timeoutMs: 20, maxRetries: 5 }));
+  const keepAlive = setInterval(() => {}, 5); /** workflow timers are unref'd */
+  try {
+    const p = wf.run();
+    await delay(0);
+    conn.deliver('MISSION_COUNT', { count: 2, mission_type: 0, target_system: 255, target_component: 190 });
+    await delay(0);
+    /** Item 0 answered via the INT pathway: the vehicle clearly speaks INT. */
+    conn.deliver('MISSION_ITEM_INT', {
+      seq: 0, frame: 6, command: 16, x: 10, y: 20, z: 30, mission_type: 0, target_system: 255, target_component: 190
+    });
+    await delay(0);
+    /**
+     * Item 1's request is lost once (ordinary packet loss). The retry must
+     * stay MISSION_REQUEST_INT — a mid-transfer downgrade would switch the
+     * rest of the download to deprecated float items (metre-level coordinate
+     * quantization) and mix request types within one transfer.
+     */
+    await delay(30);
+    assert.ok(!conn.sent.some((m) => m.name === 'MISSION_REQUEST'), 'no downgraded MISSION_REQUEST after an INT item');
+    assert.ok(conn.sent.filter((m) => m.name === 'MISSION_REQUEST_INT' && m.fields.seq === 1).length >= 2, 'seq 1 re-requested as INT');
+    conn.deliver('MISSION_ITEM_INT', {
+      seq: 1, frame: 6, command: 16, x: 11, y: 21, z: 31, mission_type: 0, target_system: 255, target_component: 190
+    });
+    const res = await p;
+    assert.strictEqual(res.payload.count, 2);
+    assert.strictEqual(res.payload.items[1].wire_message, 'MISSION_ITEM_INT');
+  } finally {
+    clearInterval(keepAlive);
+  }
+});
+
+test('fence/rally over a MAVLink 1 link fails with a pointed error, not a bare timeout', async () => {
+  const conn = new FakeConnection();
+  const wf = new MissionDownload(downloadOpts(conn, { missionType: 'fence', timeoutMs: 1000, maxRetries: 0 }));
+  const p = wf.run();
+  await delay(0);
+  /**
+   * mission_type is a MAVLink 2 extension: a v1 response cannot carry it and
+   * decodes as 0 (raw.magic 0xFE marks the v1 framing). Delivered directly so
+   * the payload can carry the `raw` envelope the helper omits.
+   */
+  for (const { cb } of conn._subs.values()) {
+    cb({
+      topic: 'mavlink/MISSION_COUNT',
+      payload: {
+        name: 'MISSION_COUNT',
+        sysid: 1,
+        compid: 1,
+        raw: { magic: 0xfe },
+        fields: { count: 1, mission_type: 0, target_system: 255, target_component: 190 }
+      }
+    });
+  }
+  await assert.rejects(p, (e) => e.code === 'MISSION_TYPE_REQUIRES_MAVLINK2');
+});
+
+test('re-uploading a downloaded float MISSION_ITEM does not rescale its float-degree x/y', () => {
+  /**
+   * extractItem stamps wire provenance; a MISSION_ITEM item's x/y are float
+   * degrees regardless of the uploading profile's INT preference, so the
+   * profile-preference heuristic must not divide them by 1e7.
+   */
+  const roundTrip = buildItemFields(
+    { command: 16, x: 47.397742, y: 8.545594, z: 50, wire_message: 'MISSION_ITEM' },
+    0,
+    false, /** vehicle requests MISSION_ITEM */
+    true /** profile prefers INT */
+  );
+  assert.strictEqual(roundTrip.x, 47.397742);
+  assert.strictEqual(roundTrip.y, 8.545594);
+  /** and a downloaded INT item answered as INT is likewise untouched */
+  const intItem = buildItemFields(
+    { command: 16, x: 473977420, y: 85455940, z: 50, wire_message: 'MISSION_ITEM_INT' },
+    0,
+    true,
+    false
+  );
+  assert.strictEqual(intItem.x, 473977420);
+  /** unlabeled raw x/y still follow the caller-preference rescale */
+  const unlabeled = buildItemFields({ command: 16, x: 473977420, y: 85455940, z: 50 }, 0, false, true);
+  assert.ok(Math.abs(unlabeled.x - 47.397742) < 1e-6);
+});

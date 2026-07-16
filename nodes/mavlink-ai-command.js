@@ -1,7 +1,7 @@
 'use strict';
 
 const { MavlinkError, errorPayload, toMavlinkError } = require('../lib/util/errors');
-const { firstDefined, toInt, toBool } = require('../lib/util/validation');
+const { firstDefined, toInt, toNum, toBool } = require('../lib/util/validation');
 const { registerEditorApi } = require('../lib/editor-api');
 const { resolveFlightMode, splitPx4CustomMode } = require('../lib/command/flight-modes');
 const { CommandSend } = require('../lib/command/command-workflow');
@@ -175,7 +175,15 @@ module.exports = function registerMavlinkAiCommand(RED) {
       command: 'MAV_CMD_DO_REPOSITION',
       param1: firstDefined(p.speed, -1), // m/s, -1 = vehicle default
       param2: 1, // MAV_DO_REPOSITION_FLAGS_CHANGE_MODE: switch to guided
-      param4: firstDefined(p.yaw, NaN) // NaN = keep the current yaw mode
+      /**
+       * DO_REPOSITION param4 is yaw in RADIANS (per the dialect definition),
+       * while every friendly yaw input in this suite is degrees — convert here.
+       * toNum's blank-aware coercion keeps an absent/blank yaw (dashboard form
+       * fields arrive as '') at NaN = "keep the current yaw mode", instead of
+       * Number('') === 0 silently commanding a yaw to north; NaN degrees stays
+       * NaN radians. A raw `param4` override elsewhere is untouched (radians).
+       */
+      param4: (toNum(p.yaw, NaN) * Math.PI) / 180
     }),
     change_speed: (p) => ({
       command: 'MAV_CMD_DO_CHANGE_SPEED',
@@ -491,6 +499,17 @@ module.exports = function registerMavlinkAiCommand(RED) {
       try {
         validateTargetSystem(targetSystem);
         validateTargetComponent(targetComponent);
+        if (!useInt && (merged.x !== undefined || merged.y !== undefined)) {
+          /**
+           * Raw wire x/y are COMMAND_INT fields; the COMMAND_LONG path would
+           * silently drop them and send param5/6 = 0 — a reposition to 0°N 0°E.
+           */
+          throw new MavlinkError(
+            'INVALID_FIELD',
+            "Raw wire 'x'/'y' values require COMMAND_INT (command_int: true); COMMAND_LONG carries position as float degrees in lat/lon (param5/param6).",
+            { command: selected }
+          );
+        }
         const latInput = firstDefined(merged.lat, useInt ? configParams.param5 : undefined);
         const lonInput = firstDefined(merged.lon, useInt ? configParams.param6 : undefined);
         if (latInput !== undefined) {
@@ -509,6 +528,16 @@ module.exports = function registerMavlinkAiCommand(RED) {
         if (!node.connection) {
           return sendError(msg, send, done, 'NO_CONNECTION',
             'Await ack requires a connection to send on (select one in the node config).');
+        }
+        if (Number(targetSystem) === 0) {
+          /**
+           * Responders ACK from their real (nonzero) sysid, so a broadcast
+           * await-ack can never match and always ends in a misleading
+           * COMMAND_TIMEOUT. The payload and fan-out nodes reject this the
+           * same way (BROADCAST_NO_ACK).
+           */
+          return sendError(msg, send, done, 'BROADCAST_NO_ACK',
+            'Broadcast (target_system 0) cannot confirm a COMMAND_ACK — use the fan-out node for per-vehicle acks, or disable await ack.');
         }
         const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
         // The Local Identity this workflow transmits as (#228): the explicit

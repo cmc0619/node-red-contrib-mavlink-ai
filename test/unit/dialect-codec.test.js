@@ -109,8 +109,10 @@ test('encode rejects an out-of-range source identity (#90)', () => {
   assert.throws(() => codec.encode('HEARTBEAT', hb, { sysid: 0, compid: 1, link }), (e) => e.code === 'IDENTITY_INVALID');
   assert.throws(() => codec.encode('HEARTBEAT', hb, { sysid: 256, compid: 1, link }), (e) => e.code === 'IDENTITY_INVALID');
   assert.throws(() => codec.encode('HEARTBEAT', hb, { sysid: 1, compid: 1.5, link }), (e) => e.code === 'IDENTITY_INVALID');
+  /** Source compid 0 is MAV_COMP_ID_ALL (broadcast), never a sender id (#153). */
+  assert.throws(() => codec.encode('HEARTBEAT', hb, { sysid: 1, compid: 0, link }), (e) => e.code === 'IDENTITY_INVALID');
   // Valid boundary values still encode.
-  assert.ok(Buffer.isBuffer(codec.encode('HEARTBEAT', hb, { sysid: 255, compid: 0, link })));
+  assert.ok(Buffer.isBuffer(codec.encode('HEARTBEAT', hb, { sysid: 255, compid: 1, link })));
 });
 
 test('auto version follows the detected inbound wire version (#19)', () => {
@@ -351,4 +353,59 @@ test('addressesTarget distinguishes addressed messages from broadcasts (#148)', 
   assert.strictEqual(codec.addressesTarget('HEARTBEAT'), false);
   assert.strictEqual(codec.addressesTarget('ATTITUDE'), false);
   assert.strictEqual(codec.addressesTarget('NOT_A_REAL_MESSAGE'), false);
+});
+
+test('all-zero v2 payload keeps the spec minimum of one payload byte', async () => {
+  const b = loadDialect('common');
+  const codec = new MavlinkCodec({ bundle: b, version: 'v2' });
+  /**
+   * Broadcast PARAM_REQUEST_LIST serializes all-zero; node-mavlink trims that
+   * to a zero-length payload, but the MAVLink 2 reference trim never goes
+   * below one byte and spec-strict peers can reject length 0.
+   */
+  const buf = enc(codec, 'PARAM_REQUEST_LIST', { target_system: 0, target_component: 0 });
+  assert.strictEqual(buf[0], 0xfd);
+  assert.strictEqual(buf[1], 1, 'payload length byte');
+  assert.strictEqual(buf.length, 10 + 1 + 2);
+  /** the re-framed CRC is valid: the frame still decodes */
+  const decoded = await new Promise((resolve) => {
+    const dec = codec.createDecoder((packet) => resolve(codec.decode(packet)));
+    dec.write(buf);
+  });
+  assert.strictEqual(decoded.name, 'PARAM_REQUEST_LIST');
+});
+
+test('outbound HEARTBEAT stamps mavlink_version 3 unless the caller sets it', async () => {
+  const b = loadDialect('common');
+  const codec = new MavlinkCodec({ bundle: b, version: 'v2' });
+  const decode = (buf) =>
+    new Promise((resolve) => {
+      const dec = codec.createDecoder((packet) => resolve(codec.decode(packet)));
+      dec.write(buf);
+    });
+  const stamped = await decode(enc(codec, 'HEARTBEAT', { type: 2, autopilot: 3, system_status: 4 }));
+  assert.strictEqual(stamped.fields.mavlink_version, 3);
+  const explicit = await decode(
+    enc(codec, 'HEARTBEAT', { type: 2, autopilot: 3, system_status: 4, mavlink_version: 2 })
+  );
+  assert.strictEqual(explicit.fields.mavlink_version, 2);
+});
+
+test('exactFloatBits writes the exact wire pattern and decode exposes param_value_bits (#146)', async () => {
+  const b = loadDialect('common');
+  const codec = new MavlinkCodec({ bundle: b, version: 'v2' });
+  /** INT32 -1 byte-union: float bits 0xFFFFFFFF — a NaN pattern JS canonicalizes */
+  const buf = enc(
+    codec,
+    'PARAM_SET',
+    { target_system: 1, target_component: 1, param_id: 'COM_TEST', param_value: NaN, param_type: 6 },
+    { exactFloatBits: { param_value: 0xffffffff } }
+  );
+  const decoded = await new Promise((resolve) => {
+    const dec = codec.createDecoder((packet) => resolve(codec.decode(packet)));
+    dec.write(buf);
+  });
+  assert.strictEqual(decoded.name, 'PARAM_SET');
+  assert.strictEqual(decoded.fields.param_value_bits, 0xffffffff);
+  assert.strictEqual(decoded.fields.param_value, 'NaN');
 });

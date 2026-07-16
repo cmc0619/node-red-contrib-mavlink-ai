@@ -163,3 +163,15 @@ test('messages in a second <messages> section are not dropped', () => {
   const names = Object.values(compiled.module.REGISTRY).map((cl) => cl.MSG_NAME).sort();
   assert.deepStrictEqual(names, ['HARD_TYPES', 'SECOND_SECTION']);
 });
+
+test('a different message reusing an occupied id fails compilation loudly', () => {
+  /**
+   * pymavlink hard-fails the same case: silently letting a custom message
+   * shadow another (worst case HEARTBEAT on id 0) poisons the shared CRC
+   * table and shows up only as mysterious CRC drops.
+   */
+  assert.throws(
+    () => compileXmlDialect(fixture('duplicate_id.xml')),
+    (e) => e.code === 'DIALECT_XML_INVALID' && /FIRST_WIDGET/.test(e.message) && /SECOND_WIDGET/.test(e.message)
+  );
+});

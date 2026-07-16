@@ -49,3 +49,15 @@ test('getEnum/enumsByName carries both common and ardupilot commands (#64)', () 
   assert.strictEqual(mavCmd[400], 'COMPONENT_ARM_DISARM'); // reverse, common
   assert.ok(Object.keys(mavCmd).some((k) => Number(k) >= 42000)); // ardupilot extras present
 });
+
+test('digit-leading enum members keep their full source name — no double prefix', () => {
+  /**
+   * The generator reverts to the full name when prefix-stripping would leave
+   * a leading digit (2D_FIX is not a valid identifier). nameFor must not
+   * prefix again: GPS_FIX_TYPE_GPS_FIX_TYPE_2D_FIX is not a MAVLink name.
+   */
+  assert.strictEqual(enums.nameFor(bundle.enums, 'GpsFixType', 2), 'GPS_FIX_TYPE_2D_FIX');
+  assert.strictEqual(enums.nameFor(bundle.enums, 'GpsFixType', 3), 'GPS_FIX_TYPE_3D_FIX');
+  /** and the index carries the single-prefix key for forward resolution */
+  assert.strictEqual(enums.resolveEnumValue(bundle.enums, 'GPS_FIX_TYPE_2D_FIX'), 2);
+});

@@ -54,7 +54,7 @@ module.exports = function registerMavlinkAiParam(RED) {
 
     node.on('input', async (msg, send, done) => {
       if (!node.connection) {
-        return finishError(node, send, done, errorPayload({
+        return finishError(node, msg, send, done, errorPayload({
           node: 'mavlink-ai-param',
           code: 'NO_CONNECTION',
           message: 'Param node has no connection configured.'
@@ -78,7 +78,7 @@ module.exports = function registerMavlinkAiParam(RED) {
       } catch (err) {
         const e = toMavlinkError(err, 'PROFILE_UNRESOLVED');
         node.status({ fill: 'red', shape: 'ring', text: e.code });
-        return finishError(node, send, done, errorPayload({
+        return finishError(node, msg, send, done, errorPayload({
           node: 'mavlink-ai-param',
           connection: node.connection.name,
           code: e.code,
@@ -95,7 +95,7 @@ module.exports = function registerMavlinkAiParam(RED) {
       } catch (err) {
         const e = toMavlinkError(err, 'INVALID_FIELD');
         node.status({ fill: 'red', shape: 'ring', text: e.code });
-        return finishError(node, send, done, errorPayload({
+        return finishError(node, msg, send, done, errorPayload({
           node: 'mavlink-ai-param',
           connection: node.connection.name,
           code: e.code,
@@ -113,7 +113,7 @@ module.exports = function registerMavlinkAiParam(RED) {
       } catch (err) {
         const e = toMavlinkError(err, 'LOCK_HELD');
         node.status({ fill: 'red', shape: 'ring', text: 'busy' });
-        return finishError(node, send, done, errorPayload({
+        return finishError(node, msg, send, done, errorPayload({
           node: 'mavlink-ai-param',
           connection: node.connection.name,
           code: e.code,
@@ -200,7 +200,7 @@ module.exports = function registerMavlinkAiParam(RED) {
         lock.release();
         const e = toMavlinkError(err, 'BAD_PARAM_REQUEST');
         node.status({ fill: 'red', shape: 'ring', text: e.code });
-        return finishError(node, send, done, errorPayload({
+        return finishError(node, msg, send, done, errorPayload({
           node: 'mavlink-ai-param',
           connection: node.connection.name,
           code: e.code,
@@ -226,7 +226,7 @@ module.exports = function registerMavlinkAiParam(RED) {
         }
         const e = toMavlinkError(err, 'PARAM_FAILED');
         node.status({ fill: 'red', shape: 'ring', text: e.code });
-        finishError(node, send, done, errorPayload({
+        finishError(node, msg, send, done, errorPayload({
           node: 'mavlink-ai-param',
           connection: node.connection.name,
           code: e.code,
@@ -315,7 +315,15 @@ function progressText(p) {
  * @param {object} payload  error payload (§14.5)
  * @returns {void}
  */
-function finishError(node, send, done, payload) {
-  send([null, null, { topic: 'mavlink/error', payload }]);
+function finishError(node, msg, send, done, payload) {
+  /**
+   * Re-use the inbound msg (Node-RED convention): a fresh object would drop
+   * `_msgid` correlation, `msg.parts` (split/join), and user-attached
+   * properties on exactly the error branch — the success paths already mutate
+   * and forward `msg`, and the command/fanout nodes do the same for errors.
+   */
+  msg.topic = 'mavlink/error';
+  msg.payload = payload;
+  send([null, null, msg]);
   done();
 }

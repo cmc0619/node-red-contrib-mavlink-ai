@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<mavlink>
+  <version>3</version>
+  <messages>
+    <message id="9600" name="FIRST_WIDGET">
+      <description>Original occupant of id 9600.</description>
+      <field type="uint8_t" name="value">A value.</field>
+    </message>
+    <message id="9600" name="SECOND_WIDGET">
+      <description>Accidentally reuses id 9600.</description>
+      <field type="uint16_t" name="other">Another value.</field>
+    </message>
+  </messages>
+</mavlink>

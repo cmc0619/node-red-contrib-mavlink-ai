@@ -116,7 +116,8 @@ function makeConnection(RED, config = {}, opts = {}) {
  * @param {MavlinkCodec} codec
  * @param {string} name
  * @param {object} fields
- * @param {object} [opts]  { sysid, compid, link, signing, targetSystem, targetComponent }
+ * @param {object} [opts]  { sysid, compid, link, signing, targetSystem,
+ *   targetComponent, exactFloatBits }
  * @returns {Buffer}
  */
 function enc(codec, name, fields, opts = {}) {
@@ -126,7 +127,8 @@ function enc(codec, name, fields, opts = {}) {
     link: opts.link || new LinkState(),
     signing: opts.signing || null,
     targetSystem: opts.targetSystem,
-    targetComponent: opts.targetComponent
+    targetComponent: opts.targetComponent,
+    exactFloatBits: opts.exactFloatBits
   });
 }
 

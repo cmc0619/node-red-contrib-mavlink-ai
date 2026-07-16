@@ -113,3 +113,32 @@ test('unsubscribe stops delivery', () => {
   reg.dispatch(msg('HEARTBEAT'));
   assert.strictEqual(count, 1);
 });
+
+test('per-key tracking maps stay empty without a rate limit or changedOnly', () => {
+  /**
+   * Keys are name:sysid:compid from the wire — unconditional tracking let any
+   * sender sweeping the sysid/compid space grow the maps without bound.
+   */
+  const reg = new SubscriptionRegistry();
+  const id = reg.subscribe({}, () => {});
+  for (let sysid = 1; sysid <= 50; sysid += 1) {
+    reg.dispatch({ topic: 'mavlink/HEARTBEAT', payload: { name: 'HEARTBEAT', sysid, compid: 1, fields: {} } });
+  }
+  const sub = reg._subs.get(id);
+  assert.strictEqual(sub.lastDeliveredAt.size, 0);
+  assert.strictEqual(sub.lastSignature.size, 0);
+});
+
+test('rate-limit/changed-only tracking maps are bounded against identity sweeps', () => {
+  const reg = new SubscriptionRegistry();
+  const id = reg.subscribe({ rateLimitHz: 1000, changedOnly: true }, () => {});
+  for (let i = 0; i < 6000; i += 1) {
+    reg.dispatch({
+      topic: 'mavlink/HEARTBEAT',
+      payload: { name: 'HEARTBEAT', sysid: (i % 250) + 1, compid: Math.floor(i / 250) + 1, fields: { n: i } }
+    });
+  }
+  const sub = reg._subs.get(id);
+  assert.ok(sub.lastDeliveredAt.size <= 4096, `lastDeliveredAt bounded (got ${sub.lastDeliveredAt.size})`);
+  assert.ok(sub.lastSignature.size <= 4096, `lastSignature bounded (got ${sub.lastSignature.size})`);
+});
