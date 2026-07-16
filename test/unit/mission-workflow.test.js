@@ -493,6 +493,12 @@ test('validateMissionItems rejects an unknown MAV_CMD name against the dialect (
   );
   /** Without enums the name is accepted (resolved downstream), unchanged behavior. */
   assert.doesNotThrow(() => validateMissionItems([{ command: 'MAV_CMD_NAV_WAYPONT' }]));
+  /** A numeric id (number or numeric string) must fit the uint16 wire type —
+   * fractional or out-of-range ids fail preflight, with or without enums. */
+  for (const bad of [16.5, '16.5', 70000, -1]) {
+    assert.throws(() => validateMissionItems([{ command: bad }], enums), (e) => e.context.field === 'command', `command ${bad}`);
+    assert.throws(() => validateMissionItems([{ command: bad }]), (e) => e.context.field === 'command', `command ${bad} (no enums)`);
+  }
 });
 
 test('validateMissionItems rejects an unknown or non-integer frame against the dialect (#236)', () => {
@@ -520,6 +526,11 @@ test('validateMissionItems rejects an unknown or non-integer frame against the d
   /** Without enums: integers and non-blank names pass (resolved downstream), fractions fail. */
   assert.doesNotThrow(() => validateMissionItems([{ command: 16, frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INTT' }]));
   assert.throws(() => validateMissionItems([{ command: 16, frame: 3.5 }]), (e) => e.context.field === 'frame');
+  /** A numeric id (number or numeric string) must fit the uint8 wire type. */
+  for (const bad of ['3.5', 300, -1]) {
+    assert.throws(() => validateMissionItems([{ command: 16, frame: bad }], enums), (e) => e.context.field === 'frame', `frame ${bad}`);
+    assert.throws(() => validateMissionItems([{ command: 16, frame: bad }]), (e) => e.context.field === 'frame', `frame ${bad} (no enums)`);
+  }
 });
 
 test('MissionClear times out cleanly with no ACK (#59)', async () => {
