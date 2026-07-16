@@ -147,6 +147,29 @@ test('coalesceKey drops a superseded queued item and resolves it', async () => {
   assert.deepStrictEqual(written, [1, 11]);
 });
 
+test('onWrite fires only for actually-written buffers, never for coalesced drops', async () => {
+  const onWrote = [];
+  let release;
+  const gate = new Promise((r) => (release = r));
+  let calls = 0;
+  const queue = new OutboundQueue((buf) => {
+    calls += 1;
+    return calls === 1 ? gate : Promise.resolve();
+  });
+
+  /** Priority-2 item drains and blocks; two coalescing heartbeats queue behind it. */
+  const inflight = queue.enqueue(Buffer.from([1]), 2, undefined, { onWrite: () => onWrote.push(1) });
+  const firstHb = queue.enqueue(Buffer.from([10]), 3, undefined, { coalesceKey: 'hb', onWrite: () => onWrote.push(10) });
+  const secondHb = queue.enqueue(Buffer.from([11]), 3, undefined, { coalesceKey: 'hb', onWrite: () => onWrote.push(11) });
+
+  await firstHb; // superseded: resolves, but must NOT fire onWrite
+  release();
+  await Promise.all([inflight, secondHb]);
+
+  /** [1] and the surviving heartbeat [11] were written; the dropped [10] was not. */
+  assert.deepStrictEqual(onWrote.sort((a, b) => a - b), [1, 11]);
+});
+
 test('coalescing preserves accumulated age so a re-sent heartbeat is not starved', async () => {
   /**
    * The real heartbeat path re-sends every tick with the same coalesceKey. If

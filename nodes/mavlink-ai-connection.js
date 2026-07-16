@@ -1704,32 +1704,29 @@ module.exports = function registerMavlinkAiConnection(RED) {
       } catch (err) {
         return Promise.reject(toMavlinkError(err, 'ENCODE_FAILED'));
       }
-      const enqueued = node._queue.enqueue(
+      /**
+       * Trace the send via the queue's onWrite hook, which fires only when the
+       * buffer is actually written — not on a QUEUE_FULL/stalled-transport
+       * rejection, and not for a heartbeat dropped by coalescing (its promise
+       * resolves, but it never reaches the writer). Both would otherwise log a
+       * phantom `send` (Codex review).
+       */
+      return node._queue.enqueue(
         buffer,
         options.priority,
         { targetSystem: routingTargetSystem },
-        { coalesceKey: options.coalesceKey }
+        {
+          coalesceKey: options.coalesceKey,
+          onWrite: () =>
+            logProtocolDebug(
+              profile,
+              'send',
+              message.name,
+              routingTargetSystem,
+              routingTargetSystem === undefined ? undefined : targetComponent
+            )
+        }
       );
-      /**
-       * Trace the send only after it is actually written (enqueue resolves on
-       * write): a rejection — QUEUE_FULL, or a stalled/failed transport — must
-       * not log a phantom `send` for a frame that never left (Codex review). The
-       * no-op rejection handler keeps this trace side-effect from surfacing as an
-       * unhandled rejection; the original promise is returned so the caller's own
-       * error handling is unchanged.
-       */
-      enqueued.then(
-        () =>
-          logProtocolDebug(
-            profile,
-            'send',
-            message.name,
-            routingTargetSystem,
-            routingTargetSystem === undefined ? undefined : targetComponent
-          ),
-        () => {}
-      );
-      return enqueued;
     };
 
     /**

@@ -30,7 +30,17 @@ function setup(debugProtocol) {
     id: 'c1', name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp-peer',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
-  conn._queue = { enqueue() { return Promise.resolve(); }, clear() {} };
+  // Stub the queue but honor the onWrite hook so a "successful write" fires the
+  // debug trace, exactly as the real OutboundQueue does on an actual transport write.
+  conn._queue = {
+    enqueue(buffer, priority, meta, opts) {
+      if (opts && typeof opts.onWrite === 'function') {
+        opts.onWrite();
+      }
+      return Promise.resolve();
+    },
+    clear() {}
+  };
   const logs = [];
   conn.log = (m) => logs.push(String(m));
   return { RED, conn, logs };
