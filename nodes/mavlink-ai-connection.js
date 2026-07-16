@@ -2280,18 +2280,17 @@ module.exports = function registerMavlinkAiConnection(RED) {
       });
       node._transport.on('reconnecting', () => {
         /**
-         * The dropped session may have left a partial frame buffered in the
-         * shared stream decoder (tcp-client / serial share one splitter). The
-         * next session's bytes would be appended mid-frame and force a lossy
-         * resync, garbling the first frames — start the new session with clean
-         * framing state instead. Per-client tcp-server decoders are already
-         * dropped on 'peer-disconnect'.
+         * The dropped session may have left a partial frame buffered in a
+         * stream decoder — the shared one (tcp-client / serial), or a
+         * per-endpoint UDP decoder that had a partial/phantom frame pending
+         * when the socket errored (#262 review). The next session's bytes
+         * would be appended mid-frame and force a lossy resync, garbling the
+         * first frames — start the new session with clean framing state for
+         * EVERY stream instead. tcp-server per-client decoders are also
+         * covered: after a server rebind those client sockets are gone, so
+         * their buffered state can only be stale.
          */
-        const shared = node._decoders.get(SHARED_STREAM_KEY);
-        if (shared) {
-          node._decoders.delete(SHARED_STREAM_KEY);
-          shared.destroy();
-        }
+        destroyDecoders();
         setStatus('reconnecting', 'Reconnecting...');
       });
       node._transport.on('error', (err) => {

@@ -177,6 +177,35 @@ test('one UDP peer\'s buffered phantom bytes never reattribute frames to another
   assert.deepStrictEqual(conn._transport.peersBySysid.get(8), { address: '10.0.0.2', port: 222 });
 });
 
+test('a reconnect drops per-endpoint framing state, not just the shared stream (#262 review)', async (t) => {
+  /**
+   * A UDP socket rebind invalidates every stream: a per-endpoint decoder that
+   * had a partial or phantom frame buffered when the socket errored must not
+   * survive into the new session, or the endpoint's first post-recovery
+   * datagrams are appended mid-frame and garbled.
+   */
+  const RED = new MockRED().loadNodes();
+  const conn = udpPeerConnection(RED);
+  t.after(() => RED.close(conn));
+
+  const received = [];
+  conn.emitter.on('message', (m) => received.push(m.payload));
+
+  const frame = heartbeatFrom(7);
+  const endpointA = { address: '10.0.0.1', port: 111 };
+  conn._transport.emit('data', frame.subarray(0, 10), endpointA);
+  assert.ok(conn._decoders.size >= 1, 'the endpoint has framing state buffered');
+
+  conn._transport.emit('reconnecting');
+  assert.strictEqual(conn._decoders.size, 0, 'every stream decoder is dropped on reconnect');
+
+  /** A fresh, complete frame from the same endpoint decodes cleanly. */
+  conn._transport.emit('data', frame, endpointA);
+  assert.strictEqual(received.length, 1);
+  assert.strictEqual(received[0].sysid, 7);
+  assert.strictEqual(received[0].transport.remoteAddress, '10.0.0.1');
+});
+
 test('decoded payloads and rejected diagnostics carry the connection identity (#240)', async (t) => {
   /**
    * A Profile can be shared by several Connections and separate links reuse
