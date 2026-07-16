@@ -12,11 +12,14 @@ Follow `DESIGN.md` first. Do not recreate the old coupled architecture.
 4. Do not import `serialport` at module startup.
 5. Do not require `serialport` for UDP or TCP usage.
 6. Do not bury mission workflow state inside the transport layer.
-7. Do not add migration logic, back-compat fallbacks, or deprecation shims for
-   config/schema changes unless explicitly requested. This is pre-1.0, dev-only
-   software with no installed base — make clean breaks. When a field or feature
-   moves, remove it from its old home entirely rather than keeping a fallback or
-   warning path.
+7. Do not add cross-version migration logic, back-compat fallbacks, or
+   deprecation shims for config/schema changes unless explicitly requested. This
+   is pre-1.0, dev-only software with no installed base — make clean breaks. When
+   a field or feature moves, remove it from its old home entirely rather than
+   keeping a fallback or warning path. (This targets legacy/older-version
+   compatibility only — preserving compatible saved values *within the current
+   schema*, e.g. keeping fields that still apply when switching transports, is
+   fine and expected.)
 8. Keep node type names under the `mavlink-ai-*` prefix.
 9. Use JSDoc (`/** ... */`) in lieu of any other type of comment. Do not use `//`
    line comments or plain `/* ... */` block comments for commentary; the only

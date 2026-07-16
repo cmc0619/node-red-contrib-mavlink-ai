@@ -245,12 +245,19 @@
          * verification is enabled; Require signature only once verify is on.
          */
         function refreshSigning() {
-          const verify =
-            $('#node-config-input-verifyInbound').is(':checked') ||
-            $('#node-config-input-requireSignature').is(':checked');
+          /**
+           * Require-signature is meaningless without verify and the runtime
+           * treats it as implying verify, so clear it whenever Verify inbound is
+           * off — otherwise a hidden-but-checked value would silently keep
+           * verification on after the user visually disabled it.
+           */
+          if (!$('#node-config-input-verifyInbound').is(':checked')) {
+            $('#node-config-input-requireSignature').prop('checked', false);
+          }
+          const verify = $('#node-config-input-verifyInbound').is(':checked');
           const anySigning = $('#node-config-input-signOutbound').is(':checked') || verify;
           $('.mav-signing-detail').toggle(anySigning);
-          $('.mav-signing-require').toggle($('#node-config-input-verifyInbound').is(':checked'));
+          $('.mav-signing-require').toggle(verify);
         }
         $('#node-config-input-signOutbound').on('change', refreshSigning);
         $('#node-config-input-verifyInbound').on('change', refreshSigning);
