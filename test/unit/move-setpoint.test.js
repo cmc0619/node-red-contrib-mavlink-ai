@@ -69,6 +69,7 @@ test('a force setpoint sends the af inputs with the force bit set (#128)', () =>
     preset: 'force',
     frame: 'MAV_FRAME_LOCAL_NED',
     accelNorth: 3,
+    accelEast: 0,
     accelUp: 1
   });
   assert.strictEqual(fields.afx, 3);
@@ -123,6 +124,7 @@ test('global setpoint converts degrees to 1e7 ints and keeps altitude up-positiv
     lon: 8.545594,
     altitude: 5,
     velNorth: 1,
+    velEast: 0,
     climb: 2
   });
   assert.strictEqual(name, 'SET_POSITION_TARGET_GLOBAL_INT');
@@ -139,6 +141,9 @@ test('yaw and yaw-rate are converted from degrees to radians', () => {
     coordinate: 'local',
     preset: 'position_yaw',
     frame: 'MAV_FRAME_LOCAL_NED',
+    north: 0,
+    east: 0,
+    altitude: 0,
     yaw: 90,
     yawRate: 180
   });
@@ -159,6 +164,7 @@ test('MAV_FRAME_BODY_NED (PX4 body frame) resolves via the fallback map and the 
     frame: 'MAV_FRAME_BODY_NED',
     enums,
     velNorth: 2,
+    velEast: 0,
     climb: 1
   });
   assert.strictEqual(fields.coordinate_frame, 8);
@@ -235,7 +241,9 @@ test('a position-driving global setpoint requires finite, in-range lat/lon', () 
     coordinate: 'global',
     preset: 'velocity',
     frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT',
-    velNorth: 1
+    velNorth: 1,
+    velEast: 0,
+    climb: 0
   });
   assert.strictEqual(vel.name, 'SET_POSITION_TARGET_GLOBAL_INT');
   /** valid coordinates still build */
@@ -248,4 +256,59 @@ test('a position-driving global setpoint requires finite, in-range lat/lon', () 
     altitude: 20
   });
   assert.strictEqual(ok.fields.lat_int, 473977420);
+});
+
+test('a blank active field fails instead of shipping a value-substituted zero (#235)', () => {
+  /**
+   * The preset activates a whole dimension group. A local position setpoint with
+   * a blank axis would otherwise fly the vehicle toward the local origin on that
+   * axis; a partly-filled velocity/acceleration would hold zero on an axis the
+   * operator meant to drive. Every active axis must be finite (0 allowed only if
+   * entered), naming the offending field/preset/frame.
+   */
+  const cases = [
+    { preset: 'position', opts: { north: 5, altitude: 2 }, missing: 'east' },
+    { preset: 'velocity', opts: { velNorth: 1, velEast: 0 }, missing: 'climb' },
+    { preset: 'acceleration', opts: { accelNorth: 1, accelUp: 1 }, missing: 'accelEast' },
+    { preset: 'position_yaw', opts: { north: 0, east: 0, altitude: 0 }, missing: 'yaw' }
+  ];
+  for (const c of cases) {
+    assert.throws(
+      () => buildSetpoint({ coordinate: 'local', preset: c.preset, frame: 'MAV_FRAME_LOCAL_NED', ...c.opts }),
+      (e) => e.code === 'BAD_SETPOINT_FIELD' && e.context.fields.includes(c.missing) && /MAV_FRAME_LOCAL_NED/.test(e.message),
+      `${c.preset} with blank ${c.missing} must fail`
+    );
+  }
+});
+
+test('NaN / Infinity active fields fail; intentional zeros build (#235)', () => {
+  for (const bad of [NaN, Infinity, -Infinity, 'x', '']) {
+    assert.throws(
+      () => buildSetpoint({ coordinate: 'local', preset: 'velocity', frame: 'MAV_FRAME_LOCAL_NED', velNorth: bad, velEast: 0, climb: 0 }),
+      (e) => e.code === 'BAD_SETPOINT_FIELD' && e.context.fields.includes('velNorth')
+    );
+  }
+  /** Explicit zeros on every active axis are a real command and must build. */
+  const { fields } = buildSetpoint({
+    coordinate: 'local',
+    preset: 'velocity',
+    frame: 'MAV_FRAME_LOCAL_NED',
+    velNorth: 0,
+    velEast: 0,
+    climb: 0
+  });
+  assert.strictEqual(fields.vx, 0);
+  assert.strictEqual(fields.vy, 0);
+  assert.strictEqual(fields.vz, -0);
+});
+
+test('ignored axes need no value; global altitude is validated only when active (#235)', () => {
+  /** A yaw-only setpoint ignores position/velocity/accel — blanks there are masked, not sent. */
+  const yawOnly = buildSetpoint({ coordinate: 'local', preset: 'yaw', frame: 'MAV_FRAME_LOCAL_NED', yaw: 45 });
+  assert.strictEqual(yawOnly.fields.x, 0, 'ignored position axis is masked, sent as 0');
+  /** A global position setpoint whose altitude axis is active but blank must fail. */
+  assert.throws(
+    () => buildSetpoint({ coordinate: 'global', preset: 'position', frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT', lat: 47.39, lon: 8.54 }),
+    (e) => e.code === 'BAD_SETPOINT_FIELD' && e.context.fields.includes('altitude')
+  );
 });
