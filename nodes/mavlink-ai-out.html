@@ -31,4 +31,5 @@
 <script type="text/html" data-help-name="mavlink-ai-out">
   <p>Sends normalized MAVLink messages or raw packets through a shared MAVLink AI Connection.</p>
   <p>This node has no outputs, so send failures are reported via <code>done(err)</code> — handle them with a <b>Catch</b> node.</p>
+  <p>A transport that simply isn't ready to deliver yet — a <b>UDP peer</b> connection that hasn't learned a peer, a <b>TCP server</b> with no client connected, or a serial port mid-open — is a normal transient state, not a failure. The node shows a yellow <b>waiting for link</b> badge and logs a one-time warning instead of raising an error on every send, so an as-yet-unseen peer doesn't spam Catch nodes. Sends made while waiting are dropped (there is nowhere to deliver them); once the link is ready, sending resumes automatically.</p>
 </script>

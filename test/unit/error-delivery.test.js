@@ -53,6 +53,8 @@ function setup({ sendError } = {}) {
 }
 
 const boom = Object.assign(new Error('link down'), { code: 'UDP_NO_PEER' });
+/** A genuine send failure (not a transient not-ready state) — must surface. */
+const realBoom = Object.assign(new Error('encode blew up'), { code: 'ENCODE_FAILED' });
 
 test('mission workflow failure: error output once, done() — no Catch double-fire (#89)', async () => {
   const { RED } = setup({ sendError: boom });
@@ -97,8 +99,8 @@ test('command await-ack failure: error on the output, done() (#89)', async () =>
   assert.strictEqual(err, undefined, 'done() without the error — Catch must not fire too');
 });
 
-test('out node has no outputs: failures go to done(err) for Catch nodes (#89)', async () => {
-  const { RED } = setup({ sendError: boom });
+test('out node has no outputs: real failures go to done(err) for Catch nodes (#89)', async () => {
+  const { RED } = setup({ sendError: realBoom });
   const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
   const { collected, err } = await RED.inject(node, {
     topic: 'mavlink/send',
@@ -107,5 +109,29 @@ test('out node has no outputs: failures go to done(err) for Catch nodes (#89)', 
 
   assert.strictEqual(collected.length, 0, 'no outputs to send on');
   assert.ok(err, 'done(err) is the delivery path');
-  assert.strictEqual(err.code, 'UDP_NO_PEER');
+  assert.strictEqual(err.code, 'ENCODE_FAILED');
+});
+
+test('out node treats a not-ready transport as "waiting", not an error (no spam)', async () => {
+  /**
+   * A udp-peer that hasn't learned a peer yet (UDP_NO_PEER) is a normal
+   * transient state. The Out node must badge "waiting for link" and warn once,
+   * not fire done(err) on every send — which used to spam the error output /
+   * Catch nodes when a peer simply hadn't appeared.
+   */
+  const { RED } = setup({ sendError: boom });
+  const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
+  const first = await RED.inject(node, { topic: 'mavlink/send', payload: { name: 'HEARTBEAT', fields: {} } });
+  assert.strictEqual(first.collected.length, 0);
+  assert.strictEqual(first.err, undefined, 'no done(err) — Catch nodes are not triggered');
+  assert.deepStrictEqual(node.statusHistory[node.statusHistory.length - 1], {
+    fill: 'yellow',
+    shape: 'ring',
+    text: 'waiting for link'
+  });
+  assert.strictEqual(node.warnings.length, 1, 'warned once');
+  /** A second send while still waiting does not warn again. */
+  const second = await RED.inject(node, { topic: 'mavlink/send', payload: { name: 'HEARTBEAT', fields: {} } });
+  assert.strictEqual(second.err, undefined);
+  assert.strictEqual(node.warnings.length, 1, 'warn-once — no spam');
 });
