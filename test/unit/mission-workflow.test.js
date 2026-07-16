@@ -452,6 +452,17 @@ test('validateMissionItems rejects non-numeric garbage but preserves NaN sentine
    * there, so it is NOT allowed and must be caught before the transfer. */
   assert.throws(() => validateMissionItems([{ command: 16, x: NaN }]), (e) => e.context.field === 'x');
   assert.throws(() => validateMissionItems([{ command: 16, y: null }]), (e) => e.context.field === 'y');
+  /** ...and a finite-but-huge raw coordinate can't fit int32 either — bound it.
+   * Float degrees and degE7 values both fit comfortably. */
+  assert.throws(() => validateMissionItems([{ command: 16, x: 1e20 }]), (e) => e.context.field === 'x');
+  assert.throws(() => validateMissionItems([{ command: 16, y: -1e20 }]), (e) => e.context.field === 'y');
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, x: 473977420, y: 85455940 }]), 'degE7 fits');
+  assert.doesNotThrow(() => validateMissionItems([{ command: 16, x: 47.397742, y: 8.545594 }]), 'float degrees fit');
+  /** A sparse array (hole at seq 0) must fail preflight, not MISSION_BAD_SEQ
+   * mid-handshake — forEach would have skipped the hole. */
+  const sparse = [];
+  sparse[1] = { command: 16 };
+  assert.throws(() => validateMissionItems(sparse), (e) => e.code === 'INVALID_FIELD' && e.context.seq === 0);
   /** Garbage that keepNanParam would silently default to 0 is rejected up front. */
   for (const field of ['param1', 'x', 'y', 'z', 'alt']) {
     assert.throws(
