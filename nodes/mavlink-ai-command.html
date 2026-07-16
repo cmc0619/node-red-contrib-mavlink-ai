@@ -407,13 +407,38 @@
           });
       }
 
-      // Every param control writes its numeric wire value into a hidden input
-      // carrying data-param=paramN, so _collectParams stays uniform regardless
-      // of which control rendered and unknown imported values survive (#97).
+      /**
+       * Every param control writes its numeric wire value into a hidden input
+       * carrying data-param=paramN, so _collectParams stays uniform regardless
+       * of which control rendered and unknown imported values survive (#97).
+       *
+       * Writes are mirrored into savedParams (#251): renderParamField rebuilds
+       * every control from savedParams[key], so a metadata refresh mid-edit
+       * (profile/component/command change) used to silently revert unsaved
+       * edits in all five control types to their last-saved values. Mirroring
+       * on the one write path they all share keeps re-renders building from
+       * the latest edit; an empty write removes the key — the same "unset"
+       * the collector applies at save. The initial render write above the
+       * shadowing is deliberately unmirrored: rendering must never mutate
+       * what is being rendered from.
+       */
       function makeSink(key, saved) {
-        return $('<input type="hidden">')
+        const $sink = $('<input type="hidden">')
           .attr('data-param', key)
           .val(saved !== undefined && saved !== null ? String(saved) : '');
+        const write = $sink.val.bind($sink);
+        $sink.val = function (value) {
+          if (!arguments.length) {
+            return write();
+          }
+          if (value === '' || value === null || value === undefined) {
+            delete savedParams[key];
+          } else {
+            savedParams[key] = String(value);
+          }
+          return write(value);
+        };
+        return $sink;
       }
 
       function startRow(p) {
