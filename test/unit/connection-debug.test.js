@@ -55,6 +55,19 @@ test('a debug-enabled profile logs inbound and outbound protocol traffic', async
   assert.match(sent, /\[DbgVeh\]/);
 });
 
+test('a failed outbound enqueue logs no phantom send', async (t) => {
+  const { RED, conn, logs } = setup(true);
+  t.after(() => RED.close(conn));
+  conn._queue = { enqueue() { return Promise.reject(new Error('QUEUE_FULL')); }, clear() {} };
+
+  await conn
+    .send({ name: 'COMMAND_LONG', target_system: 3, target_component: 1, fields: { command: 400, param1: 1 } })
+    .catch(() => {});
+  await delay(10);
+
+  assert.deepStrictEqual(logs.filter((l) => / send /.test(l)), []);
+});
+
 test('a debug-disabled profile logs no protocol traffic', async (t) => {
   const { RED, conn, logs } = setup(false);
   t.after(() => RED.close(conn));
