@@ -1197,21 +1197,37 @@ accepts those strings (case-insensitively, plus the `inf` abbreviation) on
 }
 ```
 
-### 14.4 Status Message
+### 14.4 Status
+
+Connection state (`connecting`, `connected`, `listening`, `reconnecting`,
+`error`, `closed`) is surfaced two ways, both driven by the same structured
+payload — never as a MAVLink frame:
+
+- a **Node-RED status badge** under the In/Out/Formation/Swarm nodes attached
+  to the connection (the coloured dot: green connected, yellow waiting, red
+  error);
+- an internal **`status` event** on the connection carrying that payload, which
+  those nodes subscribe to in order to drive their badge.
 
 ```js
 {
-  topic: "mavlink/status",
-  payload: {
-    node: "mavlink-ai-connection",
-    connection: "Copter UDP 14550",
-    state: "connected",
-    transport: "udp-peer",
-    timestamp: 1782849600000,
-    detail: "Listening on 0.0.0.0:14550"
-  }
+  node: "mavlink-ai-connection",
+  connection: "Copter UDP 14550",
+  state: "connected",
+  transport: "udp-peer",
+  timestamp: 1782849600000,
+  detail: "Listening on 0.0.0.0:14550"
 }
 ```
+
+Status is **not** emitted as a `mavlink/status` flow message. Node-RED is a
+GCS or a companion, and in neither role can a ground-side flow usefully react
+to a link change: as a GCS the flight controller owns link-loss behaviour (its
+GCS failsafe flies RTL, and a dropped link can't carry a command anyway); as a
+companion the on-airframe link doesn't meaningfully drop. Link-loss is the
+flight controller's job, so connection state is observed via the badge/event
+above, and a failed send still surfaces as `mavlink/error` (§14.5) — which
+*is* a flow message, because an operational failure is actionable in a flow.
 
 ### 14.5 Error Message
 
@@ -1727,18 +1743,16 @@ Do not start implementation with mission. Mission depends on profile, protocol, 
 
 Status should be structured, not random strings.
 
-Good status:
+Good status (the structured payload behind the node badge / `status` event —
+see §14.4; not a flow message):
 
 ```js
 {
-  topic: "mavlink/status",
-  payload: {
-    node: "mavlink-ai-connection",
-    connection: "Copter UDP 14550",
-    state: "connected",
-    transport: "udp-peer",
-    detail: "Listening on 0.0.0.0:14550"
-  }
+  node: "mavlink-ai-connection",
+  connection: "Copter UDP 14550",
+  state: "connected",
+  transport: "udp-peer",
+  detail: "Listening on 0.0.0.0:14550"
 }
 ```
 

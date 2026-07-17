@@ -87,10 +87,10 @@ module.exports = function registerMavlinkAiOut(RED) {
         return done(new Error('NO_CONNECTION: mavlink-ai-out has no connection configured/resolved.'));
       }
       /**
-       * Error/status envelopes (e.g. from an upstream build/command node) are
-       * not outbound MAVLink messages — don't try to encode and send them.
+       * Error envelopes (e.g. from an upstream build/command node) are not
+       * outbound MAVLink messages — don't try to encode and send them.
        */
-      if (msg.topic === 'mavlink/error' || msg.topic === 'mavlink/status') {
+      if (msg.topic === 'mavlink/error') {
         return done();
       }
       try {
