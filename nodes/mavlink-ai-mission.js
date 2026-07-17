@@ -117,7 +117,7 @@ module.exports = function registerMavlinkAiMission(RED) {
       let profile, defaults, targetSystem, targetComponent;
       try {
         ({ profile, defaults, targetSystem, targetComponent } = resolveWorkflowContext(node.connection, {
-          profile: firstDefined(payload.vehicleProfile, payload.profile, node.profileRef || undefined),
+          profile: firstDefined(payload.vehicleProfile, node.profileRef || undefined),
           targetSystem: payload.target_system,
           targetComponent: payload.target_component
         }));
