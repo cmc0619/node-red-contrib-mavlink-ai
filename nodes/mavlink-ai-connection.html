@@ -409,14 +409,7 @@
 
             let ref = data && data.profile;
             if (ref && !profiles.some(function (p) { return p.id === ref; })) {
-              // Legacy name reference: migrate to the config-node id when the
-              // name is unambiguous; otherwise keep it visible and flagged.
-              const byName = profiles.filter(function (p) { return p.name === ref; });
-              if (byName.length === 1) {
-                ref = byName[0].id;
-              } else {
-                $('<option/>').val(ref).text(ref + ' (unknown profile)').appendTo(select);
-              }
+              $('<option/>').val(ref).text(ref + ' (unknown profile)').appendTo(select);
             }
             if (ref) {
               select.val(ref);
@@ -711,9 +704,9 @@
   default, or — with <b>Advanced &gt; Allow multiple local identities</b> enabled — an explicitly
   bound additional identity requested via <code>msg.payload.localIdentity</code>. A Vehicle Profile
   never determines the local identity, an invalid explicit request never falls back to the default,
-  and missing/ambiguous/unattached identity configuration fails closed with an actionable error
+  and missing/unattached identity configuration fails closed with an actionable error
   (<code>LOCAL_IDENTITY_REQUIRED</code>, <code>LOCAL_IDENTITY_NOT_ATTACHED</code>,
-  <code>LOCAL_IDENTITY_AMBIGUOUS</code>, <code>LOCAL_IDENTITY_COLLISION</code>,
+  <code>LOCAL_IDENTITY_COLLISION</code>,
   <code>MULTI_IDENTITY_DISABLED</code>).</p>
   <p>The connection also owns all per-link protocol state: outbound sequence numbers per identity,
   monotonic signing timestamps per <code>(sysid, compid, link id)</code>, the signing <b>link ID</b>,
