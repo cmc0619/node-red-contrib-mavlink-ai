@@ -33,40 +33,6 @@ const { registerEditorApi } = require('../lib/editor-api');
  */
 const VEHICLE_FAMILIES = ['generic', 'copter', 'plane', 'rover', 'boat', 'sub', 'antenna-tracker'];
 
-/**
- * Deterministic legacy `profileType` -> `vehicleFamily` conversion (issue
- * #228 migration). Vehicle-shaped legacy types keep their family; the local
- * *role* types (gcs, companion-computer, generic) carried no target vehicle
- * information, so they map to 'generic'.
- */
-const LEGACY_PROFILE_TYPE_TO_FAMILY = {
-  gcs: 'generic',
-  generic: 'generic',
-  'companion-computer': 'generic',
-  copter: 'copter',
-  plane: 'plane',
-  rover: 'rover',
-  boat: 'boat',
-  sub: 'sub',
-  'antenna-tracker': 'antenna-tracker'
-};
-
-/**
- * Legacy (pre-v3) config fields that used to make this node also carry the
- * local identity. They are no longer honored here; each maps to where the
- * concept moved so the deprecation warning can say exactly where to look.
- */
-const LEGACY_IDENTITY_FIELDS = {
-  sourceSystemId: 'Local Identity > Source SysID',
-  sourceComponentId: 'Local Identity > Source CompID',
-  heartbeatType: 'Local Identity > Heartbeat type',
-  heartbeatAutopilot: 'Local Identity > Heartbeat autopilot',
-  signOutbound: 'Local Identity > Sign outbound',
-  verifyInbound: 'Local Identity > Verify inbound',
-  requireSignature: 'Local Identity > Require signature',
-  signingLinkId: 'Connection > Signing link ID'
-};
-
 module.exports = function registerMavlinkAiProfile(RED) {
   // Serve the loader's dialect list to the profile editor's dialect dropdown
   // (issue #4), so the UI discovers bundled dialects instead of hard-coding them.
@@ -77,23 +43,8 @@ module.exports = function registerMavlinkAiProfile(RED) {
     const node = this;
 
     node.name = config.name;
-    /**
-     * Target vehicle family, used for ArduPilot mode tables and parameter
-     * metadata. Legacy flows stored a combined `profileType`; convert it
-     * deterministically and say so, rather than guessing silently (#228).
-     */
-    if (config.vehicleFamily) {
-      node.vehicleFamily = VEHICLE_FAMILIES.includes(config.vehicleFamily) ? config.vehicleFamily : 'generic';
-    } else if (config.profileType) {
-      node.vehicleFamily = LEGACY_PROFILE_TYPE_TO_FAMILY[config.profileType] || 'generic';
-      node.warn(
-        `MAVLink profile '${node.name || node.id}': legacy 'profileType: ${config.profileType}' converted to ` +
-          `vehicle family '${node.vehicleFamily}'. Profiles are now target-facing Vehicle Profiles; re-save this ` +
-          `profile in the editor to persist the conversion.`
-      );
-    } else {
-      node.vehicleFamily = 'generic';
-    }
+    /** Target vehicle family, used for ArduPilot mode tables and parameter metadata. */
+    node.vehicleFamily = VEHICLE_FAMILIES.includes(config.vehicleFamily) ? config.vehicleFamily : 'generic';
     // Firmware abstraction hook (RELEASE_SCOPE §8). Exposed from day one so the
     // code has a place to branch on firmware instead of hard-coding ArduPilot
     // assumptions into generic paths. Behavior is mostly generic for now.
@@ -129,26 +80,6 @@ module.exports = function registerMavlinkAiProfile(RED) {
     node.defaultTargetComponent = targetUint8(config.defaultTargetComponent, 'Default target component', 1);
     node.preferredMissionItemType = config.preferredMissionItemType || 'MISSION_ITEM_INT';
     node.debugProtocol = toBool(config.debugProtocol, false);
-
-    /**
-     * Legacy local-identity fields on this node are no longer honored (#228):
-     * the profile must never determine local source identity, heartbeat role,
-     * or signing. Warn once, explicitly, naming each field and where the
-     * concept now lives — a legacy flow fails closed at the Connection (which
-     * now requires a Local Identity) rather than transmitting with ids pulled
-     * from a vehicle profile.
-     */
-    const legacyFields = Object.keys(LEGACY_IDENTITY_FIELDS).filter(
-      (f) => config[f] !== undefined && config[f] !== null && config[f] !== '' && config[f] !== false && Number(config[f]) !== 0
-    );
-    if (legacyFields.length) {
-      node.warn(
-        `MAVLink profile '${node.name || node.id}': this Vehicle Profile no longer owns local identity/signing. ` +
-          `Ignored legacy field(s): ${legacyFields
-            .map((f) => `'${f}' (moved to ${LEGACY_IDENTITY_FIELDS[f]})`)
-            .join(', ')}. Create a mavlink-ai-local-identity config node and select it on the Connection.`
-      );
-    }
 
     node._configError = targetProblems.length
       ? new MavlinkError('PROFILE_CONFIG_INVALID', `Invalid Vehicle Profile configuration: ${targetProblems.join('; ')}.`, {
