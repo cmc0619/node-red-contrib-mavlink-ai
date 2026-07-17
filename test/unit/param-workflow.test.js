@@ -350,7 +350,7 @@ test('param workflow sends carry the profile reference end-to-end', async () => 
   const conn = new FakeConnection();
   const wf = new ParamRead({
     connection: conn,
-    profile: 'p_routed',
+    vehicleProfile: 'p_routed',
     targetSystem: 1,
     targetComponent: 1,
     paramId: 'RC1_MIN',
@@ -364,7 +364,7 @@ test('param workflow sends carry the profile reference end-to-end', async () => 
   assert.ok(conn.sent.length >= 2, 'expected the initial send plus a retransmit');
   for (const m of conn.sent) {
     assert.strictEqual(m.name, 'PARAM_REQUEST_READ');
-    assert.strictEqual(m.vehicleProfile, 'p_routed', 'legacy profile alias maps to vehicleProfile');
+    assert.strictEqual(m.vehicleProfile, 'p_routed');
   }
 });
 
