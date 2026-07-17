@@ -231,6 +231,33 @@ test('decoded payloads and rejected diagnostics carry the connection identity (#
   assert.strictEqual(rejections[0].connection_id, 'c1');
 });
 
+test('a partial broadcast failure surfaces as a throttled connection warning (#148)', async (t) => {
+  /**
+   * The transport's sendPartialFailure event (#148) existed "so an operator
+   * can observe" a degraded broadcast peer, but nothing forwarded it — the
+   * signal died unobserved. The connection now warns, throttled to changes in
+   * the failing endpoint set (broadcasts fire at heartbeat rate).
+   */
+  const RED = new MockRED().loadNodes();
+  const conn = udpPeerConnection(RED);
+  t.after(() => RED.close(conn));
+
+  const failure = (port) => ({
+    failed: 1,
+    total: 2,
+    reasons: [{ message: 'send failed', context: { address: '10.0.0.9', port } }]
+  });
+  conn._transport.emit('sendPartialFailure', failure(14550));
+  conn._transport.emit('sendPartialFailure', failure(14550));
+  assert.strictEqual(conn.warnings.length, 1, 'the same failing set warns once, not per send');
+  assert.match(String(conn.warnings[0]), /1\/2 peers unreachable/);
+  assert.match(String(conn.warnings[0]), /10\.0\.0\.9:14550/);
+
+  /** A different failing endpoint set warns again. */
+  conn._transport.emit('sendPartialFailure', failure(14551));
+  assert.strictEqual(conn.warnings.length, 2);
+});
+
 test('the decoder attributes packets to the read that completed the frame (#239)', () => {
   const codec = new MavlinkCodec({ bundle: common, version: 'v2' });
   const f1 = heartbeatFrom(1);
