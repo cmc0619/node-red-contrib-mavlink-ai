@@ -181,7 +181,7 @@ test('mission node explicit profile drives defaults, lock key, and sends', async
 
 test('mission node rejects an unresolvable profile with PROFILE_UNRESOLVED', async () => {
   const { RED, conn, node } = setupWithSends({});
-  const { collected } = await RED.inject(node, { payload: { action: 'clear', profile: 'missing' } });
+  const { collected } = await RED.inject(node, { payload: { action: 'clear', vehicleProfile: 'missing' } });
   const err = collected[0][2];
   assert.strictEqual(err.topic, 'mavlink/error');
   assert.strictEqual(err.payload.code, 'PROFILE_UNRESOLVED');
