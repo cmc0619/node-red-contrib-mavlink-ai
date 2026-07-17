@@ -114,6 +114,15 @@ module.exports = function registerMavlinkAiFanout(RED) {
       const command = firstDefined(incoming.command, node.command || undefined);
       const useInt = toBool(firstDefined(incoming.command_int, node.sendAs === 'int'), false);
       const base = Object.assign({}, configBase, incoming.fields && typeof incoming.fields === 'object' ? incoming.fields : {});
+      /**
+       * The dialect enums let buildFanout reject an unknown command/frame NAME
+       * up front (fail fast at this node), matching the Mission node. Null when
+       * the profile's dialect isn't loaded — buildFanout then range-checks
+       * numbers and requires a non-blank name, deferring name resolution to the
+       * codec as before.
+       */
+      const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
+      const enums = bundle && bundle.valid ? bundle.enums : null;
 
       let messages;
       try {
@@ -124,7 +133,8 @@ module.exports = function registerMavlinkAiFanout(RED) {
           targets,
           base,
           origin: incoming.origin || null,
-          defaults
+          defaults,
+          enums
         });
       } catch (err) {
         const e = toMavlinkError(err, 'FANOUT_FAILED');

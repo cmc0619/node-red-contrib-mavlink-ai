@@ -5,6 +5,59 @@ const assert = require('node:assert');
 const { MockRED } = require('../helpers/mock-red');
 const { fakeIdentity } = require('../helpers/v3-config');
 const { buildFanout } = require('../../lib/swarm/fanout');
+const { loadDialect } = require('../../lib/dialects/dialect-loader');
+
+const ENUMS = loadDialect('common').enums;
+
+// ---------------------------------------------------------------------------
+// Fail-fast command/frame validation (#72): reject a bad command/frame at the
+// fan-out node, matching the Mission node, instead of deferring to the codec
+// (which in build-only mode surfaces late in the decoupled Out node).
+// ---------------------------------------------------------------------------
+
+test('fan-out rejects an out-of-range numeric command up front', () => {
+  assert.throws(
+    () => buildFanout({ command: 70000, targets: [1] }),
+    (e) => e.code === 'INVALID_FIELD' && /command/.test(e.message)
+  );
+});
+
+test('fan-out rejects an unknown command NAME against the dialect', () => {
+  assert.throws(
+    () => buildFanout({ command: 'MAV_CMD_DEFINITELY_NOT_REAL', targets: [1], enums: ENUMS }),
+    (e) => e.code === 'INVALID_FIELD' && /not a known MavCmd/.test(e.message)
+  );
+});
+
+test('fan-out rejects an out-of-range / unknown COMMAND_INT frame up front', () => {
+  assert.throws(
+    () => buildFanout({ command: 'MAV_CMD_DO_REPOSITION', useInt: true, targets: [{ sysid: 1, frame: 300 }], enums: ENUMS }),
+    (e) => e.code === 'INVALID_FIELD' && /frame/.test(e.message)
+  );
+  assert.throws(
+    () =>
+      buildFanout({
+        command: 'MAV_CMD_DO_REPOSITION',
+        useInt: true,
+        targets: [{ sysid: 1, frame: 'MAV_FRAME_NOPE', lat: 1, lon: 1, alt: 1 }],
+        enums: ENUMS
+      }),
+    (e) => e.code === 'INVALID_FIELD' && /not a known MavFrame/.test(e.message)
+  );
+});
+
+test('fan-out preserves the numeric escape hatch: a valid-but-undefined enum id passes', () => {
+  // frame 12 is a valid uint8 that need not be a named MAV_FRAME — intentional
+  // escape hatch, identical to Mission; validation must not reject it.
+  const messages = buildFanout({
+    command: 400, // MAV_CMD_COMPONENT_ARM_DISARM, as a raw number
+    useInt: true,
+    targets: [{ sysid: 1, frame: 12, lat: 1, lon: 1, alt: 1 }],
+    enums: ENUMS
+  });
+  assert.strictEqual(messages[0].fields.frame, 12);
+  assert.strictEqual(messages[0].fields.command, 400);
+});
 
 // ---------------------------------------------------------------------------
 // buildFanout (pure)
