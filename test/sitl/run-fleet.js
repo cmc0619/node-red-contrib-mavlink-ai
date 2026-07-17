@@ -51,10 +51,22 @@ function pick(args, flag, env, dflt) {
   const raw = args[flag] !== undefined ? args[flag] : process.env[env] !== undefined ? process.env[env] : dflt;
   return raw;
 }
+/**
+ * Coerce a picked value (which may be a string from a flag/env) to a number.
+ *
+ * @param {*} v
+ * @returns {number}
+ */
 function num(v) {
   return typeof v === 'number' ? v : Number(v);
 }
 
+/**
+ * Parse configuration, start the fleet, print a status line periodically, and
+ * shut down cleanly on SIGINT/SIGTERM.
+ *
+ * @returns {Promise<void>}
+ */
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const config = {

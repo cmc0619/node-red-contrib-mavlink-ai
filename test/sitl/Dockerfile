@@ -24,4 +24,8 @@ ENV GCS_HOST=host.docker.internal \
     GCS_PORT=14550 \
     FLEET_COUNT=1
 
+# Drop root: the node:22-alpine image ships an unprivileged `node` user, and the
+# fleet needs no write access beyond its own UDP socket.
+USER node
+
 ENTRYPOINT ["node", "test/sitl/run-fleet.js"]

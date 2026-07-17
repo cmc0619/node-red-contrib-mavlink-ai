@@ -151,14 +151,24 @@ class VirtualDrone {
     });
   }
 
-  /** COMMAND_ACK for a command this drone just processed. */
-  encodeAck(command, result, targetSysid) {
+  /**
+   * COMMAND_ACK for a command this drone just processed, addressed back at the
+   * exact GCS system/component that sent the command — a real autopilot echoes
+   * the sender's ids, and a GCS on a non-190 component would otherwise miss its
+   * own ack.
+   *
+   * @param {number} command       the MAV_CMD being acked
+   * @param {number} result        MAV_RESULT
+   * @param {number} targetSysid   the command sender's system id
+   * @param {number} targetCompid  the command sender's component id
+   * @returns {Buffer}
+   */
+  encodeAck(command, result, targetSysid, targetCompid) {
     return this.encode('COMMAND_ACK', {
       command,
       result,
-      // Address the ack back at the GCS that sent the command.
       target_system: targetSysid || 255,
-      target_component: 190
+      target_component: targetCompid !== undefined ? targetCompid : 190
     });
   }
 
@@ -399,10 +409,11 @@ class VirtualFleet extends EventEmitter {
     }
     const targetSys = Number(msg.fields.target_system);
     const senderSys = msg.sysid;
+    const senderComp = msg.compid;
     const targets = targetSys === 0 ? this.drones : [this.byId.get(targetSys)].filter(Boolean);
     for (const d of targets) {
       const result = d.handleCommand(msg.name, msg.fields);
-      this._sendFrom(d, d.encodeAck(Number(msg.fields.command), result, senderSys));
+      this._sendFrom(d, d.encodeAck(Number(msg.fields.command), result, senderSys, senderComp));
       this.emit('command', { sysid: d.sysid, command: Number(msg.fields.command), result });
     }
   }

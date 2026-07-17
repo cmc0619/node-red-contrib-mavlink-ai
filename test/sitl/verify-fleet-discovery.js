@@ -15,6 +15,13 @@ const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
  *
  *   node test/sitl/verify-fleet-discovery.js [--port 14550] [--expect 3] [--timeout 30000]
  */
+
+/**
+ * Parse `--flag value` pairs into a plain object.
+ *
+ * @param {string[]} argv
+ * @returns {Object<string, string>}
+ */
 function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i += 1) {
