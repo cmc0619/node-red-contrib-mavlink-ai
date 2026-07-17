@@ -635,3 +635,33 @@ test('a UDP send whose callback never fires times out with UDP_SEND_TIMEOUT (#23
   t.after(() => clearInterval(keepAlive));
   await assert.rejects(() => transport.send(Buffer.from([1])), (e) => e.code === 'UDP_SEND_TIMEOUT');
 });
+
+test('a listener that stops the transport mid-emit cannot re-arm the reconnect timer (#272 review)', async () => {
+  /**
+   * emit() is synchronous, so a 'reconnecting' (or error) listener may call
+   * stop() while scheduleReconnect is still running. Without the _closing
+   * re-checks, the helper would install a fresh timer after teardown,
+   * leaving _reconnectTimer live past the close lifecycle.
+   */
+  const stopped = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0, reconnectDelayMs: 1 });
+  stopped.on('reconnecting', () => stopped.stop());
+  stopped._scheduleReconnect();
+  assert.strictEqual(stopped._reconnectTimer, null, 'no timer armed after a mid-emit stop()');
+
+  /** An error listener stopping the transport ends the retry loop the same way. */
+  const failing = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0, reconnectDelayMs: 1 });
+  failing.start = () => {
+    throw new Error('bind exploded');
+  };
+  failing.on('error', () => failing.stop());
+  failing._closing = false;
+  failing._scheduleReconnect();
+  await new Promise((r) => setTimeout(r, 30));
+  assert.strictEqual(failing._reconnectTimer, null, 'the failed-start retry loop ends once stopped');
+
+  /** And a stop() before any scheduling stays a no-op. */
+  const closed = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0, reconnectDelayMs: 1 });
+  await closed.stop();
+  closed._scheduleReconnect();
+  assert.strictEqual(closed._reconnectTimer, null, 'a closed transport never re-arms');
+});
