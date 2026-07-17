@@ -1984,11 +1984,6 @@ module.exports = function registerMavlinkAiConnection(RED) {
       node.subscriptions.dispatch(message);
       node.emitter.emit('message', message);
       logProtocolDebug(profile, 'recv', payload.name, header.sysid, header.compid);
-      const rawEvent = { topic: 'mavlink/raw', payload: packet.buffer };
-      if (origin) {
-        rawEvent.remote = origin;
-      }
-      node.emitter.emit('raw', rawEvent);
     }
 
     /**
@@ -2349,6 +2344,33 @@ module.exports = function registerMavlinkAiConnection(RED) {
         const e = toMavlinkError(err, 'TRANSPORT_ERROR');
         setStatus('error', e.message);
         node.emitter.emit('error', e);
+      });
+      /**
+       * A partial broadcast fan-out failure (#148) means some peers received a
+       * datagram and at least one did not — a silently half-dead fleet link.
+       * The transport emits it instead of erroring (the broadcast DID go out);
+       * surface it as a warning so an operator can see the degraded peer.
+       * Throttled to changes: broadcasts fire at heartbeat rate, so warn when
+       * the failing endpoint set changes or once a minute while it persists,
+       * not on every send.
+       */
+      let lastPartialKey = '';
+      let lastPartialAt = 0;
+      node._transport.on('sendPartialFailure', (info) => {
+        const key = (info.reasons || [])
+          .map((r) => (r && r.context ? `${r.context.address}:${r.context.port}` : String(r && r.message)))
+          .sort()
+          .join('|');
+        const now = Date.now();
+        if (key === lastPartialKey && now - lastPartialAt < 60000) {
+          return;
+        }
+        lastPartialKey = key;
+        lastPartialAt = now;
+        node.warn(
+          `mavlink-ai-connection '${node.name || node.id}': broadcast partially failed ` +
+            `(${info.failed}/${info.total} peers unreachable: ${key})`
+        );
       });
       node._transport.on('close', () => setStatus('closed', 'Transport closed'));
 

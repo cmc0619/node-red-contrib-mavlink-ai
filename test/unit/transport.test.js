@@ -171,10 +171,10 @@ test('udp-peer routes sends to the addressed sysid endpoint (#21)', () => {
   transport.learnedPeer = { address: '127.0.0.1', port: 22222 }; // vehicle 2 spoke last
 
   /** Addressed sends go to the owning endpoint, not the last sender. */
-  assert.deepStrictEqual(transport._target({ targetSystem: 1 }), { address: '127.0.0.1', port: 11111 });
-  assert.deepStrictEqual(transport._target({ targetSystem: 2 }), { address: '127.0.0.1', port: 22222 });
+  assert.deepStrictEqual(transport._targets({ targetSystem: 1 }), [{ address: '127.0.0.1', port: 11111 }]);
+  assert.deepStrictEqual(transport._targets({ targetSystem: 2 }), [{ address: '127.0.0.1', port: 22222 }]);
   /** An unknown *specific* sysid falls back to the learned fallback peer. */
-  assert.deepStrictEqual(transport._target({ targetSystem: 9 }), { address: '127.0.0.1', port: 22222 });
+  assert.deepStrictEqual(transport._targets({ targetSystem: 9 }), [{ address: '127.0.0.1', port: 22222 }]);
   /** Broadcast (0) and untargeted sends fan out to every known peer (#148). */
   const bothPeers = [
     { address: '127.0.0.1', port: 11111 },
@@ -183,10 +183,10 @@ test('udp-peer routes sends to the addressed sysid endpoint (#21)', () => {
   assert.deepStrictEqual(transport._targets({ targetSystem: 0 }), bothPeers);
   assert.deepStrictEqual(transport._targets(), bothPeers);
 
-  // A manual remote override beats everything.
+  /** A manual remote override beats everything. */
   transport.remoteHost = '10.0.0.1';
   transport.remotePort = 14550;
-  assert.deepStrictEqual(transport._target({ targetSystem: 1 }), { address: '10.0.0.1', port: 14550 });
+  assert.deepStrictEqual(transport._targets({ targetSystem: 1 }), [{ address: '10.0.0.1', port: 14550 }]);
 });
 
 test('udp-peer receipt commits nothing; confirmPeer commits the validated endpoint (#21, #85, #239)', async () => {
@@ -212,7 +212,7 @@ test('udp-peer receipt commits nothing; confirmPeer commits the validated endpoi
   /** Receipt alone commits nothing (#85): no fallback peer, no sysid mapping. */
   assert.strictEqual(transport.learnedPeer, null);
   assert.strictEqual(transport.peersBySysid.size, 0);
-  assert.strictEqual(transport._target(), null);
+  assert.deepStrictEqual(transport._targets(), []);
 
   /**
    * The connection confirms after validation, passing each validated packet's
