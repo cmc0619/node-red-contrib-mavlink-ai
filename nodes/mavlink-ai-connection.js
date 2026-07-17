@@ -330,13 +330,9 @@ module.exports = function registerMavlinkAiConnection(RED) {
      */
     node.localIdentity = config.localIdentity ? RED.nodes.getNode(config.localIdentity) : null;
     if (!isIdentityNode(node.localIdentity)) {
-      const legacyHint = config.profile && config.localIdentity === undefined
-        ? ' (Flows created before v3 stored the local identity on the profile; that coupling was removed — ' +
-          'create a Local Identity carrying the old profile’s Source SysID/CompID and signing settings.)'
-        : '';
       const message =
         `Connection '${node.name || node.id}' has no Local Identity. Select one in Connection > Local Identity. ` +
-        `If none exists, create a GCS, Companion, or Custom Local Identity first.${legacyHint}`;
+        'If none exists, create a GCS, Companion, or Custom Local Identity first.';
       fatal('LOCAL_IDENTITY_REQUIRED', message);
       if (!startInactive) {
         startInactive = { code: 'LOCAL_IDENTITY_REQUIRED', message };
@@ -541,31 +537,6 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
-     * The vehicle-profile reference carried on an outbound message. The
-     * canonical field is `vehicleProfile` (#228); `profile` is accepted as a
-     * documented deprecated alias for pre-v3 flows. Setting both to different
-     * values is a conflict — silently picking one could encode with the wrong
-     * dialect while claiming the other.
-     *
-     * @param {object} message
-     * @returns {*} the reference (may be undefined/blank for "use default")
-     * @throws {MavlinkError} VEHICLE_PROFILE_CONFLICT
-     */
-    function vehicleProfileRef(message) {
-      const canonical = message.vehicleProfile;
-      const legacy = message.profile;
-      const has = (v) => v !== undefined && v !== null && v !== '';
-      if (has(canonical) && has(legacy) && canonical !== legacy) {
-        throw new MavlinkError(
-          'VEHICLE_PROFILE_CONFLICT',
-          `Outbound message sets both vehicleProfile ('${canonical}') and the deprecated profile alias ('${legacy}') ` +
-            'to different values. Set only vehicleProfile.'
-        );
-      }
-      return has(canonical) ? canonical : legacy;
-    }
-
-    /**
      * Resolve the effective Vehicle Profile for an outbound message. No
      * reference means the connection's default profile. An explicit reference
      * must resolve to a real, valid profile config node — silently falling
@@ -575,14 +546,14 @@ module.exports = function registerMavlinkAiConnection(RED) {
      *
      * @param {string|object} [profileRef]
      * @returns {object} a valid profile config node
-     * @throws {MavlinkError} PROFILE_UNRESOLVED | PROFILE_AMBIGUOUS | PROFILE_INVALID
+     * @throws {MavlinkError} PROFILE_UNRESOLVED | PROFILE_INVALID
      */
     function resolveOutboundProfile(profileRef) {
       if (profileRef === undefined || profileRef === null || profileRef === '') {
         return node.profile;
       }
       // resolveProfile() is strict: it returns a real profile config node or
-      // throws PROFILE_UNRESOLVED / PROFILE_AMBIGUOUS. The only remaining check
+      // throws PROFILE_UNRESOLVED. The only remaining check
       // here is whether that resolved profile's dialect actually loaded.
       const profile = node.resolveProfile(profileRef);
       if (!profile.isValid()) {
@@ -598,24 +569,15 @@ module.exports = function registerMavlinkAiConnection(RED) {
 
     // --- local identity resolution (#228) -------------------------------------
     /**
-     * Memoized identity name -> config-node id resolutions, mirroring
-     * profileByName below: successful unique-name lookups only, re-verified on
-     * every use, cleared on every deploy.
-     */
-    const identityByName = new Map();
-
-    /**
      * Resolve a Local Identity reference to an identity config node. The
-     * canonical reference is the config-node id; a plain name is accepted when
-     * exactly one identity config node has that name.
+     * canonical reference is the config-node id.
      *
      * This resolves *existence* only — whether the identity may transmit on
      * this connection is decided by {@link node.resolveOutboundIdentity}.
      *
-     * @param {string|object} ref  config-node id, unique identity name, or an
-     *   identity node object
+     * @param {string|object} ref  config-node id or an identity node object
      * @returns {object} an identity config node
-     * @throws {MavlinkError} LOCAL_IDENTITY_UNRESOLVED | LOCAL_IDENTITY_AMBIGUOUS
+     * @throws {MavlinkError} LOCAL_IDENTITY_UNRESOLVED
      */
     node.resolveLocalIdentity = (ref) => {
       if (!ref) {
@@ -634,38 +596,9 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (isIdentityNode(byId)) {
         return byId;
       }
-      if (identityByName.has(ref)) {
-        const cached = RED.nodes.getNode(identityByName.get(ref));
-        if (isIdentityNode(cached) && cached.name === ref) {
-          return cached;
-        }
-        identityByName.delete(ref);
-      }
-      const matchIds = [];
-      if (typeof RED.nodes.eachNode === 'function') {
-        RED.nodes.eachNode((n) => {
-          if (n.type === 'mavlink-ai-local-identity' && n.name === ref) {
-            matchIds.push(n.id);
-          }
-        });
-      } else if (node.localIdentity && node.localIdentity.name === ref) {
-        matchIds.push(node.localIdentity.id);
-      }
-      if (matchIds.length > 1) {
-        throw new MavlinkError(
-          'LOCAL_IDENTITY_AMBIGUOUS',
-          `The requested Local Identity name '${ref}' matches ${matchIds.length} config nodes. ` +
-            'Use the config-node ID or rename the identities so each name is unique.'
-        );
-      }
-      const byName = matchIds.length === 1 ? RED.nodes.getNode(matchIds[0]) : null;
-      if (isIdentityNode(byName)) {
-        identityByName.set(ref, byName.id);
-        return byName;
-      }
       throw new MavlinkError(
         'LOCAL_IDENTITY_UNRESOLVED',
-        `Local Identity '${ref}' does not match any mavlink-ai-local-identity config node (by id or unique name).`
+        `Local Identity '${ref}' does not match a mavlink-ai-local-identity config-node ID.`
       );
     };
 
@@ -697,7 +630,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * Resolution order — and, critically, what it never does:
      *
      *  1. No explicit reference -> the connection's default Local Identity.
-     *  2. An explicit reference resolves strictly (id, unique name, or node) —
+     *  2. An explicit reference resolves strictly (id or node) —
      *     never falls back to the default on failure.
      *  3. The resolved identity must be attached to this connection: the
      *     default, or an additional binding with outbound permission while
@@ -706,8 +639,8 @@ module.exports = function registerMavlinkAiConnection(RED) {
      *
      * @param {string|object} [ref]  message.localIdentity
      * @returns {object} a valid, attached identity config node
-     * @throws {MavlinkError} LOCAL_IDENTITY_UNRESOLVED | LOCAL_IDENTITY_AMBIGUOUS |
-     *   LOCAL_IDENTITY_INVALID | LOCAL_IDENTITY_NOT_ATTACHED | MULTI_IDENTITY_DISABLED
+     * @throws {MavlinkError} LOCAL_IDENTITY_UNRESOLVED | LOCAL_IDENTITY_INVALID |
+     *   LOCAL_IDENTITY_NOT_ATTACHED | MULTI_IDENTITY_DISABLED
      */
     node.resolveOutboundIdentity = (ref) => {
       /**
@@ -900,33 +833,18 @@ module.exports = function registerMavlinkAiConnection(RED) {
 
     // --- routing -------------------------------------------------------------
     /**
-     * Memoized legacy name -> profile config-node *id* resolutions (a name
-     * lookup scans all config nodes; packets arrive at wire rate). The cache
-     * stores the resolved id, never the profile object: every use re-resolves
-     * the id through RED.nodes.getNode() and re-checks the name, so a profile
-     * that was deleted, renamed, disabled, or recreated stops resolving to its
-     * stale object immediately (#118). Successful lookups only — a profile
-     * deployed later must still become resolvable — and the whole cache is
-     * cleared on every flows:started so a name that became ambiguous (a second
-     * profile now shares it) is re-scanned rather than served from a stale
-     * unique result.
-     */
-    const profileByName = new Map();
-
-    /**
      * Resolve a profile reference to a profile config node. The canonical
      * reference in route entries and internal messages is the profile
-     * config-node id; a plain profile name is accepted for backward
-     * compatibility when exactly one profile config node has that name.
+     * config-node id.
      *
      * An explicitly requested profile that cannot be resolved throws — never
      * falls back to the default profile (a routed packet must not be decoded
      * or encoded with a dialect other than the one its route names).
      *
-     * @param {string|object} ref  config-node id, unique profile name, or a
-     *   profile object; blank means the connection's default profile
+     * @param {string|object} ref  config-node id or profile object; blank means
+     *   the connection's default profile
      * @returns {object} a profile config node
-     * @throws {MavlinkError} PROFILE_UNRESOLVED | PROFILE_AMBIGUOUS
+     * @throws {MavlinkError} PROFILE_UNRESOLVED
      */
     node.resolveProfile = (ref) => {
       if (!ref) {
@@ -945,46 +863,9 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (isProfileNode(byId)) {
         return byId;
       }
-      /**
-       * Legacy name reference (flows authored before route entries carried
-       * config-node ids). Resolve only an unambiguous name.
-       *
-       * A cached id is only trusted after re-resolving it and confirming the
-       * currently registered node still carries this name — a deleted or
-       * renamed profile must not keep resolving to its old object (#118). A
-       * stale entry is dropped so the scan below runs fresh.
-       */
-      if (profileByName.has(ref)) {
-        const cached = RED.nodes.getNode(profileByName.get(ref));
-        if (isProfileNode(cached) && cached.name === ref) {
-          return cached;
-        }
-        profileByName.delete(ref);
-      }
-      const matchIds = [];
-      if (typeof RED.nodes.eachNode === 'function') {
-        RED.nodes.eachNode((n) => {
-          if (n.type === 'mavlink-ai-vehicle' && n.name === ref) {
-            matchIds.push(n.id);
-          }
-        });
-      } else if (node.profile && node.profile.name === ref) {
-        matchIds.push(node.profile.id);
-      }
-      if (matchIds.length > 1) {
-        throw new MavlinkError(
-          'PROFILE_AMBIGUOUS',
-          `Vehicle Profile name '${ref}' matches ${matchIds.length} profile config nodes; reference the profile by config-node id.`
-        );
-      }
-      const byName = matchIds.length === 1 ? RED.nodes.getNode(matchIds[0]) : null;
-      if (isProfileNode(byName)) {
-        profileByName.set(ref, byName.id);
-        return byName;
-      }
       throw new MavlinkError(
         'PROFILE_UNRESOLVED',
-        `Vehicle Profile '${ref}' does not match any mavlink-ai-vehicle config node (by id or unique name).`
+        `Vehicle Profile '${ref}' does not match a mavlink-ai-vehicle config-node ID.`
       );
     };
 
@@ -1157,14 +1038,13 @@ module.exports = function registerMavlinkAiConnection(RED) {
       const codec = buildCodec(newProfile);
       node.profile = newProfile;
       node._codec = codec;
-      // Drop every cached profile-dependent artifact so it is rebuilt against
-      // the new dialect: the per-profile codec cache (re-seed the default), the
-      // memoized legacy name -> profile lookups, and — via _resetDecoder — the
-      // packet decoder, whose merged CRC table must now cover the new dialect's
-      // message ids. The decoder is recreated lazily on the next packet.
+      // Drop every profile-dependent artifact so it is rebuilt against the new
+      // dialect: the per-profile codec cache (re-seed the default), and — via
+      // _resetDecoder — the packet decoder, whose merged CRC table must now
+      // cover the new dialect's message ids. The decoder is recreated lazily on
+      // the next packet.
       node._codecByProfile.clear();
       node._codecByProfile.set(newProfile.id, { profile: newProfile, codec });
-      profileByName.clear();
       node._router.defaultProfile = newProfile;
       if (typeof node._resetDecoder === 'function') {
         node._resetDecoder();
@@ -1267,8 +1147,6 @@ module.exports = function registerMavlinkAiConnection(RED) {
        */
       node._codecByProfile.clear();
       node._activeProfiles = new Set();
-      profileByName.clear();
-      identityByName.clear();
       loggedRouteProblems.clear();
       node.locks.clear();
       destroyDecoders();
@@ -1319,8 +1197,6 @@ module.exports = function registerMavlinkAiConnection(RED) {
       node._codecByProfile.clear();
       node._codecByProfile.set(profile.id, { profile, codec });
       node._router.defaultProfile = profile;
-      profileByName.clear();
-      identityByName.clear();
       loggedRouteProblems.clear();
       node._inactiveError = null;
       node._active = true;
@@ -1399,7 +1275,6 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (node._active) {
         if (identityChanged) {
           node.localIdentity = resolvedIdentity;
-          identityByName.clear();
         }
         const collision = validateIdentityBindings(true);
         if (collision) {
@@ -1503,12 +1378,6 @@ module.exports = function registerMavlinkAiConnection(RED) {
        * @returns {void}
        */
       const onFlowsStarted = () => {
-        /**
-         * Re-scan legacy name lookups so a deleted/renamed/now-ambiguous name
-         * never resolves to a stale object (#118).
-         */
-        profileByName.clear();
-        identityByName.clear();
         /** Fail closed / reactivate / hot-reload the required config (#116, #228). */
         reconcileRequiredConfig();
         if (!node._active) {
@@ -1589,8 +1458,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * identity of the resolved Local Identity (#228).
      *
      * @param {object} message  { name, fields, vehicleProfile?, localIdentity?,
-     *   target_system?, target_component? } — `profile` is accepted as a
-     *   deprecated alias for `vehicleProfile`.
+     *   target_system?, target_component? }
      * @param {object} [options]  { priority, coalesceKey } — coalesceKey lets a
      *   periodic sender (e.g. a heartbeat) supersede its own still-queued copy
      *   rather than accumulate behind a slow transport.
@@ -1610,7 +1478,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       // as the default.
       let profile;
       try {
-        profile = resolveOutboundProfile(vehicleProfileRef(message));
+        profile = resolveOutboundProfile(message.vehicleProfile);
       } catch (err) {
         return Promise.reject(toMavlinkError(err, 'PROFILE_UNRESOLVED'));
       }
@@ -2510,7 +2378,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
 /**
  * Parse the additional-identity binding list (#228). Accepts an array (tests,
  * programmatic configs) or the JSON string the editor persists. Each entry:
- * { identity: <config-node id or unique name>, allowOutbound?: boolean,
+ * { identity: <config-node id>, allowOutbound?: boolean,
  * heartbeat?: boolean, heartbeatIntervalMs?: number }.
  *
  * @param {*} raw
