@@ -6,10 +6,9 @@ const {
   metersToLatLonDelta,
   offsetLatLon,
   nedOffsetToGlobal,
-  globalToNedOffset,
-  degToDegE7,
-  degE7ToDeg
+  globalToNedOffset
 } = require('../../lib/swarm/coordinate-frames');
+const { degToDegE7, degE7ToDeg } = require('../../lib/util/geo');
 
 test('meters north maps to latitude delta independent of longitude (#46)', () => {
   const { dLat, dLon } = metersToLatLonDelta(111, 0, 39);

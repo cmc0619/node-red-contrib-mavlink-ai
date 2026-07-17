@@ -5,6 +5,7 @@ const { firstDefined, toInt, toNum, toBool, parseJsonObjectConfig } = require('.
 const { registerEditorApi } = require('../lib/editor-api');
 const { resolveFlightMode, splitPx4CustomMode } = require('../lib/command/flight-modes');
 const { CommandSend } = require('../lib/command/command-workflow');
+const { degToDegE7 } = require('../lib/util/geo');
 const { PRIORITY, commandPriorityFor } = require('../lib/runtime/send-priority');
 const { watchConfigBadge } = require('../lib/util/node-lifecycle');
 const {
@@ -393,8 +394,8 @@ module.exports = function registerMavlinkAiCommand(RED) {
         // Coerce to numbers here (not just validate): the raw input may be a
         // numeric string, and the emitted payload should carry real numbers
         // for downstream consumers rather than relying on later resolution.
-        const x = Number(firstDefined(merged.x, latDeg !== undefined ? Math.round(Number(latDeg) * 1e7) : undefined, 0));
-        const y = Number(firstDefined(merged.y, lonDeg !== undefined ? Math.round(Number(lonDeg) * 1e7) : undefined, 0));
+        const x = Number(firstDefined(merged.x, latDeg !== undefined ? degToDegE7(Number(latDeg)) : undefined, 0));
+        const y = Number(firstDefined(merged.y, lonDeg !== undefined ? degToDegE7(Number(lonDeg)) : undefined, 0));
         const z = Number(firstDefined(merged.z, merged.alt, merged.param7, configParams.param7, 0));
         if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
           return sendError(msg, send, done, 'BAD_COORDINATES',
@@ -419,10 +420,10 @@ module.exports = function registerMavlinkAiCommand(RED) {
         // COMMAND_INT carries positional params in x/y/z: param5/6 are lat/lon
         // scaled to degE7, param7 is z unscaled. Map any a preset builder set.
         if (built.param5 !== undefined) {
-          fields.x = Math.round(Number(built.param5) * 1e7);
+          fields.x = degToDegE7(Number(built.param5));
         }
         if (built.param6 !== undefined) {
-          fields.y = Math.round(Number(built.param6) * 1e7);
+          fields.y = degToDegE7(Number(built.param6));
         }
         if (built.param7 !== undefined) {
           fields.z = built.param7;

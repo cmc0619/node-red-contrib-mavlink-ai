@@ -61,6 +61,29 @@ module.exports = function registerMavlinkAiParam(RED) {
         }));
       }
 
+      /**
+       * The single error exit: red badge, structured §14.5 payload, delivered
+       * exactly once via finishError (#89). Every failure below leaves through
+       * this one door, so there is one place to change how param errors
+       * leave the node instead of copies that can drift apart.
+       *
+       * @param {*} err  the thrown/failed value
+       * @param {string} fallbackCode  code when err carries none
+       * @param {string} [badgeText]  status badge override (defaults to the code)
+       * @returns {void}
+       */
+      const fail = (err, fallbackCode, badgeText) => {
+        const e = toMavlinkError(err, fallbackCode);
+        node.status({ fill: 'red', shape: 'ring', text: badgeText || e.code });
+        return finishError(node, msg, send, done, errorPayload({
+          node: 'mavlink-ai-param',
+          connection: node.connection.name,
+          code: e.code,
+          message: e.message,
+          context: e.context
+        }));
+      };
+
       const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
       const action = msg.action || payload.action || node.action;
 
@@ -76,15 +99,7 @@ module.exports = function registerMavlinkAiParam(RED) {
           targetComponent: payload.target_component
         }));
       } catch (err) {
-        const e = toMavlinkError(err, 'PROFILE_UNRESOLVED');
-        node.status({ fill: 'red', shape: 'ring', text: e.code });
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-param',
-          connection: node.connection.name,
-          code: e.code,
-          message: e.message,
-          context: e.context
-        }));
+        return fail(err, 'PROFILE_UNRESOLVED');
       }
       const bundle = profile && profile.getDialect ? profile.getDialect() : null;
 
@@ -93,15 +108,7 @@ module.exports = function registerMavlinkAiParam(RED) {
         validateTargetSystem(targetSystem);
         validateTargetComponent(targetComponent);
       } catch (err) {
-        const e = toMavlinkError(err, 'INVALID_FIELD');
-        node.status({ fill: 'red', shape: 'ring', text: e.code });
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-param',
-          connection: node.connection.name,
-          code: e.code,
-          message: e.message,
-          context: e.context
-        }));
+        return fail(err, 'INVALID_FIELD');
       }
 
       /**
@@ -129,15 +136,7 @@ module.exports = function registerMavlinkAiParam(RED) {
       try {
         lock = node.connection.acquireLock(lockKey, node.id);
       } catch (err) {
-        const e = toMavlinkError(err, 'LOCK_HELD');
-        node.status({ fill: 'red', shape: 'ring', text: 'busy' });
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-param',
-          connection: node.connection.name,
-          code: e.code,
-          message: e.message,
-          context: e.context
-        }));
+        return fail(err, 'LOCK_HELD', 'busy');
       }
 
       const onProgress = (progress) => {
@@ -216,15 +215,7 @@ module.exports = function registerMavlinkAiParam(RED) {
         }
       } catch (err) {
         lock.release();
-        const e = toMavlinkError(err, 'BAD_PARAM_REQUEST');
-        node.status({ fill: 'red', shape: 'ring', text: e.code });
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-param',
-          connection: node.connection.name,
-          code: e.code,
-          message: e.message,
-          context: e.context
-        }));
+        return fail(err, 'BAD_PARAM_REQUEST');
       }
 
       activeWorkflows.add(workflow);
@@ -242,15 +233,7 @@ module.exports = function registerMavlinkAiParam(RED) {
           /** Aborted by close: no output from an obsolete node. */
           return done();
         }
-        const e = toMavlinkError(err, 'PARAM_FAILED');
-        node.status({ fill: 'red', shape: 'ring', text: e.code });
-        finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-param',
-          connection: node.connection.name,
-          code: e.code,
-          message: e.message,
-          context: e.context
-        }));
+        fail(err, 'PARAM_FAILED');
       } finally {
         /**
          * Exactly-once release on every path (#150). The old success/catch pair
