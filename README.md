@@ -523,23 +523,19 @@ fields accept a decimal string, a safe integer, or a `BigInt`. See `DESIGN.md`
 Vehicle Profile references are canonical **by config-node id**. Outbound
 `payload.vehicleProfile` (set by the build/command/fan-out nodes) carries the
 Vehicle Profile config-node id the connection resolves a codec by;
-`vehicleProfileName` is the display name. The field `profile` remains a
-documented, temporary compatibility alias for `vehicleProfile` (setting both to
-different values is a `VEHICLE_PROFILE_CONFLICT`). Decoded payloads keep the
-matched profile's display name in `payload.profile` and add the canonical
+`vehicleProfileName` is the display name. Decoded payloads keep the matched
+profile's display name in `payload.profile` and add the canonical
 `payload.profile_id`. An outbound message that explicitly references a Vehicle
 Profile the connection cannot resolve is rejected with `PROFILE_UNRESOLVED` — it
-is never silently encoded with the default profile. A plain profile name is
-accepted for backward compatibility only while exactly one profile config node
-has that name; an ambiguous name is an error.
+is never silently encoded with the default profile.
 
 The **local identity** an outbound message transmits as is separate from the
 Vehicle Profile (issue #228). Omit it and the message uses the connection's
-required default identity; set `payload.localIdentity` to a config-node id (or
-unique name) to transmit as an *attached* additional identity. A Vehicle Profile
-never selects the local identity, and an unattached/ambiguous/disabled identity
-request fails closed (`LOCAL_IDENTITY_NOT_ATTACHED`, `LOCAL_IDENTITY_AMBIGUOUS`,
-`MULTI_IDENTITY_DISABLED`) rather than transmitting as the wrong participant.
+required default identity; set `payload.localIdentity` to a config-node id to
+transmit as an *attached* additional identity. A Vehicle Profile never selects
+the local identity, and an unattached/disabled identity request fails closed
+(`LOCAL_IDENTITY_NOT_ATTACHED`, `MULTI_IDENTITY_DISABLED`) rather than
+transmitting as the wrong participant.
 
 The same rule applies to **routes**: in routed mode each route entry maps a
 `sysid`/`compid` pattern to a profile config node, picked in the connection
