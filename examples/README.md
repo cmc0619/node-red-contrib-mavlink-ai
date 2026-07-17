@@ -52,6 +52,7 @@ Import these flows from Node-RED using **Menu → Import → Examples → node-r
 ## 08 SITL
 
 - `px4-sitl-telemetry.json` — Broad PX4 or ArduPilot SITL telemetry and error inspection.
+- `multi-drone-fleet-wringer.json` — Discover, arm, take off, and reshuffle a whole fleet on one routed connection, with a live inter-drone separation monitor. Pairs with the virtual multi-drone SITL in `test/sitl/` (`./test/sitl/start-fleet.sh` or `docker compose -f test/sitl/docker-compose.yml up`).
 
 ## 09 Observability and operator tools
 

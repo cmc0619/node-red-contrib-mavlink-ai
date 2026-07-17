@@ -1,0 +1,48 @@
+# Multi-drone MAVLink SITL fleet — one container per drone, each a distinct
+# system id, all streaming to a single GCS/Node-RED udp-peer on the host.
+#
+#   docker compose -f test/sitl/docker-compose.yml up --build
+#
+# Import examples/08-sitl/multi-drone-fleet-wringer.json into Node-RED first: it
+# binds udp-peer 0.0.0.0:14550 and routes each system id to its own profile.
+# By default the drones reach the host at host.docker.internal:14550; override
+# with GCS_HOST / GCS_PORT in your shell if Node-RED runs elsewhere.
+#
+# This is a development helper (the fleet is the Node engine in virtual-fleet.js,
+# not PX4/ArduPilot). See README.md for the real-SITL Docker path.
+
+x-drone: &drone
+  build:
+    # Build from the repo root so the image can copy lib/ and test/sitl/.
+    context: ../..
+    dockerfile: test/sitl/Dockerfile
+  # host.docker.internal resolves to the host on Docker Desktop; on Linux the
+  # host-gateway mapping below makes it resolve too.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  environment: &drone-env
+    GCS_HOST: ${GCS_HOST:-host.docker.internal}
+    GCS_PORT: ${GCS_PORT:-14550}
+    FLEET_COUNT: 1
+    ORIGIN_LAT: 39.1
+    ORIGIN_LON: -75.1
+    ORIGIN_ALT: 40
+    DIALECT: ardupilotmega
+  restart: unless-stopped
+
+services:
+  drone-1:
+    <<: *drone
+    environment:
+      <<: *drone-env
+      SYSID: 1
+  drone-2:
+    <<: *drone
+    environment:
+      <<: *drone-env
+      SYSID: 2
+  drone-3:
+    <<: *drone
+    environment:
+      <<: *drone-env
+      SYSID: 3
