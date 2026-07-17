@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { toInt, toNum, toBool, parseList, parseIdList, isWildcard, idAccepted } = require('../../lib/util/validation');
+const { toInt, toNum, toBool, parseList, isWildcard, idAccepted } = require('../../lib/util/validation');
 
 test('toInt coerces and falls back', () => {
   assert.strictEqual(toInt('42', 0), 42);
@@ -42,12 +42,6 @@ test('toBool handles node-red string booleans', () => {
 test('parseList splits on commas and whitespace', () => {
   assert.deepStrictEqual(parseList('HEARTBEAT, ATTITUDE  GPS'), ['HEARTBEAT', 'ATTITUDE', 'GPS']);
   assert.deepStrictEqual(parseList(''), []);
-});
-
-test('parseIdList treats wildcards as no-constraint', () => {
-  assert.deepStrictEqual(parseIdList('1,2,3'), [1, 2, 3]);
-  assert.deepStrictEqual(parseIdList('*'), []);
-  assert.deepStrictEqual(parseIdList('any'), []);
 });
 
 test('isWildcard and idAccepted', () => {

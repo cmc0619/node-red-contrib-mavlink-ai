@@ -144,8 +144,9 @@ module.exports = function registerMavlinkAiConnection(RED) {
     /**
      * Accept-filter ids are parsed strictly (#193): a typo like "1O" or a
      * mixed "1,2x" must fail the connection closed, not silently widen the
-     * accept filter to everything (parseIdList drops bad tokens → []  = accept
-     * all). The fatal() below turns an invalid list into an inert connection.
+     * accept filter to everything (a fail-open parse drops bad tokens → [] =
+     * accept all). The fatal() below turns an invalid list into an inert
+     * connection.
      */
     const acceptedSysids = parseIdListStrict(config.acceptedSysids);
     const acceptedCompids = parseIdListStrict(config.acceptedCompids);

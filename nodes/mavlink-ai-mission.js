@@ -82,6 +82,29 @@ module.exports = function registerMavlinkAiMission(RED) {
         }));
       }
 
+      /**
+       * The single error exit: red badge, structured §14.5 payload, delivered
+       * exactly once via finishError (#89). Every failure below leaves through
+       * this one door, so there is one place to change how mission errors
+       * leave the node instead of copies that can drift apart.
+       *
+       * @param {*} err  the thrown/failed value
+       * @param {string} fallbackCode  code when err carries none
+       * @param {string} [badgeText]  status badge override (defaults to the code)
+       * @returns {void}
+       */
+      const fail = (err, fallbackCode, badgeText) => {
+        const e = toMavlinkError(err, fallbackCode);
+        node.status({ fill: 'red', shape: 'ring', text: badgeText || e.code });
+        return finishError(node, msg, send, done, errorPayload({
+          node: 'mavlink-ai-mission',
+          connection: node.connection.name,
+          code: e.code,
+          message: e.message,
+          context: e.context
+        }));
+      };
+
       const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
       // Aigen-style topic aliases (#56): `upload_mission` etc. select the action
       // without an explicit payload.action. Explicit action still wins.
@@ -99,15 +122,7 @@ module.exports = function registerMavlinkAiMission(RED) {
           targetComponent: payload.target_component
         }));
       } catch (err) {
-        const e = toMavlinkError(err, 'PROFILE_UNRESOLVED');
-        node.status({ fill: 'red', shape: 'ring', text: e.code });
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-mission',
-          connection: node.connection.name,
-          code: e.code,
-          message: e.message,
-          context: e.context
-        }));
+        return fail(err, 'PROFILE_UNRESOLVED');
       }
 
       /**
@@ -125,15 +140,7 @@ module.exports = function registerMavlinkAiMission(RED) {
       try {
         missionTypeNum = missionTypeToNumber(missionTypeName, bundle ? bundle.enums : null);
       } catch (err) {
-        const e = toMavlinkError(err, 'BAD_MISSION_TYPE');
-        node.status({ fill: 'red', shape: 'ring', text: e.code });
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-mission',
-          connection: node.connection.name,
-          code: e.code,
-          message: e.message,
-          context: e.context
-        }));
+        return fail(err, 'BAD_MISSION_TYPE');
       }
       const useInt = (defaults.preferredMissionItemType || 'MISSION_ITEM_INT') === 'MISSION_ITEM_INT';
 
@@ -144,15 +151,7 @@ module.exports = function registerMavlinkAiMission(RED) {
         validateTargetSystem(targetSystem);
         validateTargetComponent(targetComponent);
       } catch (err) {
-        const e = toMavlinkError(err, 'INVALID_FIELD');
-        node.status({ fill: 'red', shape: 'ring', text: e.code });
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-mission',
-          connection: node.connection.name,
-          code: e.code,
-          message: e.message,
-          context: e.context
-        }));
+        return fail(err, 'INVALID_FIELD');
       }
 
       /**
@@ -200,15 +199,7 @@ module.exports = function registerMavlinkAiMission(RED) {
           resolveUploadItems(payload, { allowEmpty });
           uploadItems = validateMissionItems(normalizeUploadItems(payload), bundle ? bundle.enums : null);
         } catch (err) {
-          const e = toMavlinkError(err, 'INVALID_FIELD');
-          node.status({ fill: 'red', shape: 'ring', text: e.code });
-          return finishError(node, msg, send, done, errorPayload({
-            node: 'mavlink-ai-mission',
-            connection: node.connection.name,
-            code: e.code,
-            message: e.message,
-            context: e.context
-          }));
+          return fail(err, 'INVALID_FIELD');
         }
       }
 
@@ -217,15 +208,7 @@ module.exports = function registerMavlinkAiMission(RED) {
       try {
         lock = node.connection.acquireLock(lockKey, node.id);
       } catch (err) {
-        const e = toMavlinkError(err, 'LOCK_HELD');
-        node.status({ fill: 'red', shape: 'ring', text: 'busy' });
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-mission',
-          connection: node.connection.name,
-          code: e.code,
-          message: e.message,
-          context: e.context
-        }));
+        return fail(err, 'LOCK_HELD', 'busy');
       }
 
       const onProgress = (progress) => {
@@ -310,15 +293,7 @@ module.exports = function registerMavlinkAiMission(RED) {
           /** Aborted by close: no output from an obsolete node. */
           return done();
         }
-        const e = toMavlinkError(err, 'MISSION_FAILED');
-        node.status({ fill: 'red', shape: 'ring', text: e.code });
-        finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-mission',
-          connection: node.connection.name,
-          code: e.code,
-          message: e.message,
-          context: e.context
-        }));
+        fail(err, 'MISSION_FAILED');
       } finally {
         /**
          * Exactly-once release on every path (#150). Releasing in both the
