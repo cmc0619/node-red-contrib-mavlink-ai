@@ -281,3 +281,17 @@ test('mission node rejects a broadcast target_system before locking/sending (#19
   assert.strictEqual(err.payload.code, 'BROADCAST_NO_ACK');
   assert.strictEqual(conn.sent.length, 0, 'no mission message was sent to the broadcast target');
 });
+
+test('mission node reports an unresolved Local Identity on its error output', async () => {
+  const { RED, conn, node } = setupWithSends();
+  conn.resolveOutboundIdentity = () => {
+    throw Object.assign(new Error('Requested Local Identity does not exist.'), { code: 'LOCAL_IDENTITY_UNRESOLVED' });
+  };
+
+  const { collected, err } = await RED.inject(node, { payload: { action: 'clear', localIdentity: 'missing' } });
+  assert.strictEqual(err, undefined, 'the structured error output must not also call done(err)');
+  assert.strictEqual(collected.length, 1);
+  assert.strictEqual(collected[0][2].topic, 'mavlink/error');
+  assert.strictEqual(collected[0][2].payload.code, 'LOCAL_IDENTITY_UNRESOLVED');
+  assert.strictEqual(conn.sent.length, 0, 'no mission message is sent when identity resolution fails');
+});
