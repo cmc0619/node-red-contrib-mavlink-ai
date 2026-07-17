@@ -27,10 +27,10 @@ const { enc } = require('../helpers/v3-config');
  *    connection. The acceptance criteria that matter are then observable
  *    externally: the UDP port is released and re-bindable, and a deactivated
  *    connection's sends reject.
- *  - ROUTED profiles (embedded in serialized `routeTable` JSON) and legacy
- *    name references are invisible to Node-RED, so the connection is left
- *    running and MUST reconcile them itself (#117, #118). Here the same
- *    connection instance survives the deploy and applies the change.
+ *  - ROUTED profiles embedded in serialized `routeTable` JSON are invisible to
+ *    Node-RED, so the connection is left running and MUST reconcile them
+ *    itself (#117, #118). Here the same connection instance survives the
+ *    deploy and applies the change.
  *
  * UDP cleanup is proven by binding a second socket to the same port after a
  * removal/deactivation — not by inspecting internal state.
@@ -319,10 +319,9 @@ describe('Node-RED deploy lifecycle (#119)', () => {
     assert.strictEqual(err.payload.context.profile, 'A');
   });
 
-  it('stops resolving a renamed legacy name-referenced routed profile (#118)', async () => {
+  it('keeps resolving a routed profile by id after its display name changes (#118)', async () => {
     const port = await freeUdpPort();
-    /** The route references the profile by NAME (legacy form), not by id. */
-    const routes = [{ sysid: 1, compid: '*', profile: 'Ardu' }];
+    const routes = [{ sysid: 1, compid: '*', profile: 'pa' }];
     const flow = [
       identityConfig(),
       profileConfig('p_def', 'Def', 'minimal'),
@@ -331,11 +330,11 @@ describe('Node-RED deploy lifecycle (#119)', () => {
     ];
     await helper.load([connectionNode, profileNode, identityNode], flow);
     const c1 = helper.getNode('c1');
-    assert.strictEqual(c1.resolveProfile('Ardu'), helper.getNode('pa'));
+    assert.strictEqual(c1.resolveProfile('pa'), helper.getNode('pa'));
 
     /**
      * Rename the profile (same id, new name) via a 'nodes' deploy. The connection
-     * survives; the old name must stop resolving and the new name must resolve.
+     * survives because the route continues to reference the canonical id.
      */
     await helper.setFlows(
       [
@@ -348,8 +347,7 @@ describe('Node-RED deploy lifecycle (#119)', () => {
     );
     const c1b = helper.getNode('c1');
     assert.strictEqual(c1b, c1, 'connection instance survived the rename');
-    assert.throws(() => c1b.resolveProfile('Ardu'), (err) => err.code === 'PROFILE_UNRESOLVED');
-    assert.strictEqual(c1b.resolveProfile('Renamed'), helper.getNode('pa'));
+    assert.strictEqual(c1b.resolveProfile('pa'), helper.getNode('pa'));
   });
 
   it('cancels a reconnecting transport timer when the connection is removed (#119)', async () => {
