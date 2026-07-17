@@ -22,9 +22,6 @@
       // This is about the vehicle being addressed — the local identity lives
       // on the mavlink-ai-local-identity config node (#228).
       vehicleFamily: { value: 'generic', required: true },
-      // Legacy pre-v3 combined role/vehicle field, kept so the editor can
-      // migrate it into vehicleFamily on open; cleared on save.
-      profileType: { value: '' },
       firmware: { value: 'generic', required: true },
       dialect: { value: 'ardupilotmega', required: true },
       dialectSource: { value: 'bundled' },
@@ -56,21 +53,6 @@
       const $dialect = $('#node-config-input-dialect'); // hidden, persisted value
       const $path = $('#node-config-input-customDialectPath');
       const FALLBACK = ['ardupilotmega', 'common', 'minimal'];
-
-      // Deterministic legacy migration (#228): pre-v3 profiles stored a
-      // combined `profileType` (role + vehicle). Vehicle-shaped values keep
-      // their family; the role values (gcs / companion-computer / generic)
-      // carried no target-vehicle information and map to 'generic'. Applied
-      // only when vehicleFamily is not yet set; saving persists the family and
-      // clears the legacy field.
-      const LEGACY_FAMILY = {
-        copter: 'copter', plane: 'plane', rover: 'rover', boat: 'boat',
-        sub: 'sub', 'antenna-tracker': 'antenna-tracker'
-      };
-      const $family = $('#node-config-input-vehicleFamily');
-      if (!node.vehicleFamily && node.profileType) {
-        $family.val(LEGACY_FAMILY[node.profileType] || 'generic');
-      }
 
       // Keep the persisted `dialect` in sync with the visible controls: a bundled
       // source stores the chosen dialect name; a path source stores 'custom' and
@@ -107,21 +89,7 @@
         $bundled.val(saved);
       }
 
-      // Restore the source. The UI now offers only Bundled and Custom (#60):
-      // legacy configs saved with 'local' or 'mounted' were never separate
-      // runtime modes (both persist dialect 'custom' + customDialectPath), so
-      // they collapse to 'custom' here. Configs predating the field infer from
-      // the saved dialect.
-      function normalizeSource(saved, dialect) {
-        if (saved === 'local' || saved === 'mounted' || saved === 'custom') {
-          return 'custom';
-        }
-        if (saved === 'bundled') {
-          return 'bundled';
-        }
-        return dialect === 'custom' ? 'custom' : 'bundled';
-      }
-      $source.val(normalizeSource(node.dialectSource, node.dialect));
+      $source.val(node.dialectSource === 'custom' ? 'custom' : 'bundled');
 
       $.getJSON('mavlink-ai/dialects')
         .done(function (data) { populateBundled(data && data.dialects); toggleRows(); })
@@ -256,9 +224,6 @@
         $('#mav-bundled-dialect').val() ||
         (this.dialect && this.dialect !== 'custom' ? this.dialect : 'ardupilotmega');
       $('#node-config-input-dialect').val(source === 'bundled' ? picked : 'custom');
-      // Saving persists vehicleFamily; the legacy combined field is cleared so
-      // the one-time conversion is complete for this profile.
-      this.profileType = '';
     }
   });
 </script>
@@ -286,7 +251,6 @@
       <option value="antenna-tracker">Antenna Tracker</option>
     </select>
   </div>
-  <input type="hidden" id="node-config-input-profileType">
   <div class="form-row">
     <label for="node-config-input-firmware">Firmware</label>
     <select id="node-config-input-firmware">
@@ -388,10 +352,6 @@
   inbound identity. Which incoming packets are matched to this profile is decided by the
   <b>Connection's route table</b>, not by this field, so on a routed multi-vehicle Connection the
   route's SysID is authoritative and this stays purely an outbound default.</p>
-  <p>Profiles saved before v3 stored a combined role/vehicle <code>profileType</code>; opening and
-  saving the profile converts it (vehicle types keep their family; <code>gcs</code>,
-  <code>companion-computer</code>, and <code>generic</code> become <b>Generic</b> — create a Local
-  Identity for the role half).</p>
   <h3>Dialect source</h3>
   <ul>
     <li><b>Bundled</b> — pick from the dialects the loader can serve (discovered dynamically, not hard-coded).</li>

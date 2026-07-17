@@ -289,7 +289,7 @@ heartbeat.
 Every transmitted message resolves to **exactly one permitted Local Identity**:
 
 1. If the message explicitly requests `localIdentity`, resolve that identity
-   (by config-node id, or by unique name).
+   (by config-node id).
 2. Verify the resolved identity is attached to the Connection — its default, or
    an additional binding with outbound permission while multi-identity is
    enabled.
@@ -337,41 +337,14 @@ and identity edits and is reset only on deactivation.
 | `LOCAL_IDENTITY_REQUIRED` | a Connection has no default Local Identity |
 | `LOCAL_IDENTITY_INVALID` | the default identity's configuration is invalid |
 | `LOCAL_IDENTITY_UNRESOLVED` | an explicit identity reference matches no config node |
-| `LOCAL_IDENTITY_AMBIGUOUS` | an identity **name** matches more than one config node |
 | `LOCAL_IDENTITY_NOT_ATTACHED` | the requested identity is not the default and not an allowed additional binding |
 | `LOCAL_IDENTITY_COLLISION` | two attached identities share a source `(sysid, compid)` — indistinguishable on the wire |
 | `MULTI_IDENTITY_DISABLED` | a non-default identity was requested but multi-identity transmission is off |
-| `VEHICLE_PROFILE_CONFLICT` | a message set both `vehicleProfile` and the deprecated `profile` alias to different values |
 
-Missing, ambiguous, unattached, conflicting, and disabled cases all fail
-closed — a bad configuration never transmits with a guessed identity.
+Missing, unattached, and disabled cases all fail closed — a bad configuration
+never transmits with a guessed identity.
 
-### 5.5.10 Migration (legacy → v3)
-
-The package is pre-1.0, so v3 prefers a clean persisted model with a
-deterministic conversion:
-
-1. Each legacy Profile becomes a Vehicle Profile from its
-   target/firmware/dialect/vehicle-family fields; the legacy combined
-   `profileType` maps to `vehicleFamily` (vehicle types keep their family; the
-   role types `gcs` / `companion-computer` / `generic` carried no target-vehicle
-   information and map to `generic`).
-2. A Local Identity is derived from the legacy source ids, role, heartbeat, and
-   signing fields.
-3. The derived identity is attached as the **default** identity of every
-   Connection that referenced that legacy Profile.
-4. Action/build references keep pointing at the derived Vehicle Profile (a
-   node's `profile` config reference still resolves to the Vehicle Profile).
-5. The outbound message contract's `profile` field is renamed `vehicleProfile`;
-   `profile` remains a documented, temporary compatibility alias.
-
-Runtime deprecation aids: a legacy Profile that still carries source/heartbeat/
-signing fields logs a one-time warning naming each field and where it moved, and
-a legacy `profileType` is converted with a warning. A Connection created before
-v3 (no `localIdentity`) fails closed with `LOCAL_IDENTITY_REQUIRED` and a hint
-to create a Local Identity from the old profile's source ids.
-
-### 5.5.11 ADR: why not a global singleton Local Identity
+### 5.5.10 ADR: why not a global singleton Local Identity
 
 > One Local Identity is the normal case, but MAVLink permits one runtime/link to
 > host multiple logical participants (a GCS and an onboard companion on one
@@ -701,12 +674,10 @@ canonical reference; the connection editor's route picker stores it for you):
 ]
 ```
 
-A plain profile name is accepted for backward compatibility only while exactly
-one profile config node has that name. A route whose profile reference cannot
-be resolved rejects its packets and reports the misconfiguration loudly (at
-deploy time and once per packet identity) — it must never silently fall back
-to the default profile, which would decode, signature-check, and label the
-packet with the wrong dialect.
+A route whose profile config-node id cannot be resolved rejects its packets and
+reports the misconfiguration loudly (at deploy time and once per packet
+identity) — it must never silently fall back to the default profile, which
+would decode, signature-check, and label the packet with the wrong dialect.
 
 Routing decisions should be deterministic.
 
@@ -798,7 +769,7 @@ connection.subscribe(filter, callback)
 connection.unsubscribe(subscriptionId)
 connection.getStatus()
 connection.getProfileForPacket(packet)
-connection.resolveProfile(idOrUniqueName) // throws PROFILE_UNRESOLVED/PROFILE_AMBIGUOUS
+connection.resolveProfile(id) // throws PROFILE_UNRESOLVED
 connection.acquireLock(lockName, owner, options)
 connection.releaseLock(lockName, owner)
 ```
@@ -1181,12 +1152,10 @@ accepts those strings (case-insensitively, plus the `inf` abbreviation) on
 }
 ```
 
-> **v3 (#228):** the target-facing reference is `vehicleProfile` (config-node
-> id); `profile` remains a documented, temporary compatibility alias (setting
-> both to different values is a `VEHICLE_PROFILE_CONFLICT`). `localIdentity` is
-> an optional override that selects an *attached* Local Identity; omitted, the
-> message transmits as the connection's default identity. The Vehicle Profile
-> never determines the local identity.
+> The target-facing reference is `vehicleProfile` (config-node id).
+> `localIdentity` is an optional override that selects an *attached* Local
+> Identity; omitted, the message transmits as the connection's default identity.
+> The Vehicle Profile never determines the local identity.
 
 ### 14.3 Raw Message
 

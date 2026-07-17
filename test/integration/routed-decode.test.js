@@ -193,10 +193,6 @@ test('outbound send transmits as the selected Local Identity, not a profile', as
   await conn.send({ name: 'HEARTBEAT', localIdentity: 'id_alt', fields: { type: 'MAV_TYPE_GCS' } });
   assert.strictEqual(sent[sent.length - 1][5], 42);
 
-  // A unique identity *name* resolves too (back-compat for flows that name it).
-  await conn.send({ name: 'HEARTBEAT', localIdentity: 'Alt', fields: { type: 'MAV_TYPE_GCS' } });
-  assert.strictEqual(sent[sent.length - 1][5], 42);
-
   // An explicitly requested identity that resolves to nothing must reject the
   // send — never silently transmit as the default identity.
   await assert.rejects(
@@ -206,12 +202,11 @@ test('outbound send transmits as the selected Local Identity, not a profile', as
 });
 
 /**
- * A route entry may reference its profile by config-node id (canonical) or,
- * for backward compatibility, by a *unique* profile name. Routed packets must
- * then decode with that profile's dialect and carry both the display name and
- * the canonical id.
+ * A route entry references its Vehicle Profile by config-node id. Routed
+ * packets decode with that profile's dialect and carry both its display name
+ * and canonical id.
  */
-test('route entries resolve legacy unique profile names to the real profile', async (t) => {
+test('route entries resolve Vehicle Profile config-node IDs', async (t) => {
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
     id: 'p_min', name: 'Min', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
@@ -225,9 +220,9 @@ test('route entries resolve legacy unique profile names to the real profile', as
     id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c_names', name: 'Named routes', profile: 'p_min', localIdentity: 'id1',
+    id: 'c_routes', name: 'ID routes', profile: 'p_min', localIdentity: 'id1',
     transport: 'udp-peer', routingMode: 'routed', unmatchedPolicy: 'reject',
-    routeTable: JSON.stringify([{ sysid: 1, compid: '*', profile: 'Ardu' }]),
+    routeTable: JSON.stringify([{ sysid: 1, compid: '*', profile: 'p_ardu' }]),
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   const addr = await new Promise((resolve) => conn._transport.once('listening', resolve));
@@ -241,7 +236,7 @@ test('route entries resolve legacy unique profile names to the real profile', as
   const attitude = await until(
     (done) => conn.subscribe({ messageNames: ['ATTITUDE'] }, done),
     () => sock.send(enc(fromSys1, 'ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }, { sysid: 1, compid: 1 }), addr.port, '127.0.0.1'),
-    'ATTITUDE decode via name route'
+    'ATTITUDE decode via ID route'
   );
   // Decoded with the ardupilotmega dialect (the minimal default cannot decode
   // id 30) and labeled with both the display name and the canonical id.
@@ -267,15 +262,6 @@ test('a route naming an unknown profile rejects its packets and reports loudly',
     id: 'p_def', name: 'Def', vehicleFamily: 'generic', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
-  // Two profiles sharing one name make that name ambiguous as a reference.
-  RED.create('mavlink-ai-vehicle', {
-    id: 'p_dup1', name: 'Dup', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
-    defaultTargetSystem: 1, defaultTargetComponent: 1
-  });
-  RED.create('mavlink-ai-vehicle', {
-    id: 'p_dup2', name: 'Dup', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
-    defaultTargetSystem: 1, defaultTargetComponent: 1
-  });
   RED.create('mavlink-ai-local-identity', {
     id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
@@ -283,8 +269,7 @@ test('a route naming an unknown profile rejects its packets and reports loudly',
     id: 'c_ghost', name: 'Bad routes', profile: 'p_def', localIdentity: 'id1',
     transport: 'udp-peer', routingMode: 'routed', unmatchedPolicy: 'default',
     routeTable: JSON.stringify([
-      { sysid: 1, compid: '*', profile: 'Ghost' },
-      { sysid: 2, compid: '*', profile: 'Dup' }
+      { sysid: 1, compid: '*', profile: 'Ghost' }
     ]),
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
@@ -295,18 +280,15 @@ test('a route naming an unknown profile rejects its packets and reports loudly',
     await new Promise((r) => sock.close(r));
   });
 
-  // Deploy-time validation names both broken routes.
+  // Deploy-time validation names the broken route.
   RED.events.emit('flows:started');
   assert.strictEqual(conn.errors.length, 1);
   assert.match(String(conn.errors[0]), /ROUTE_TABLE_INVALID/);
   assert.match(String(conn.errors[0]), /'Ghost'/);
-  assert.match(String(conn.errors[0]), /'Dup'/);
-  assert.match(String(conn.errors[0]), /matches 2 profile config nodes/);
   conn.errors.length = 0;
 
   const ardu = loadDialect('ardupilotmega');
   const fromSys1 = new MavlinkCodec({ bundle: ardu, version: 'v2' });
-  const fromSys2 = new MavlinkCodec({ bundle: ardu, version: 'v2' });
 
   // Unresolvable route target: the packet is rejected, not decoded as 'Def'.
   const messages = [];
@@ -318,20 +300,10 @@ test('a route naming an unknown profile rejects its packets and reports loudly',
   );
   assert.strictEqual(rejected1.reason, 'profile-unresolved');
 
-  // Ambiguous name: same rejection, not a coin-flip between the two 'Dup's.
-  const rejected2 = await until(
-    (done) => conn.emitter.on('rejected', (r) => { if (r.sysid === 2) done(r); }),
-    () => sock.send(enc(fromSys2, 'ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }, { sysid: 2, compid: 1 }), addr.port, '127.0.0.1'),
-    'rejection for ambiguous route profile'
-  );
-  assert.strictEqual(rejected2.reason, 'profile-unresolved');
-
   assert.strictEqual(messages.length, 0);
   // Packet-time logging is deduplicated per identity+problem, not per packet.
   const ghostLogs = conn.errors.filter((e) => /'Ghost'/.test(String(e)));
-  const dupLogs = conn.errors.filter((e) => /'Dup'/.test(String(e)));
   assert.strictEqual(ghostLogs.length, 1);
-  assert.strictEqual(dupLogs.length, 1);
 });
 
 /**
@@ -379,13 +351,13 @@ test('fixing a broken route table on redeploy clears the stale error status', as
 /**
  * Workflow profile propagation: the Vehicle Profile named on an outbound message
  * is the effective profile for the WHOLE send (codec dialect + target defaults)
- * — a plain profile *name* resolves to the real config node, and an explicit
+ * — a config-node id resolves to the real config node, and an explicit
  * reference that resolves to nothing rejects instead of silently sending as the
  * connection default. In v3 the profile NEVER changes source identity (#228):
  * source identity follows the connection's resolved Local Identity regardless of
  * the selected Vehicle Profile.
  */
-test('outbound send resolves profile names, keeps source identity, and rejects unknown profiles', async (t) => {
+test('outbound send resolves profile IDs, keeps source identity, and rejects unknown profiles', async (t) => {
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
     id: 'p_def', name: 'Def', vehicleFamily: 'generic', dialect: 'minimal', mavlinkVersion: 'v2',
@@ -414,14 +386,14 @@ test('outbound send resolves profile names, keeps source identity, and rejects u
   t.after(async () => RED.close(conn));
 
   /**
-   * A profile *name* (what inbound payloads and hand-authored flows carry)
-   * resolves to the real config node so its dialect/target defaults apply. The
+   * A profile config-node id resolves to the real config node so its
+   * dialect/target defaults apply. The
    * source identity is still the connection's Local Identity (255) — selecting
    * the 'Alt' Vehicle Profile can no longer change it (#228). HEARTBEAT is a
    * broadcast with no target_system field, so it carries no routing target
    * regardless of the profile default (#148).
    */
-  await conn.send({ name: 'HEARTBEAT', profile: 'Alt', fields: { type: 'MAV_TYPE_GCS' } });
+  await conn.send({ name: 'HEARTBEAT', vehicleProfile: 'p_alt', fields: { type: 'MAV_TYPE_GCS' } });
   assert.strictEqual(sent[sent.length - 1].buf[5], 255);
   assert.strictEqual(sent[sent.length - 1].meta.targetSystem, undefined);
 
@@ -432,7 +404,7 @@ test('outbound send resolves profile names, keeps source identity, and rejects u
 
   // Unknown explicit profile: reject, never silently fall back to the default.
   await assert.rejects(
-    conn.send({ name: 'HEARTBEAT', profile: 'no-such-profile', fields: { type: 'MAV_TYPE_GCS' } }),
+    conn.send({ name: 'HEARTBEAT', vehicleProfile: 'no-such-profile', fields: { type: 'MAV_TYPE_GCS' } }),
     (err) => err.code === 'PROFILE_UNRESOLVED'
   );
 });

@@ -442,14 +442,14 @@ test('the command lock is released on every settle path (#82)', async () => {
 
 test('CommandSend carries its profile reference on every send, including retransmits', async () => {
   const conn = new FakeConnection();
-  const wf = new CommandSend(opts(conn, { profile: 'p_routed', timeoutMs: 20, maxRetries: 1 }));
+  const wf = new CommandSend(opts(conn, { vehicleProfile: 'p_routed', timeoutMs: 20, maxRetries: 1 }));
   const p = wf.run();
   await delay(35); // let one retransmit fire
   conn.deliverAck({ command: 400, result: 0 });
   await p;
   assert.ok(conn.sent.length >= 2, 'expected the initial send plus a retransmit');
   for (const m of conn.sent) {
-    assert.strictEqual(m.vehicleProfile, 'p_routed', 'legacy profile alias maps to vehicleProfile');
+    assert.strictEqual(m.vehicleProfile, 'p_routed');
   }
 });
 

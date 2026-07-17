@@ -95,31 +95,14 @@ test('an attached identity with outbound disabled cannot transmit (#228)', async
   );
 });
 
-// --- unresolved / ambiguous -------------------------------------------------
-test('an unresolvable identity name fails with LOCAL_IDENTITY_UNRESOLVED (#228)', async (t) => {
+// --- unresolved -------------------------------------------------------------
+test('an unresolvable Local Identity reference fails with LOCAL_IDENTITY_UNRESOLVED (#228)', async (t) => {
   const RED = new MockRED().loadNodes();
   const { connection } = makeConnection(RED, { allowMultipleIdentities: true });
   t.after(() => RED.close(connection));
   assert.throws(
     () => connection.resolveOutboundIdentity('no-such-identity'),
     (e) => e.code === 'LOCAL_IDENTITY_UNRESOLVED'
-  );
-});
-
-test('an ambiguous identity name fails with LOCAL_IDENTITY_AMBIGUOUS (#228)', async (t) => {
-  const RED = new MockRED().loadNodes();
-  makeIdentity(RED, { id: 'gcs', name: 'GCS' });
-  makeIdentity(RED, { id: 'dup1', name: 'Companion', sourceSystemId: 1, sourceComponentId: 191 });
-  makeIdentity(RED, { id: 'dup2', name: 'Companion', sourceSystemId: 1, sourceComponentId: 192 });
-  const { connection } = makeConnection(RED, {
-    localIdentity: 'gcs',
-    allowMultipleIdentities: true,
-    additionalIdentities: JSON.stringify([{ identity: 'dup1' }, { identity: 'dup2' }])
-  });
-  t.after(() => RED.close(connection));
-  assert.throws(
-    () => connection.resolveOutboundIdentity('Companion'),
-    (e) => e.code === 'LOCAL_IDENTITY_AMBIGUOUS'
   );
 });
 
