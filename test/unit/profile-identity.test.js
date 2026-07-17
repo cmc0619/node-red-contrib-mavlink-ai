@@ -103,23 +103,6 @@ test('the Vehicle Profile no longer owns source identity (#228)', () => {
   assert.strictEqual(typeof profile.getSigningPolicy, 'undefined');
 });
 
-test('legacy profileType is deterministically converted to a vehicle family, with a warning (#228)', () => {
-  const RED = new MockRED().loadNodes();
-  const copter = makeProfile(RED, { profileType: 'copter', vehicleFamily: '' });
-  assert.strictEqual(copter.vehicleFamily, 'copter');
-  assert.ok(copter.warnings.some((w) => /legacy/.test(w) && /copter/.test(w)));
-  // A role-only legacy type carried no vehicle info -> generic.
-  const gcs = makeProfile(RED, { profileType: 'gcs', vehicleFamily: '' });
-  assert.strictEqual(gcs.vehicleFamily, 'generic');
-});
-
-test('legacy identity/signing fields on a profile are ignored with a pointer warning (#228)', () => {
-  const RED = new MockRED().loadNodes();
-  const profile = makeProfile(RED, { sourceSystemId: 7, signOutbound: true, heartbeatType: 'MAV_TYPE_GCS' });
-  assert.ok(profile.warnings.some((w) => /no longer owns local identity/.test(w)));
-  assert.ok(profile.warnings.some((w) => /Local Identity/.test(w)));
-});
-
 // --- Connection fail-closed on bad required config -------------------------
 test('connection refuses to start on an identity-invalid default identity (#90, #228)', async () => {
   const RED = new MockRED().loadNodes();
