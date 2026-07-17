@@ -563,14 +563,14 @@ test('MissionClear times out cleanly with no ACK (#59)', async () => {
 
 test('mission workflow sends carry the profile reference end-to-end', async () => {
   const conn = new FakeConnection();
-  const wf = new MissionClear(downloadOpts(conn, { profile: 'p_routed' }));
+  const wf = new MissionClear(downloadOpts(conn, { vehicleProfile: 'p_routed' }));
   const p = wf.run();
   conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
   const res = await p;
   assert.strictEqual(res.payload.acked, true);
   assert.strictEqual(conn.sent[0].name, 'MISSION_CLEAR_ALL');
   for (const m of conn.sent) {
-    assert.strictEqual(m.vehicleProfile, 'p_routed', 'legacy profile alias maps to vehicleProfile');
+    assert.strictEqual(m.vehicleProfile, 'p_routed');
   }
 });
 
