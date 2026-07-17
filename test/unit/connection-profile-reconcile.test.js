@@ -10,9 +10,8 @@ const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
 const { enc } = require('../helpers/v3-config');
 
 /**
- * Routed profiles (referenced from the connection's routeTable) and legacy
- * name-based references must reconcile on every deploy, without stale codecs,
- * stale CRC tables, or stale name-cache objects surviving a profile edit,
+ * Routed profiles (referenced from the connection's routeTable) must reconcile
+ * on every deploy, without stale codecs or CRC tables surviving a profile edit,
  * deletion, or recreation (#117, #118).
  *
  * Routed profiles are embedded in serialized routeTable JSON, so Node-RED never
@@ -217,7 +216,7 @@ test('the merged CRC table and decoder reset when a routed dialect set changes (
   assert.notStrictEqual([...conn._decoders.values()][0], decoder1, 'a fresh decoder was built');
 });
 
-test('a deleted profile stops resolving by legacy name after deploy (#118)', (t) => {
+test('profile resolution uses config-node IDs and re-resolves recreated nodes (#118)', (t) => {
   const RED = new MockRED().loadNodes();
   profile(RED, 'p_def', 'Def', 'minimal');
   profile(RED, 'p2', 'Alt', 'ardupilotmega');
@@ -231,68 +230,20 @@ test('a deleted profile stops resolving by legacy name after deploy (#118)', (t)
   });
   t.after(() => RED.close(conn));
 
-  /** Resolve once to populate the name cache with the resolved id. */
-  assert.strictEqual(conn.resolveProfile('Alt'), RED.nodes.getNode('p2'));
-
-  /**
-   * Delete the profile. Even without a redeploy, the cache re-resolves the id
-   * through getNode() and finds it gone, so the stale object is never returned.
-   */
-  RED.remove('p2');
-  assert.throws(() => conn.resolveProfile('Alt'), (err) => err.code === 'PROFILE_UNRESOLVED');
-});
-
-test('renaming a profile invalidates the old name and resolves the new one (#118)', (t) => {
-  const RED = new MockRED().loadNodes();
-  profile(RED, 'p_def', 'Def', 'minimal');
-  profile(RED, 'p2', 'Alt', 'ardupilotmega');
-  RED.create('mavlink-ai-local-identity', {
-    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
-  });
-  const conn = RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'Conn', profile: 'p_def', localIdentity: 'id1',
-    transport: 'udp-peer', routingMode: 'single-profile',
-    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
-  });
-  t.after(() => RED.close(conn));
-
-  assert.strictEqual(conn.resolveProfile('Alt'), RED.nodes.getNode('p2'));
-
-  /**
-   * Rename: recreate p2 with a new display name under the same id. The cached id
-   * for 'Alt' now points at a node whose name no longer matches, so the old name
-   * stops resolving and the new name resolves.
-   */
-  profile(RED, 'p2', 'Renamed', 'ardupilotmega');
-  assert.throws(() => conn.resolveProfile('Alt'), (err) => err.code === 'PROFILE_UNRESOLVED');
-  assert.strictEqual(conn.resolveProfile('Renamed'), RED.nodes.getNode('p2'));
-});
-
-test('recreating a profile under the same id returns the current object, never the previous (#118)', (t) => {
-  const RED = new MockRED().loadNodes();
-  profile(RED, 'p_def', 'Def', 'minimal');
-  profile(RED, 'p2', 'Alt', 'ardupilotmega');
-  RED.create('mavlink-ai-local-identity', {
-    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
-  });
-  const conn = RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'Conn', profile: 'p_def', localIdentity: 'id1',
-    transport: 'udp-peer', routingMode: 'single-profile',
-    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
-  });
-  t.after(() => RED.close(conn));
-
-  const original = conn.resolveProfile('Alt');
+  const original = conn.resolveProfile('p2');
   assert.strictEqual(original, RED.nodes.getNode('p2'));
 
-  /** Recreate p2 as a new object under the same id and name. */
-  profile(RED, 'p2', 'Alt', 'ardupilotmega');
+  /** A recreated config node with the same id is returned as the new object. */
+  profile(RED, 'p2', 'Renamed', 'ardupilotmega');
   const current = RED.nodes.getNode('p2');
-  assert.notStrictEqual(current, original, 'a new object was created');
-  assert.strictEqual(conn.resolveProfile('Alt'), current, 'resolves the current object');
+  assert.notStrictEqual(current, original);
+  assert.strictEqual(conn.resolveProfile('p2'), current);
+
+  RED.remove('p2');
+  assert.throws(() => conn.resolveProfile('p2'), (err) => err.code === 'PROFILE_UNRESOLVED');
 });
 
-test('a name that becomes ambiguous fails PROFILE_AMBIGUOUS even after a cached unique result (#118)', (t) => {
+test('profile display names are not accepted as references', (t) => {
   const RED = new MockRED().loadNodes();
   profile(RED, 'p_def', 'Def', 'minimal');
   profile(RED, 'p2', 'Alt', 'ardupilotmega');
@@ -306,15 +257,5 @@ test('a name that becomes ambiguous fails PROFILE_AMBIGUOUS even after a cached 
   });
   t.after(() => RED.close(conn));
 
-  /** Cache a unique result for 'Alt'. */
-  assert.strictEqual(conn.resolveProfile('Alt'), RED.nodes.getNode('p2'));
-
-  /**
-   * A second profile now shares the name 'Alt'. The deploy clears the name cache
-   * so the next resolution re-scans and reports the ambiguity rather than serving
-   * the stale unique result.
-   */
-  profile(RED, 'p3', 'Alt', 'minimal');
-  RED.events.emit('flows:started');
-  assert.throws(() => conn.resolveProfile('Alt'), (err) => err.code === 'PROFILE_AMBIGUOUS');
+  assert.throws(() => conn.resolveProfile('Alt'), (err) => err.code === 'PROFILE_UNRESOLVED');
 });
