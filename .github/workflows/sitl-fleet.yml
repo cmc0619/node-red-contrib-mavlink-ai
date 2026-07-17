@@ -1,0 +1,88 @@
+name: SITL Fleet
+
+# The multi-drone "big hurrah": a fleet of virtual drones (distinct system ids,
+# real MAVLink wire format, collision-aware physics) driven through discovery,
+# arm, takeoff, and a coordinated reshuffle — asserting they never collide. Runs
+# three ways: the in-process regression test, the CLI fleet over real UDP, and
+# the Docker fleet (one container per system id) reaching the host.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'test/sitl/**'
+      - 'test/integration/multi-drone-sitl.test.js'
+      - 'examples/08-sitl/**'
+      - 'lib/swarm/**'
+      - 'lib/protocol/**'
+      - '.github/workflows/sitl-fleet.yml'
+  pull_request:
+    paths:
+      - 'test/sitl/**'
+      - 'test/integration/multi-drone-sitl.test.js'
+      - 'examples/08-sitl/**'
+      - 'lib/swarm/**'
+      - 'lib/protocol/**'
+      - '.github/workflows/sitl-fleet.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sitl-fleet-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Deterministic, no-Docker path: the regression test plus the CLI fleet and
+  # verifier over real UDP loopback. Fast and reliable.
+  node-fleet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.x'
+      - run: npm ci --omit=optional
+      - name: Fleet collision-avoidance regression
+        run: node --test test/integration/multi-drone-sitl.test.js
+      - name: CLI fleet discovery over UDP
+        run: |
+          node test/sitl/verify-fleet-discovery.js --port 14550 --expect 3 --timeout 20000 &
+          verify=$!
+          node test/sitl/run-fleet.js --count 3 --gcs-host 127.0.0.1 --gcs-port 14550 &
+          fleet=$!
+          status=0
+          wait "$verify" || status=1
+          kill "$fleet" 2>/dev/null || true
+          exit "$status"
+
+  # Container path: build the fleet image and bring up one drone per system id
+  # via docker compose, then verify they reach a GCS on the host and speak valid
+  # MAVLink. This is what proves the "docker commands for drones with different
+  # sysids" actually work end to end.
+  docker-fleet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.x'
+      - run: npm ci --omit=optional
+      - name: Bring up the Docker fleet
+        run: docker compose -f test/sitl/docker-compose.yml up --build -d
+      - name: Verify all system ids reach the host
+        # Containers stream to host.docker.internal:14550 (host-gateway on Linux);
+        # the verifier binds that port on the runner and waits for every sysid.
+        run: node test/sitl/verify-fleet-discovery.js --port 14550 --expect 3 --timeout 60000
+      - name: Fleet container logs
+        if: always()
+        run: docker compose -f test/sitl/docker-compose.yml logs
+      - name: Tear down
+        if: always()
+        run: docker compose -f test/sitl/docker-compose.yml down

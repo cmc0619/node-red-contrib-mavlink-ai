@@ -1,0 +1,405 @@
+[
+  {
+    "id": "fleetwringer",
+    "type": "tab",
+    "label": "MAVLink SITL - Multi-Drone Fleet Wringer",
+    "disabled": false,
+    "info": "Discover, arm, take off, and reshuffle a whole fleet of SITL drones on ONE routed UDP connection (14550) — and prove they never collide.\n\n## Start the fleet\n\nRun a virtual multi-drone SITL (no PX4/ArduPilot needed) from the source repo:\n\n    ./test/sitl/start-fleet.sh            # 3 drones, sysid 1..3 -> 127.0.0.1:14550\n\nor one container per drone with distinct sysids:\n\n    docker compose -f test/sitl/docker-compose.yml up --build\n\nThese are development helpers and are NOT shipped in the npm package: https://github.com/cmc0619/node-red-contrib-mavlink-ai/tree/main/test/sitl\n\nA real PX4/ArduPilot multi-vehicle SITL streaming to UDP 14550 works too.\n\n## The wringer\n\n1. Deploy. The Swarm registry lists the drones as their HEARTBEATs arrive; the Separation monitor tracks the closest pair live.\n2. Inject **1 Arm all**, then **2 Take off (layered)** — each drone climbs to its own altitude layer (10 m apart) so a later horizontal reshuffle can cross paths safely.\n3. Inject **3 Reposition (reversed line)** to swap the formation end-for-end. Paths cross, but the altitude layering keeps every pair apart — watch the Separation monitor stay green.\n\nThe **Preview (dry-run)** inject shows exactly what the reposition would send without touching a vehicle."
+  },
+  {
+    "id": "fw_gcs",
+    "type": "mavlink-ai-local-identity",
+    "name": "Fleet GCS",
+    "role": "gcs",
+    "sourceSystemId": 255,
+    "sourceComponentId": 190,
+    "heartbeatType": "",
+    "heartbeatAutopilot": "MAV_AUTOPILOT_INVALID",
+    "signOutbound": false,
+    "verifyInbound": false,
+    "requireSignature": false
+  },
+  {
+    "id": "fw_p1",
+    "type": "mavlink-ai-vehicle",
+    "name": "Drone 1",
+    "dialect": "ardupilotmega",
+    "customDialectPath": "",
+    "mavlinkVersion": "auto",
+    "defaultTargetSystem": 1,
+    "defaultTargetComponent": 1,
+    "preferredMissionItemType": "MISSION_ITEM_INT",
+    "debugProtocol": false,
+    "vehicleFamily": "copter"
+  },
+  {
+    "id": "fw_p2",
+    "type": "mavlink-ai-vehicle",
+    "name": "Drone 2",
+    "dialect": "ardupilotmega",
+    "customDialectPath": "",
+    "mavlinkVersion": "auto",
+    "defaultTargetSystem": 2,
+    "defaultTargetComponent": 1,
+    "preferredMissionItemType": "MISSION_ITEM_INT",
+    "debugProtocol": false,
+    "vehicleFamily": "copter"
+  },
+  {
+    "id": "fw_p3",
+    "type": "mavlink-ai-vehicle",
+    "name": "Drone 3",
+    "dialect": "ardupilotmega",
+    "customDialectPath": "",
+    "mavlinkVersion": "auto",
+    "defaultTargetSystem": 3,
+    "defaultTargetComponent": 1,
+    "preferredMissionItemType": "MISSION_ITEM_INT",
+    "debugProtocol": false,
+    "vehicleFamily": "copter"
+  },
+  {
+    "id": "fw_conn",
+    "type": "mavlink-ai-connection",
+    "name": "Fleet UDP 14550 (routed)",
+    "profile": "fw_p1",
+    "transport": "udp-peer",
+    "routingMode": "routed",
+    "bindAddress": "0.0.0.0",
+    "bindPort": 14550,
+    "remoteHost": "",
+    "remotePort": 14550,
+    "serialPath": "",
+    "serialBaud": 57600,
+    "reconnect": true,
+    "heartbeat": true,
+    "heartbeatIntervalMs": 1000,
+    "acceptedSysids": "",
+    "acceptedCompids": "",
+    "unmatchedPolicy": "default",
+    "routeTable": "[{\"sysid\":1,\"compid\":\"*\",\"profile\":\"fw_p1\"},{\"sysid\":2,\"compid\":\"*\",\"profile\":\"fw_p2\"},{\"sysid\":3,\"compid\":\"*\",\"profile\":\"fw_p3\"}]",
+    "outboundQueue": true,
+    "localIdentity": "fw_gcs",
+    "allowMultipleIdentities": false,
+    "additionalIdentities": "",
+    "signingLinkId": 0
+  },
+  {
+    "id": "fw_comment",
+    "type": "comment",
+    "z": "fleetwringer",
+    "name": "Start the fleet: ./test/sitl/start-fleet.sh  (or docker compose -f test/sitl/docker-compose.yml up)",
+    "info": "",
+    "x": 350,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "fw_swarm",
+    "type": "mavlink-ai-swarm",
+    "z": "fleetwringer",
+    "name": "Swarm registry",
+    "connection": "fw_conn",
+    "staleMs": 5000,
+    "expireMs": 30000,
+    "emitOnChange": true,
+    "intervalMs": 0,
+    "includeGcs": false,
+    "groups": "{\"copters\":{\"type\":\"MAV_TYPE_QUADROTOR\"}}",
+    "x": 180,
+    "y": 120,
+    "wires": [
+      [
+        "fw_swarm_dbg"
+      ]
+    ]
+  },
+  {
+    "id": "fw_swarm_dbg",
+    "type": "debug",
+    "z": "fleetwringer",
+    "name": "Vehicle table",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 430,
+    "y": 120,
+    "wires": []
+  },
+  {
+    "id": "fw_pos_in",
+    "type": "mavlink-ai-in",
+    "z": "fleetwringer",
+    "name": "Positions",
+    "connection": "fw_conn",
+    "messageNames": "GLOBAL_POSITION_INT",
+    "messageIds": "",
+    "sysid": "",
+    "compid": "",
+    "profileFilter": "",
+    "rateLimitHz": 0,
+    "changedOnly": false,
+    "outputRaw": false,
+    "outputErrors": false,
+    "outputs": 1,
+    "x": 170,
+    "y": 200,
+    "wires": [
+      [
+        "fw_sep"
+      ]
+    ]
+  },
+  {
+    "id": "fw_sep",
+    "type": "function",
+    "z": "fleetwringer",
+    "name": "Separation monitor",
+    "func": "// Track each system's latest position and alarm when the closest pair of\n// drones drops below the collision floor. Positions carry a receive time so a\n// vehicle whose telemetry has stopped is pruned — a frozen position must never\n// keep reporting 'safe'. Flat-earth (equirectangular) distance around the\n// local latitude, accurate well under 1% at these ranges.\nconst FLOOR_M = 8;\nconst FRESH_MS = 3000; // drop a vehicle not heard from within this window\nconst R = 6378137; // WGS84 equatorial radius, m\nconst now = Date.now();\n\nconst fleet = context.get('fleet') || {};\nconst p = msg.payload;\nif (p && p.name === 'GLOBAL_POSITION_INT' && p.fields) {\n    fleet[p.sysid] = {\n        lat: p.fields.lat / 1e7,\n        lon: p.fields.lon / 1e7,\n        alt: p.fields.alt / 1000,\n        t: now\n    };\n}\n\n// Expire stale vehicles so a dead link cannot keep the fleet looking safe.\nfor (const id of Object.keys(fleet)) {\n    if (now - fleet[id].t > FRESH_MS) { delete fleet[id]; }\n}\ncontext.set('fleet', fleet);\n\nconst ids = Object.keys(fleet);\nif (ids.length < 2) {\n    node.status({ fill: 'grey', shape: 'ring', text: ids.length + ' fresh vehicle(s)' });\n    return null;\n}\n\nlet min = Infinity;\nlet pair = null;\nfor (let i = 0; i < ids.length; i++) {\n    for (let j = i + 1; j < ids.length; j++) {\n        const a = fleet[ids[i]];\n        const b = fleet[ids[j]];\n        const north = ((b.lat - a.lat) * Math.PI / 180) * R;\n        const east = ((b.lon - a.lon) * Math.PI / 180) * R * Math.cos(a.lat * Math.PI / 180);\n        const down = a.alt - b.alt;\n        const d = Math.sqrt(north * north + east * east + down * down);\n        if (d < min) { min = d; pair = [ids[i], ids[j]]; }\n    }\n}\n\nconst safe = min >= FLOOR_M;\nnode.status({\n    fill: safe ? 'green' : 'red',\n    shape: 'dot',\n    text: 'min sep ' + min.toFixed(1) + ' m ' + (safe ? 'ok' : 'BREACH') + ' (' + pair.join('/') + ')'\n});\nmsg.payload = { minSeparationM: Number(min.toFixed(2)), closestPair: pair, floorM: FLOOR_M, safe: safe, freshVehicles: ids.length };\nif (!safe) { node.warn('Separation breach: ' + min.toFixed(1) + ' m between ' + pair.join(' and ')); }\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 400,
+    "y": 200,
+    "wires": [
+      [
+        "fw_sep_dbg"
+      ]
+    ]
+  },
+  {
+    "id": "fw_sep_dbg",
+    "type": "debug",
+    "z": "fleetwringer",
+    "name": "Separation",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 650,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "fw_arm_inject",
+    "type": "inject",
+    "z": "fleetwringer",
+    "name": "1 Arm all",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "topic": "",
+    "payload": "{\"sysids\":[1,2,3],\"fields\":{\"param1\":1}}",
+    "payloadType": "json",
+    "x": 160,
+    "y": 300,
+    "wires": [
+      [
+        "fw_arm"
+      ]
+    ]
+  },
+  {
+    "id": "fw_arm",
+    "type": "mavlink-ai-fanout",
+    "z": "fleetwringer",
+    "name": "Arm fan-out",
+    "profile": "fw_p1",
+    "connection": "fw_conn",
+    "mode": "fanout",
+    "command": "MAV_CMD_COMPONENT_ARM_DISARM",
+    "sendAs": "long",
+    "awaitAck": true,
+    "timeoutMs": 3000,
+    "maxRetries": 3,
+    "spacingMs": 0,
+    "stopOnError": false,
+    "concurrency": 3,
+    "dryRun": false,
+    "fields": "{}",
+    "x": 390,
+    "y": 300,
+    "wires": [
+      [
+        "fw_arm_dbg"
+      ]
+    ]
+  },
+  {
+    "id": "fw_arm_dbg",
+    "type": "debug",
+    "z": "fleetwringer",
+    "name": "Arm acks",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 620,
+    "y": 300,
+    "wires": []
+  },
+  {
+    "id": "fw_takeoff_inject",
+    "type": "inject",
+    "z": "fleetwringer",
+    "name": "2 Take off (layered)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "topic": "",
+    "payload": "{\"targets\":[{\"sysid\":1,\"param7\":10},{\"sysid\":2,\"param7\":20},{\"sysid\":3,\"param7\":30}]}",
+    "payloadType": "json",
+    "x": 180,
+    "y": 360,
+    "wires": [
+      [
+        "fw_takeoff"
+      ]
+    ]
+  },
+  {
+    "id": "fw_takeoff",
+    "type": "mavlink-ai-fanout",
+    "z": "fleetwringer",
+    "name": "Takeoff fan-out",
+    "profile": "fw_p1",
+    "connection": "fw_conn",
+    "mode": "fanout",
+    "command": "MAV_CMD_NAV_TAKEOFF",
+    "sendAs": "long",
+    "awaitAck": true,
+    "timeoutMs": 3000,
+    "maxRetries": 3,
+    "spacingMs": 0,
+    "stopOnError": false,
+    "concurrency": 3,
+    "dryRun": false,
+    "fields": "{}",
+    "x": 400,
+    "y": 360,
+    "wires": [
+      [
+        "fw_takeoff_dbg"
+      ]
+    ]
+  },
+  {
+    "id": "fw_takeoff_dbg",
+    "type": "debug",
+    "z": "fleetwringer",
+    "name": "Takeoff acks",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 630,
+    "y": 360,
+    "wires": []
+  },
+  {
+    "id": "fw_repo_inject",
+    "type": "inject",
+    "z": "fleetwringer",
+    "name": "3 Reposition (reversed line)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "topic": "",
+    "payload": "{\"origin\":{\"lat\":39.1,\"lon\":-75.1,\"alt\":40},\"targets\":[{\"sysid\":1,\"east\":30,\"up\":10,\"param4\":\"NaN\"},{\"sysid\":2,\"east\":15,\"up\":20,\"param4\":\"NaN\"},{\"sysid\":3,\"east\":0,\"up\":30,\"param4\":\"NaN\"}]}",
+    "payloadType": "json",
+    "x": 200,
+    "y": 440,
+    "wires": [
+      [
+        "fw_repo"
+      ]
+    ]
+  },
+  {
+    "id": "fw_repo",
+    "type": "mavlink-ai-fanout",
+    "z": "fleetwringer",
+    "name": "Reposition fan-out",
+    "profile": "fw_p1",
+    "connection": "fw_conn",
+    "mode": "fanout",
+    "command": "MAV_CMD_DO_REPOSITION",
+    "sendAs": "int",
+    "awaitAck": true,
+    "timeoutMs": 3000,
+    "maxRetries": 3,
+    "spacingMs": 0,
+    "stopOnError": false,
+    "concurrency": 3,
+    "dryRun": false,
+    "fields": "{}",
+    "x": 460,
+    "y": 440,
+    "wires": [
+      [
+        "fw_repo_dbg"
+      ]
+    ]
+  },
+  {
+    "id": "fw_repo_dbg",
+    "type": "debug",
+    "z": "fleetwringer",
+    "name": "Reposition acks",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 700,
+    "y": 440,
+    "wires": []
+  },
+  {
+    "id": "fw_preview_inject",
+    "type": "inject",
+    "z": "fleetwringer",
+    "name": "Preview (dry-run)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "topic": "",
+    "payload": "{\"dry_run\":true,\"origin\":{\"lat\":39.1,\"lon\":-75.1,\"alt\":40},\"targets\":[{\"sysid\":1,\"east\":30,\"up\":10,\"param4\":\"NaN\"},{\"sysid\":2,\"east\":15,\"up\":20,\"param4\":\"NaN\"},{\"sysid\":3,\"east\":0,\"up\":30,\"param4\":\"NaN\"}]}",
+    "payloadType": "json",
+    "x": 200,
+    "y": 500,
+    "wires": [
+      [
+        "fw_repo"
+      ]
+    ]
+  }
+]
