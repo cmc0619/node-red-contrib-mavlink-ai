@@ -223,16 +223,8 @@ module.exports = function registerMavlinkAiMission(RED) {
       try {
         identity = node.connection.resolveOutboundIdentity(payload.localIdentity);
       } catch (err) {
-        const e = toMavlinkError(err, 'LOCAL_IDENTITY_UNRESOLVED');
-        node.status({ fill: 'red', shape: 'ring', text: e.code });
         lock.release();
-        return finishError(node, send, done, errorPayload({
-          node: 'mavlink-ai-mission',
-          connection: node.connection.name,
-          code: e.code,
-          message: e.message,
-          context: e.context
-        }));
+        return fail(err, 'LOCAL_IDENTITY_UNRESOLVED');
       }
       const source = identity.getIdentity();
 
@@ -362,6 +354,7 @@ async function clearMission(connection, opts, targetSystem, targetComponent, mis
  * nodes. Nodes without outputs (e.g. mavlink-ai-out) use done(err) instead.
  *
  * @param {object} node
+ * @param {object} msg  inbound Node-RED message to reuse for the error output
  * @param {function} send
  * @param {function} done
  * @param {object} payload  error payload (§14.5)
