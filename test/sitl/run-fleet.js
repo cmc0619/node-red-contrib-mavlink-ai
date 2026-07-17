@@ -52,13 +52,36 @@ function pick(args, flag, env, dflt) {
   return raw;
 }
 /**
- * Coerce a picked value (which may be a string from a flag/env) to a number.
+ * Coerce a picked value (which may be a string from a flag/env) to a number,
+ * rejecting a missing or non-numeric value with a clear error rather than
+ * letting NaN reach the fleet (where it would become a busy-loop timer or an
+ * encode failure).
  *
  * @param {*} v
+ * @param {string} name  option name, for the error message
  * @returns {number}
  */
-function num(v) {
-  return typeof v === 'number' ? v : Number(v);
+function num(v, name) {
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n)) {
+    throw new Error(`run-fleet: ${name} must be a finite number (got ${JSON.stringify(v)}).`);
+  }
+  return n;
+}
+
+/**
+ * Coerce and validate a UDP port: an integer in [0, 65535] (0 = ephemeral).
+ *
+ * @param {*} v
+ * @param {string} name
+ * @returns {number}
+ */
+function port(v, name) {
+  const n = num(v, name);
+  if (!Number.isInteger(n) || n < 0 || n > 65535) {
+    throw new Error(`run-fleet: ${name} must be an integer port in [0, 65535] (got ${JSON.stringify(v)}).`);
+  }
+  return n;
 }
 
 /**
@@ -70,20 +93,20 @@ function num(v) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const config = {
-    count: num(pick(args, 'count', 'FLEET_COUNT', 3)),
-    baseSysid: num(pick(args, 'sysid', 'SYSID', 1)),
+    count: num(pick(args, 'count', 'FLEET_COUNT', 3), '--count'),
+    baseSysid: num(pick(args, 'sysid', 'SYSID', 1), '--sysid'),
     dialect: String(pick(args, 'dialect', 'DIALECT', 'ardupilotmega')),
     origin: {
-      lat: num(pick(args, 'lat', 'ORIGIN_LAT', 39.1)),
-      lon: num(pick(args, 'lon', 'ORIGIN_LON', -75.1)),
-      alt: num(pick(args, 'alt', 'ORIGIN_ALT', 40))
+      lat: num(pick(args, 'lat', 'ORIGIN_LAT', 39.1), '--lat'),
+      lon: num(pick(args, 'lon', 'ORIGIN_LON', -75.1), '--lon'),
+      alt: num(pick(args, 'alt', 'ORIGIN_ALT', 40), '--alt')
     },
-    spacingM: num(pick(args, 'spacing', 'SPACING', 10)),
-    speed: num(pick(args, 'speed', 'SPEED', 5))
+    spacingM: num(pick(args, 'spacing', 'SPACING', 10), '--spacing'),
+    speed: num(pick(args, 'speed', 'SPEED', 5), '--speed')
   };
   const gcsHost = String(pick(args, 'gcs-host', 'GCS_HOST', '127.0.0.1'));
-  const gcsPort = num(pick(args, 'gcs-port', 'GCS_PORT', 14550));
-  const bindPort = num(pick(args, 'bind-port', 'BIND_PORT', 0));
+  const gcsPort = port(pick(args, 'gcs-port', 'GCS_PORT', 14550), '--gcs-port');
+  const bindPort = port(pick(args, 'bind-port', 'BIND_PORT', 0), '--bind-port');
 
   const fleet = new VirtualFleet(config);
   fleet.on('command', (c) => {

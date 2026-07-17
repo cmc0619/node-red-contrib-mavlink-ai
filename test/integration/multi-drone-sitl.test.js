@@ -238,6 +238,14 @@ test('fleet is discovered, commanded, and never breaches the collision floor', a
         }),
       'fleet settles into the reversed formation'
     );
+    // Also wait for every reposition ACK while the resend loop is still active:
+    // position can settle before the ACK datagram lands, so clearing retries
+    // first could strand a drone whose ACK dropped and make the assertion below
+    // dereference a missing map entry.
+    await waitFor(
+      () => ctx.sysids.every((s) => ctx.ackMap.get(s) && ctx.ackMap.get(s).get(192) === 0),
+      'every drone ACKs the reposition'
+    );
   } finally {
     clearInterval(resend);
   }

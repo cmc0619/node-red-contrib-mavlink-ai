@@ -33,10 +33,29 @@ function parseArgs(argv) {
   return out;
 }
 
+/**
+ * Coerce a value to an integer in [min, max], exiting non-zero on a malformed
+ * or out-of-range argument rather than silently proceeding with NaN.
+ *
+ * @param {*} value
+ * @param {string} name
+ * @param {number} min
+ * @param {number} max
+ * @returns {number}
+ */
+function requireInt(value, name, min, max) {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < min || n > max) {
+    console.error(`verify-fleet-discovery: ${name} must be an integer in [${min}, ${max}] (got ${JSON.stringify(value)}).`);
+    process.exit(2);
+  }
+  return n;
+}
+
 const args = parseArgs(process.argv.slice(2));
-const PORT = Number(args.port || process.env.GCS_PORT || 14550);
-const EXPECT = Number(args.expect || process.env.EXPECT || 3);
-const TIMEOUT = Number(args.timeout || process.env.TIMEOUT || 30000);
+const PORT = requireInt(args.port || process.env.GCS_PORT || 14550, '--port', 0, 65535);
+const EXPECT = requireInt(args.expect || process.env.EXPECT || 3, '--expect', 1, 255);
+const TIMEOUT = requireInt(args.timeout || process.env.TIMEOUT || 30000, '--timeout', 1, 3600000);
 const DIALECT = args.dialect || process.env.DIALECT || 'ardupilotmega';
 
 const codec = new MavlinkCodec({ bundle: loadDialect(DIALECT), version: 'v2' });

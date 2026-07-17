@@ -10,6 +10,7 @@ on:
     branches: [main]
     paths:
       - 'test/sitl/**'
+      - 'test/integration/multi-drone-sitl.test.js'
       - 'examples/08-sitl/**'
       - 'lib/swarm/**'
       - 'lib/protocol/**'
@@ -17,6 +18,7 @@ on:
   pull_request:
     paths:
       - 'test/sitl/**'
+      - 'test/integration/multi-drone-sitl.test.js'
       - 'examples/08-sitl/**'
       - 'lib/swarm/**'
       - 'lib/protocol/**'

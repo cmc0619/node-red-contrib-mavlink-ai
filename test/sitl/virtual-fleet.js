@@ -81,6 +81,41 @@ function coord(raw, scale, intSentinel = false) {
 }
 
 /**
+ * Require an integer within [min, max], throwing a clear config error otherwise.
+ * Fleet sizing and identifiers are validated up front so a bad value fails at
+ * construction rather than surfacing later as a busy-loop timer or an opaque
+ * encode failure.
+ *
+ * @param {*} value
+ * @param {string} name
+ * @param {number} min  inclusive
+ * @param {number} max  inclusive
+ * @returns {number}
+ */
+function requireIntInRange(value, name, min, max) {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < min || n > max) {
+    throw new RangeError(`virtual-fleet: ${name} must be an integer in [${min}, ${max}] (got ${JSON.stringify(value)}).`);
+  }
+  return n;
+}
+
+/**
+ * Require a finite number strictly greater than zero.
+ *
+ * @param {*} value
+ * @param {string} name
+ * @returns {number}
+ */
+function requirePositive(value, name) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new RangeError(`virtual-fleet: ${name} must be a positive finite number (got ${JSON.stringify(value)}).`);
+  }
+  return n;
+}
+
+/**
  * One virtual vehicle. Owns its identity, its motion state, and its own
  * LinkState so its outbound frames carry a monotone per-system sequence.
  */
@@ -95,12 +130,12 @@ class VirtualDrone {
    * @param {number} [opts.climbRate=3]    vertical rate, m/s
    */
   constructor(opts) {
-    this.sysid = opts.sysid;
-    this.compid = opts.compid || 1;
+    this.sysid = requireIntInRange(opts.sysid, 'sysid', 1, 255);
+    this.compid = requireIntInRange(opts.compid || 1, 'compid', 1, 255);
     this.codec = opts.codec;
     this.link = new LinkState();
-    this.speed = opts.speed || 5;
-    this.climbRate = opts.climbRate || 3;
+    this.speed = requirePositive(opts.speed || 5, 'speed');
+    this.climbRate = requirePositive(opts.climbRate || 3, 'climbRate');
 
     this.home = { ...opts.home };
     this.pos = { ...opts.home };
@@ -290,23 +325,30 @@ class VirtualFleet extends EventEmitter {
     const bundle = loadDialect(this.dialect);
     this.codec = new MavlinkCodec({ bundle, version: 'v2' });
 
-    const count = opts.count || 3;
-    const baseSysid = opts.baseSysid || 1;
+    const count = requireIntInRange(opts.count !== undefined ? opts.count : 3, 'count', 1, 255);
+    const baseSysid = requireIntInRange(opts.baseSysid !== undefined ? opts.baseSysid : 1, 'baseSysid', 1, 255);
+    if (baseSysid + count - 1 > 255) {
+      throw new RangeError(
+        `virtual-fleet: baseSysid ${baseSysid} + count ${count} exceeds the 255 system-id ceiling.`
+      );
+    }
     const origin = opts.origin || { lat: 39.1, lon: -75.1, alt: 40 };
     const spacingM = opts.spacingM || 0;
 
-    this.telemetryHz = opts.telemetryHz || 5;
-    this.heartbeatHz = opts.heartbeatHz || 1;
+    this.telemetryHz = requirePositive(opts.telemetryHz || 5, 'telemetryHz');
+    this.heartbeatHz = requirePositive(opts.heartbeatHz || 1, 'heartbeatHz');
     this.minSeparationSeen = Infinity;
 
     this.drones = [];
     for (let i = 0; i < count; i += 1) {
+      const sysid = baseSysid + i;
+      // Space drones by their *absolute* system id, not the local loop index, so
+      // the one-container-per-drone Docker path (each process count=1) still puts
+      // every drone at a distinct start position instead of collocating them.
       const home = spacingM
-        ? { ...offsetLatLon(origin, { east: i * spacingM }), alt: origin.alt }
+        ? { ...offsetLatLon(origin, { east: (sysid - 1) * spacingM }), alt: origin.alt }
         : { ...origin };
-      this.drones.push(
-        new VirtualDrone({ sysid: baseSysid + i, codec: this.codec, home, speed: opts.speed })
-      );
+      this.drones.push(new VirtualDrone({ sysid, codec: this.codec, home, speed: opts.speed }));
     }
     this.byId = new Map(this.drones.map((d) => [d.sysid, d]));
 
@@ -343,10 +385,16 @@ class VirtualFleet extends EventEmitter {
       }
       this._decoder.write(buf);
     });
-    this.sock.on('error', (err) => this.emit('error', err));
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      // A bind failure (port in use, permission) must reject start() rather than
+      // leave the promise pending or crash on an unheard 'error' event. Swap the
+      // temporary bind-error listener for the runtime forwarder only once bound.
+      const onBindError = (err) => reject(err);
+      this.sock.once('error', onBindError);
       this.sock.bind(opts.bindPort || 0, opts.bindAddress || '0.0.0.0', () => {
+        this.sock.removeListener('error', onBindError);
+        this.sock.on('error', (err) => this.emit('error', err));
         const port = this.sock.address().port;
         this._startTelemetry();
         this.emit('listening', { port });
@@ -361,6 +409,13 @@ class VirtualFleet extends EventEmitter {
     const hbMs = Math.round(1000 / this.heartbeatHz);
     let last = Date.now();
 
+    // Sample the initial (t=0) state so a starting overlap is recorded before
+    // any drone moves. Per-tick sampling below then captures each interval's
+    // endpoints; at the telemetry rates used here dt·v_rel stays well under the
+    // separation floor, so endpoint sampling tracks the closest approach closely
+    // enough for the collision assertion (this is a lightweight sim, not a
+    // continuous-time swept-volume solver).
+    this._sampleSeparation();
     this._timers.push(
       setInterval(() => {
         const now = Date.now();
