@@ -76,7 +76,7 @@ function num(v, name) {
  * @param {string} name
  * @returns {number}
  */
-function port(v, name) {
+function toPort(v, name) {
   const n = num(v, name);
   if (!Number.isInteger(n) || n < 0 || n > 65535) {
     throw new Error(`run-fleet: ${name} must be an integer port in [0, 65535] (got ${JSON.stringify(v)}).`);
@@ -105,8 +105,8 @@ async function main() {
     speed: num(pick(args, 'speed', 'SPEED', 5), '--speed')
   };
   const gcsHost = String(pick(args, 'gcs-host', 'GCS_HOST', '127.0.0.1'));
-  const gcsPort = port(pick(args, 'gcs-port', 'GCS_PORT', 14550), '--gcs-port');
-  const bindPort = port(pick(args, 'bind-port', 'BIND_PORT', 0), '--bind-port');
+  const gcsPort = toPort(pick(args, 'gcs-port', 'GCS_PORT', 14550), '--gcs-port');
+  const bindPort = toPort(pick(args, 'bind-port', 'BIND_PORT', 0), '--bind-port');
 
   const fleet = new VirtualFleet(config);
   fleet.on('command', (c) => {
