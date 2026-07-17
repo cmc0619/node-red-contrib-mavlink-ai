@@ -288,3 +288,16 @@ test('param node rejects a broadcast target_system before locking/sending (#197)
   assert.strictEqual(error.payload.code, 'BROADCAST_NO_ACK');
   assert.strictEqual(conn.sent.length, 0, 'no PARAM message was sent to the broadcast target');
 });
+
+test('param node reports an unresolved Local Identity on its error output', async () => {
+  const { conn, node } = setup({ action: 'read', paramId: 'RC1_MIN' });
+  conn.resolveOutboundIdentity = () => {
+    throw Object.assign(new Error('Requested Local Identity does not exist.'), { code: 'LOCAL_IDENTITY_UNRESOLVED' });
+  };
+
+  const outputs = await run(node, { payload: { localIdentity: 'missing' } });
+  assert.strictEqual(outputs.length, 1);
+  assert.strictEqual(outputs[0][2].topic, 'mavlink/error');
+  assert.strictEqual(outputs[0][2].payload.code, 'LOCAL_IDENTITY_UNRESOLVED');
+  assert.strictEqual(conn.sent.length, 0, 'no PARAM message is sent when identity resolution fails');
+});
