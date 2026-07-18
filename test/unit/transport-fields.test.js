@@ -111,3 +111,20 @@ test('field visibility is protocol-specific', () => {
 test('an unknown transport still yields a usable visibility spec (editor safety)', () => {
   assert.doesNotThrow(() => isFieldVisible('not-a-transport', 'bindPort'));
 });
+
+test('a present remote port must be a real port, not 0 or out of range (#243, Codex review)', () => {
+  /**
+   * remotePort 0 passes a pure presence check but the transport coerces it to
+   * "no fixed destination", so sends fail forever as the transient UDP_NO_PEER
+   * — hiding a permanent misconfiguration. A present remote port must be a
+   * usable 1..65535 destination for both udp and tcp.
+   */
+  for (const transport of ['udp', 'tcp']) {
+    const zero = validateConnectionConfig({ transport, remoteHost: '10.0.0.5', remotePort: 0 });
+    assert.ok(zero.some((p) => p.field === 'remotePort'), `${transport} port 0: ${JSON.stringify(zero)}`);
+    const range = validateConnectionConfig({ transport, remoteHost: '10.0.0.5', remotePort: 70000 });
+    assert.ok(range.some((p) => p.field === 'remotePort'), `${transport} port 70000: ${JSON.stringify(range)}`);
+    const junk = validateConnectionConfig({ transport, remoteHost: '10.0.0.5', remotePort: 'abc' });
+    assert.ok(junk.some((p) => p.field === 'remotePort'), `${transport} junk port: ${JSON.stringify(junk)}`);
+  }
+});

@@ -86,7 +86,15 @@
       if (hasPort && !hasHost) {
         bad.remoteHost = true;
       }
-      var hasRemote = hasHost && hasPort;
+      if (hasPort) {
+        // A present remote port must be a usable destination (1..65535):
+        // port 0 deploys as "no fixed destination" and fails silently (#243).
+        var portNum = Number(formValue(node, 'remotePort'));
+        if (!(portNum >= 1 && portNum <= 65535 && portNum === Math.floor(portNum))) {
+          bad.remotePort = true;
+        }
+      }
+      var hasRemote = hasHost && hasPort && !bad.remotePort;
       if (t === 'udp' && !hasBind && !hasRemote && !bad.remoteHost && !bad.remotePort) {
         bad.bindPort = true;
       }
