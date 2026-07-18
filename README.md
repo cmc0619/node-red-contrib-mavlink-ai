@@ -583,6 +583,30 @@ Optional:
   serial transport is configured. UDP/TCP usage must not require serial
   support.
 
+### Known advisory: xml2js under mavlink-mappings-gen
+
+`mavlink-mappings-gen` (all releases through 0.0.10, tracked at
+[padcom/mavlink-mappings-gen](https://github.com/padcom/mavlink-mappings-gen))
+pins `xml2js@^0.4.23`, which carries a moderate prototype-pollution advisory
+([GHSA-776f-qx25-q3cc](https://github.com/advisories/GHSA-776f-qx25-q3cc)).
+This repository forces the patched `xml2js@^0.5.0` via an npm `overrides`
+entry, which covers development, CI, and running Node-RED from a checkout —
+but npm applies `overrides` only from the root project, so an npm-installed
+copy of this package still resolves the vulnerable version underneath
+`mavlink-mappings-gen`.
+
+Accepted risk for published installs, and why: that copy of xml2js parses
+exactly one thing — the operator's own custom dialect XML file, when one is
+configured on a Vehicle Profile. Bundled dialects never touch it. An operator
+who can supply that file already authors flows (including arbitrary function
+nodes), so a malicious dialect file grants nothing the author does not
+already have. Installations that want the patched parser everywhere can add
+the same override to their own root `package.json`:
+
+```json
+"overrides": { "mavlink-mappings-gen": { "xml2js": "^0.5.0" } }
+```
+
 ## Tests
 
 ```bash
