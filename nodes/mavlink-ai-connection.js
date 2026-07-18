@@ -14,6 +14,7 @@ const { PRIORITY } = require('../lib/runtime/send-priority');
 const { statusPayload } = require('../lib/util/status');
 const { toInt, toBool, parseIdListStrict } = require('../lib/util/validation');
 const { MavlinkError, toMavlinkError, errorPayload, TRANSPORT_NOT_READY_CODES } = require('../lib/util/errors');
+const { boundedSet } = require('../lib/util/bounded-map');
 
 /**
  * Minimum HEARTBEAT interval. HEARTBEAT is a low-rate presence/status message,
@@ -177,6 +178,94 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node.subscriptions.setErrorHandler((err) =>
       node.emitter.emit('error', toMavlinkError(err, 'SUBSCRIBER_ERROR'))
     );
+
+    /**
+     * Vehicle capability cache (#233): AUTOPILOT_VERSION.capabilities per
+     * wire identity, learned passively from any decoded traffic. The param
+     * workflows read it to pick the integer-parameter encoding the vehicle
+     * itself advertises instead of trusting the profile firmware label.
+     * Keys are wire-derived, so the map is bounded like every other
+     * wire-keyed map (#281).
+     */
+    node._vehicleCaps = new Map();
+    /** Wire identities already asked for AUTOPILOT_VERSION this deploy. */
+    node._capProbes = new Map();
+    node.subscriptions.subscribe({ messageNames: ['AUTOPILOT_VERSION'] }, (message) => {
+      const p = message.payload;
+      boundedSet(node._vehicleCaps, `${p.sysid}:${p.compid}`, p.fields.capabilities);
+    });
+
+    /**
+     * The cached AUTOPILOT_VERSION.capabilities for a wire identity, or
+     * undefined while the vehicle has not reported (yet). Component 0
+     * addresses the whole system, but a report is always cached under the
+     * responder's REAL component id — an exact 0-lookup could never hit
+     * (#294 review) — so compid 0 resolves the autopilot (component 1, the
+     * parameter owner in practice) and falls back to any component of that
+     * system.
+     *
+     * @param {number} sysid
+     * @param {number} compid  0 acts as a system-wide wildcard
+     * @returns {bigint|number|undefined}
+     */
+    node.getVehicleCapabilities = (sysid, compid) => {
+      if (Number(compid) !== 0) {
+        return node._vehicleCaps.get(`${sysid}:${compid}`);
+      }
+      const autopilot = node._vehicleCaps.get(`${sysid}:1`);
+      if (autopilot !== undefined) {
+        return autopilot;
+      }
+      const prefix = `${sysid}:`;
+      for (const [key, capabilities] of node._vehicleCaps) {
+        if (key.startsWith(prefix)) {
+          return capabilities;
+        }
+      }
+      return undefined;
+    };
+
+    /**
+     * Ask a vehicle to emit AUTOPILOT_VERSION (MAV_CMD_REQUEST_MESSAGE), at
+     * most once per wire identity per deploy. Fire-and-forget by design: the
+     * probe must never delay or fail the operation that triggered it — a
+     * vehicle that ignores the request simply stays on the firmware-label
+     * fallback. Errors are swallowed for the same reason (a dead link
+     * already fails the real operation loudly).
+     *
+     * @param {object} opts  { targetSystem, targetComponent, vehicleProfile?,
+     *   localIdentity? }
+     * @returns {void}
+     */
+    node.requestVehicleCapabilities = ({ targetSystem, targetComponent, vehicleProfile, localIdentity }) => {
+      const key = `${targetSystem}:${targetComponent}`;
+      if (node._capProbes.has(key) || node.getVehicleCapabilities(targetSystem, targetComponent) !== undefined) {
+        return;
+      }
+      boundedSet(node._capProbes, key, true);
+      Promise.resolve(
+        node.send({
+          name: 'COMMAND_LONG',
+          vehicleProfile,
+          localIdentity,
+          fields: {
+            target_system: targetSystem,
+            target_component: targetComponent,
+            command: 'MAV_CMD_REQUEST_MESSAGE',
+            /** param1 = requested message id: AUTOPILOT_VERSION (148). */
+            param1: 148
+          }
+        })
+      ).catch(() => {
+        /**
+         * A rejected send never reached the wire (#294 review): forget the
+         * attempt so the next param op retries. A startup blip — UDP_NO_PEER
+         * before the first inbound packet, TRANSPORT_NOT_READY, QUEUE_FULL —
+         * must not disable capability detection for the rest of the deploy.
+         */
+        node._capProbes.delete(key);
+      });
+    };
     node.locks = new LockManager();
     node.statusState = 'idle';
     node.statusDetail = '';

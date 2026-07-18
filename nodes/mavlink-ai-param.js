@@ -1,6 +1,8 @@
 'use strict';
 
 const { ParamRead, ParamSet, ParamSetAuto, ParamList } = require('../lib/param/param-workflow');
+const { resolveParamEncoding } = require('../lib/param/param-encoding');
+const { boundedSet } = require('../lib/util/bounded-map');
 const { toInt, firstDefined } = require('../lib/util/validation');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { MavlinkError } = require('../lib/util/errors');
@@ -52,6 +54,14 @@ module.exports = function registerMavlinkAiParam(RED) {
     // running until success/timeout on an obsolete node.
     const activeWorkflows = new Set();
     let closed = false;
+
+    /**
+     * Wire identities already warned about a capability/label encoding
+     * mismatch (#233) — the disagreement holds for every subsequent op, so
+     * one warning per vehicle per deploy is signal, repetition is noise.
+     * Bounded because the key is wire-derived (#281).
+     */
+    const encodingMismatchWarned = new Map();
 
     node.on('input', async (msg, send, done) => {
       /**
@@ -148,6 +158,50 @@ module.exports = function registerMavlinkAiParam(RED) {
         return fail(err, 'LOCAL_IDENTITY_UNRESOLVED');
       }
 
+      /**
+       * Integer-encoding resolution (#233): ask the vehicle for
+       * AUTOPILOT_VERSION once (fire-and-forget — a non-reporting vehicle
+       * costs nothing), then resolve lazily at every encode/decode so bits
+       * that arrive mid-workflow apply immediately. Probed bits win over the
+       * profile firmware label; a disagreement warns once per vehicle,
+       * because a mislabeled profile silently corrupts every integer
+       * parameter — the exact failure this probe exists to prevent.
+       *
+       * Deliberate residual window (#294 review, owner decision): a write
+       * racing the FIRST probe answer still encodes via the label — #233
+       * prescribes that the probe never delays or fails the op, because
+       * blocking would tax every integer write to vehicles that never report
+       * AUTOPILOT_VERSION. Against a mislabeled profile this narrows the
+       * exposure from "every write, forever" to "writes in the first seconds
+       * after deploy", and the once-per-vehicle warning surfaces the mislabel
+       * the moment bits arrive.
+       */
+      node.connection.requestVehicleCapabilities({
+        targetSystem,
+        targetComponent,
+        vehicleProfile: profile ? profile.id : null,
+        localIdentity
+      });
+      const paramEncoding = () => {
+        const resolved = resolveParamEncoding({
+          capabilities: node.connection.getVehicleCapabilities(targetSystem, targetComponent),
+          firmware: defaults.firmware
+        });
+        if (resolved.source === 'capabilities') {
+          const labeled = defaults.firmware === 'px4' ? 'bytewise' : 'ccast';
+          const vehicleKey = `${targetSystem}:${targetComponent}`;
+          if (resolved.encoding !== labeled && !encodingMismatchWarned.has(vehicleKey)) {
+            boundedSet(encodingMismatchWarned, vehicleKey, true);
+            node.warn(
+              `mavlink-ai-param: vehicle ${vehicleKey} advertises ${resolved.encoding} integer-parameter ` +
+                `encoding, but the profile firmware label ('${defaults.firmware || 'generic'}') implies ${labeled}. ` +
+                'Using the vehicle’s advertised encoding; fix the Vehicle Profile firmware to silence this.'
+            );
+          }
+        }
+        return resolved.encoding;
+      };
+
       const opts = {
         connection: node.connection,
         // Carried on every send so the connection encodes with the effective
@@ -158,8 +212,9 @@ module.exports = function registerMavlinkAiParam(RED) {
         targetSystem,
         targetComponent,
         enums: bundle ? bundle.enums : null,
-        // 'px4' switches integer param values to the byte-union convention.
+        // Label fallback for vehicles that never report capabilities.
         firmware: defaults.firmware,
+        paramEncoding,
         timeoutMs: node.timeoutMs,
         maxRetries: node.maxRetries,
         onProgress

@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const { MockRED } = require('../helpers/mock-red');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { fakeIdentity } = require('../helpers/v3-config');
+const { unionIntToFloat } = require('../../lib/param/param-workflow');
 
 const NUL = String.fromCharCode(0);
 
@@ -35,6 +36,13 @@ function fakeConnection() {
   };
   // v3: the connection resolves the outbound Local Identity (#228).
   conn.resolveOutboundIdentity = () => fakeIdentity();
+  /** #233 capability API: tests set conn.capabilities to simulate a report. */
+  conn.capabilities = undefined;
+  conn.capabilityProbes = [];
+  conn.getVehicleCapabilities = () => conn.capabilities;
+  conn.requestVehicleCapabilities = (opts) => {
+    conn.capabilityProbes.push(opts);
+  };
   return conn;
 }
 
@@ -300,4 +308,38 @@ test('param node reports an unresolved Local Identity on its error output', asyn
   assert.strictEqual(outputs[0][2].topic, 'mavlink/error');
   assert.strictEqual(outputs[0][2].payload.code, 'LOCAL_IDENTITY_UNRESOLVED');
   assert.strictEqual(conn.sent.length, 0, 'no PARAM message is sent when identity resolution fails');
+});
+
+test('param node probes AUTOPILOT_VERSION and uses advertised bytewise encoding (#233)', async () => {
+  const { conn, node } = setup({ action: 'set', paramId: 'SYS_AUTOSTART', paramType: 'MAV_PARAM_TYPE_INT32' });
+  /** BYTEWISE bit (0x10) behind a generic-labeled profile. */
+  conn.capabilities = 0x10n;
+  const outputs = await run(node, { payload: { param_value: 4001 } }, () => {
+    const set = conn.sent.find((m) => m.name === 'PARAM_SET');
+    assert.ok(set, 'PARAM_SET sent');
+    assert.strictEqual(set.fields.param_value, unionIntToFloat(4001, 6), 'byte-union despite the generic label');
+    conn.deliver(paramValue({ id: 'SYS_AUTOSTART', value: unionIntToFloat(4001, 6), type: 6 }));
+  });
+  const result = outputs.map((o) => o[0]).filter(Boolean).pop();
+  assert.strictEqual(result.payload.param_value, 4001, 'echo decoded as byte-union');
+  assert.strictEqual(conn.capabilityProbes.length, 1, 'the op requested a probe');
+  assert.strictEqual(conn.capabilityProbes[0].targetSystem, 1);
+  assert.strictEqual(node.warnings.length, 1, 'capability/label mismatch warned');
+  assert.match(node.warnings[0], /advertises bytewise/);
+
+  /** Same vehicle again: the mismatch is warned once per vehicle per deploy. */
+  await run(node, { payload: { param_value: 4002 } }, () =>
+    conn.deliver(paramValue({ id: 'SYS_AUTOSTART', value: unionIntToFloat(4002, 6), type: 6 }))
+  );
+  assert.strictEqual(node.warnings.length, 1, 'no repeat warning');
+});
+
+test('no capability report keeps the firmware-label behavior, unwarned (#233)', async () => {
+  const { conn, node } = setup({ action: 'set', paramId: 'SYS_AUTOSTART', paramType: 'MAV_PARAM_TYPE_INT32' });
+  await run(node, { payload: { param_value: 7 } }, () => {
+    const set = conn.sent.find((m) => m.name === 'PARAM_SET');
+    assert.strictEqual(set.fields.param_value, 7, 'generic label: numeric cast, exactly as before');
+    conn.deliver(paramValue({ id: 'SYS_AUTOSTART', value: 7, type: 6 }));
+  });
+  assert.strictEqual(node.warnings.length, 0, 'label fallback is not a mismatch');
 });

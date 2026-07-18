@@ -772,6 +772,8 @@ connection.getProfileForPacket(packet)
 connection.resolveProfile(id) // throws PROFILE_UNRESOLVED
 connection.acquireLock(lockName, owner, options)
 connection.releaseLock(lockName, owner)
+connection.getVehicleCapabilities(sysid, compid) // cached AUTOPILOT_VERSION bits (#233)
+connection.requestVehicleCapabilities(opts) // fire-and-forget probe, once per identity
 ```
 
 The profile node should expose:

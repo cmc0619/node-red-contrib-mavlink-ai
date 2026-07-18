@@ -268,6 +268,36 @@ test('ParamSet encodes and confirms byte-union integers for px4 (#27)', async ()
   assert.strictEqual(res.payload.applied, true);
 });
 
+test('a paramEncoding resolver overrides the firmware label per use (#233)', async () => {
+  /**
+   * Capability-probed encoding: a generic-labeled profile whose vehicle
+   * advertises BYTEWISE must byte-union its integers exactly like px4 —
+   * and because the resolver is consulted lazily, bits that arrive between
+   * construction and send still apply.
+   */
+  const conn = new FakeConnection();
+  let advertised = 'ccast';
+  const wf = new ParamSet({
+    connection: conn,
+    targetSystem: 1,
+    targetComponent: 1,
+    firmware: 'generic',
+    paramEncoding: () => advertised,
+    paramId: 'SYS_AUTOSTART',
+    paramType: 'MAV_PARAM_TYPE_INT32',
+    enums: loadDialect('ardupilotmega').enums,
+    value: 4001
+  });
+  advertised = 'bytewise';
+  const p = wf.run();
+  const set = conn.sent.find((m) => m.name === 'PARAM_SET');
+  assert.strictEqual(set.fields.param_value, unionIntToFloat(4001, 6), 'byte-union despite the generic label');
+  conn.deliverParamValue(paramValue({ id: 'SYS_AUTOSTART', value: unionIntToFloat(4001, 6), type: 6 }));
+  const res = await p;
+  assert.strictEqual(res.payload.param_value, 4001, 'echo decoded as byte-union too');
+  assert.strictEqual(res.payload.applied, true);
+});
+
 test('ParamList ignores the param_index 65535 sentinel (#28)', async () => {
   const conn = new FakeConnection();
   const wf = new ParamList({ connection: conn, targetSystem: 1, targetComponent: 1, timeoutMs: 20, maxRetries: 5 });
@@ -281,6 +311,34 @@ test('ParamList ignores the param_index 65535 sentinel (#28)', async () => {
   assert.strictEqual(res.payload.count, 3);
   assert.deepStrictEqual(res.payload.params.map((x) => x.param_index), [0, 1, 2]);
   assert.ok(!res.payload.params.some((x) => x.param_id === 'NOTIFY'));
+});
+
+test('capability bits arriving mid-list do not split the list across conventions (#294 review)', async () => {
+  /**
+   * The probe's AUTOPILOT_VERSION answer can land between list entries. Raw
+   * fields are stored and projected once at completion, so integer params
+   * received BEFORE the bits arrived decode identically to those after.
+   */
+  const conn = new FakeConnection();
+  let advertised = 'ccast';
+  const wf = new ParamList({
+    connection: conn,
+    targetSystem: 1,
+    targetComponent: 1,
+    firmware: 'generic',
+    paramEncoding: () => advertised
+  });
+  const p = wf.run();
+  conn.deliverParamValue(paramValue({ id: 'A', index: 0, count: 2, value: unionIntToFloat(41, 6), type: 6 }));
+  /** Bits arrive mid-list: the vehicle advertises BYTEWISE. */
+  advertised = 'bytewise';
+  conn.deliverParamValue(paramValue({ id: 'B', index: 1, count: 2, value: unionIntToFloat(42, 6), type: 6 }));
+  const res = await p;
+  assert.deepStrictEqual(
+    res.payload.params.map((x) => x.param_value),
+    [41, 42],
+    'both entries decoded byte-union, including the one received before the bits'
+  );
 });
 
 test('ParamSet requires a numeric value', () => {

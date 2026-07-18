@@ -52,6 +52,9 @@ function setup({ sendError, identityError } = {}) {
       }
       return fakeIdentity();
     };
+    /** #233 capability API (unused by these tests, required by the contract). */
+    this.getVehicleCapabilities = () => undefined;
+    this.requestVehicleCapabilities = () => {};
   });
   RED.create('stub-connection', { id: 'conn1' });
   return { RED };
