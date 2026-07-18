@@ -5,6 +5,7 @@ const { parseList, parseIdListStrict, toNum, toBool, idAccepted } = require('../
 /** Inclusive max for a MAVLink 2 (24-bit) message id. */
 const MAX_MSG_ID = 0xffffff;
 const { fieldsSignature } = require('../lib/util/fields-signature');
+const { boundedSet } = require('../lib/util/bounded-map');
 const { registerEditorApi } = require('../lib/editor-api');
 
 /**
@@ -60,6 +61,13 @@ module.exports = function registerMavlinkAiFilter(RED) {
     node.rateLimitHz = toNum(config.rateLimitHz, 0);
     node.changedOnly = toBool(config.changedOnly, false);
 
+    /**
+     * Rate-limit / changed-only state, keyed like the subscription registry's
+     * and bounded the same way (#281): the key embeds wire-derived
+     * connection_id/sysid/compid, so an identity sweep would otherwise grow
+     * these for the life of a deploy. Inserts go through boundedSet
+     * (MAX_TRACKED_KEYS entries, oldest-inserted evicted first).
+     */
     const lastDelivered = new Map(); // key -> timestamp
     const lastSignature = new Map(); // key -> JSON of fields
 
@@ -152,11 +160,11 @@ module.exports = function registerMavlinkAiFilter(RED) {
         if (lastSignature.get(key) === sig) {
           return done();
         }
-        lastSignature.set(key, sig);
+        boundedSet(lastSignature, key, sig);
       }
 
       if (node.rateLimitHz > 0) {
-        lastDelivered.set(key, now);
+        boundedSet(lastDelivered, key, now);
       }
 
       send(msg);
