@@ -313,6 +313,34 @@ test('ParamList ignores the param_index 65535 sentinel (#28)', async () => {
   assert.ok(!res.payload.params.some((x) => x.param_id === 'NOTIFY'));
 });
 
+test('capability bits arriving mid-list do not split the list across conventions (#294 review)', async () => {
+  /**
+   * The probe's AUTOPILOT_VERSION answer can land between list entries. Raw
+   * fields are stored and projected once at completion, so integer params
+   * received BEFORE the bits arrived decode identically to those after.
+   */
+  const conn = new FakeConnection();
+  let advertised = 'ccast';
+  const wf = new ParamList({
+    connection: conn,
+    targetSystem: 1,
+    targetComponent: 1,
+    firmware: 'generic',
+    paramEncoding: () => advertised
+  });
+  const p = wf.run();
+  conn.deliverParamValue(paramValue({ id: 'A', index: 0, count: 2, value: unionIntToFloat(41, 6), type: 6 }));
+  /** Bits arrive mid-list: the vehicle advertises BYTEWISE. */
+  advertised = 'bytewise';
+  conn.deliverParamValue(paramValue({ id: 'B', index: 1, count: 2, value: unionIntToFloat(42, 6), type: 6 }));
+  const res = await p;
+  assert.deepStrictEqual(
+    res.payload.params.map((x) => x.param_value),
+    [41, 42],
+    'both entries decoded byte-union, including the one received before the bits'
+  );
+});
+
 test('ParamSet requires a numeric value', () => {
   assert.throws(
     () => new ParamSet({ connection: new FakeConnection(), targetSystem: 1, targetComponent: 1, paramId: 'X' }),
