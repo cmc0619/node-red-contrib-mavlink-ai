@@ -2493,15 +2493,24 @@ function resolveTargetId(name, topLevel, fieldLevel, fallback) {
 
 /**
  * Build a human-readable status detail describing what the transport bound to
- * or connected to.
+ * or connected to. The transport's own listening/connected info is preferred
+ * over the node config: an ephemeral bind (port 0) reports the actually
+ * assigned port, and udp-out — which binds ephemerally for sending only and
+ * signals that with `{ sending: true }` — reports its send target instead of
+ * a "Listening" it never does.
  *
  * @param {object} node  the connection node
  * @param {object} info  transport listening/connected info
  * @returns {string}
  */
 function describeListening(node, info) {
+  if (info && info.sending) {
+    return `Sending to ${node.remoteHost}:${node.remotePort}`;
+  }
   if (node.transportType.startsWith('udp') || node.transportType === 'tcp-server') {
-    return `Listening on ${node.bindAddress}:${node.bindPort}`;
+    const address = info && info.address ? info.address : node.bindAddress;
+    const port = info && info.port != null ? info.port : node.bindPort;
+    return `Listening on ${address}:${port}`;
   }
   if (node.transportType === 'serial') {
     return `Serial ${node.serialPath} @ ${node.serialBaud}`;

@@ -91,6 +91,25 @@ test('changedOnly suppresses identical payloads', () => {
   assert.strictEqual(count, 2);
 });
 
+test('changedOnly suppression stays per-subscriber when several subs share a dispatch', () => {
+  const reg = new SubscriptionRegistry();
+  const a = [];
+  const b = [];
+  /**
+   * Dispatch computes the changed-only signature once per message and shares
+   * it across subscribers; what must NOT be shared is the suppression state.
+   * Subscriber b arrives after the first dispatch, so the second dispatch is
+   * a repeat for a but brand new for b.
+   */
+  reg.subscribe({ changedOnly: true }, (m) => a.push(m.payload.fields.voltage));
+  reg.dispatch(msg('SYS_STATUS', 1, 1, { voltage: 12 }));
+  reg.subscribe({ changedOnly: true }, (m) => b.push(m.payload.fields.voltage));
+  reg.dispatch(msg('SYS_STATUS', 1, 1, { voltage: 12 }));
+  reg.dispatch(msg('SYS_STATUS', 1, 1, { voltage: 11 }));
+  assert.deepStrictEqual(a, [12, 11], 'first sub sees each distinct value once');
+  assert.deepStrictEqual(b, [12, 11], 'late sub is not suppressed by the first sub\'s history');
+});
+
 test('changedOnly handles BigInt (uint64) fields without throwing (#73)', () => {
   const reg = new SubscriptionRegistry();
   let count = 0;
