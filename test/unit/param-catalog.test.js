@@ -46,7 +46,8 @@ test('resolveParamDefSource maps firmware/vehicle and degrades for the rest (#12
   assert.strictEqual(resolveParamDefSource({ firmware: 'px4' }).sourceKey, 'px4');
 
   assert.strictEqual(resolveParamDefSource({ firmware: 'generic', vehicleType: 'copter' }), null);
-  assert.strictEqual(resolveParamDefSource({ firmware: 'custom' }), null);
+  // Unknown firmware strings degrade the same way generic does (no source).
+  assert.strictEqual(resolveParamDefSource({ firmware: 'betaflight' }), null);
 });
 
 test('update downloads, caches, and get/paramChoices/list read it back (#125)', async () => {
