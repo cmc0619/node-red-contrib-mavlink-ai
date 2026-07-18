@@ -265,3 +265,54 @@ test('out node forwards a clamped msg.priority to the connection (#241)', async 
   await RED.inject(node, { topic: 'mavlink/send', payload: { name: 'HEARTBEAT', fields: {} } });
   assert.deepStrictEqual(captured, [0, 3, undefined]);
 });
+
+/**
+ * #285: every node with an error-carrying output now delivers through the
+ * shared makeFail exit. One representative failure per remaining node pins
+ * the #89 contract — exactly one structured error on the right output,
+ * done() without an error — across the single-output family.
+ */
+
+test('move node: missing profile delivers one mavlink/error, done() clean (#285)', async () => {
+  const RED = new MockRED().loadNodes();
+  const node = RED.create('mavlink-ai-move', { id: 'mv1' });
+  const { collected, err } = await RED.inject(node, { payload: { lat: 1, lon: 2, alt: 10 } });
+  assert.strictEqual(err, undefined, 'done() without the error — Catch must not fire too');
+  assert.strictEqual(collected.length, 1, 'exactly one error message');
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'MISSING_PROFILE');
+  assert.strictEqual(collected[0].payload.node, 'mavlink-ai-move');
+});
+
+test('payload node: missing profile delivers one mavlink/error, done() clean (#285)', async () => {
+  const RED = new MockRED().loadNodes();
+  const node = RED.create('mavlink-ai-payload', { id: 'pl1', action: 'gripper_grab' });
+  const { collected, err } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(err, undefined);
+  assert.strictEqual(collected.length, 1);
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'MISSING_PROFILE');
+  assert.strictEqual(collected[0].payload.node, 'mavlink-ai-payload');
+});
+
+test('fanout node: missing profile delivers one mavlink/error, done() clean (#285)', async () => {
+  const RED = new MockRED().loadNodes();
+  const node = RED.create('mavlink-ai-fanout', { id: 'fo1' });
+  const { collected, err } = await RED.inject(node, { payload: { command: 'MAV_CMD_NAV_TAKEOFF', targets: [1] } });
+  assert.strictEqual(err, undefined);
+  assert.strictEqual(collected.length, 1);
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'MISSING_PROFILE');
+  assert.strictEqual(collected[0].payload.node, 'mavlink-ai-fanout');
+});
+
+test('formation node: empty vehicle set delivers one mavlink/error, done() clean (#285)', async () => {
+  const RED = new MockRED().loadNodes();
+  const node = RED.create('mavlink-ai-formation', { id: 'fm1', shape: 'wedge', anchorMode: 'msg' });
+  const { collected, err } = await RED.inject(node, { payload: { lat: 1, lon: 2, alt: 10, sysids: [] } });
+  assert.strictEqual(err, undefined);
+  assert.strictEqual(collected.length, 1);
+  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  assert.strictEqual(collected[0].payload.code, 'NO_TARGETS');
+  assert.strictEqual(collected[0].payload.node, 'mavlink-ai-formation');
+});

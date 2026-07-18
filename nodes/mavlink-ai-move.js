@@ -2,7 +2,8 @@
 
 const { buildSetpoint, setpointWarnings } = require('../lib/move/setpoint');
 const { toNum, toBool, firstDefined } = require('../lib/util/validation');
-const { errorPayload, toMavlinkError } = require('../lib/util/errors');
+const { MavlinkError, errorPayload, toMavlinkError } = require('../lib/util/errors');
+const { makeFail } = require('../lib/util/node-errors');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { watchProfileBadge } = require('../lib/util/node-lifecycle');
 const { PRIORITY } = require('../lib/runtime/send-priority');
@@ -100,6 +101,29 @@ module.exports = function registerMavlinkAiMove(RED) {
     }
 
     node.on('input', async (msg, send, done) => {
+      /**
+       * The single error exit (#285): one closure binds node/msg/send/done —
+       * call sites pass only the failure, so the positional threading that
+       * produced the #276 arity shift cannot recur. The connection label is
+       * read lazily at failure time.
+       */
+      /**
+       * A send failure must name the connection it actually sent on, even if
+       * a live redeploy replaced node.connection mid-flight (#128/#238) — the
+       * send path records its captured connection here before awaiting.
+       */
+      let sentOn = null;
+      const fail = makeFail({
+        node,
+        nodeName: 'mavlink-ai-move',
+        msg,
+        send,
+        done,
+        connectionName: () => {
+          const c = sentOn || node.connection;
+          return c && c.name;
+        }
+      });
       const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
 
       /**
@@ -121,11 +145,7 @@ module.exports = function registerMavlinkAiMove(RED) {
       }
 
       if (!node.profile || !node.profile.isValid || !node.profile.isValid()) {
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-move',
-          code: 'MISSING_PROFILE',
-          message: 'Move node has no valid profile/dialect.'
-        }));
+        return fail(new MavlinkError('MISSING_PROFILE', 'Move node has no valid profile/dialect.'));
       }
 
       const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
@@ -137,13 +157,7 @@ module.exports = function registerMavlinkAiMove(RED) {
         validateTargetSystem(targetSystem);
         validateTargetComponent(targetComponent);
       } catch (err) {
-        const e = toMavlinkError(err, 'INVALID_FIELD');
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-move',
-          code: e.code,
-          message: e.message,
-          context: e.context
-        }));
+        return fail(err, 'INVALID_FIELD');
       }
 
       const frameName = firstDefined(payload.frame, node.frame);
@@ -173,14 +187,7 @@ module.exports = function registerMavlinkAiMove(RED) {
           targetComponent
         });
       } catch (err) {
-        const e = toMavlinkError(err, 'BAD_SETPOINT');
-        node.status({ fill: 'red', shape: 'ring', text: e.code });
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-move',
-          code: e.code,
-          message: e.message,
-          context: e.context
-        }));
+        return fail(err, 'BAD_SETPOINT');
       }
 
       /**
@@ -213,11 +220,7 @@ module.exports = function registerMavlinkAiMove(RED) {
         streamOverride === true || (streamOverride === undefined && (node.stream || !!node._streamTimer));
       if (streaming) {
         if (!node.connection) {
-          return finishError(node, msg, send, done, errorPayload({
-            node: 'mavlink-ai-move',
-            code: 'STREAM_NEEDS_CONNECTION',
-            message: 'Streaming requires a Connection to send setpoints continuously.'
-          }));
+          return fail(new MavlinkError('STREAM_NEEDS_CONNECTION', 'Streaming requires a Connection to send setpoints continuously.'));
         }
         /**
          * PX4 drops out of OFFBOARD after ~0.5 s without a fresh setpoint, so a
@@ -252,6 +255,7 @@ module.exports = function registerMavlinkAiMove(RED) {
        * throw a TypeError that leaves done() uncalled.
        */
       const connection = node.connection;
+      sentOn = connection;
       if (connection) {
         try {
           /** Setpoints ride the ELEVATED band (#241): their cadence keeps
@@ -268,15 +272,7 @@ module.exports = function registerMavlinkAiMove(RED) {
           node.status({ fill: 'green', shape: 'dot', text: `sent ${labelFor(built.name)}` });
           return done();
         } catch (err) {
-          const e = toMavlinkError(err, 'SEND_FAILED');
-          node.status({ fill: 'red', shape: 'ring', text: e.code });
-          return finishError(node, msg, send, done, errorPayload({
-            node: 'mavlink-ai-move',
-            connection: connection.name,
-            code: e.code,
-            message: e.message,
-            context: e.context
-          }));
+          return fail(err, 'SEND_FAILED');
         }
       }
 
@@ -465,26 +461,3 @@ function labelFor(name) {
   return name === 'SET_POSITION_TARGET_GLOBAL_INT' ? 'global' : 'local';
 }
 
-/**
- * Emit a structured error on the single output and finish. The move node has no
- * dedicated error output, so — like the build node — operational failures ride
- * the output as a `mavlink/error` message.
- *
- * @param {object} node
- * @param {function} send
- * @param {function} done
- * @param {object} payload  error payload (§14.5)
- * @returns {void}
- */
-function finishError(node, msg, send, done, payload) {
-  /**
-   * Re-use the inbound msg (Node-RED convention): a fresh object would drop
-   * `_msgid` correlation, `msg.parts` (split/join), and user-attached
-   * properties on exactly the error branch — the success paths already mutate
-   * and forward `msg`, and the command/fanout nodes do the same for errors.
-   */
-  msg.topic = 'mavlink/error';
-  msg.payload = payload;
-  send(msg);
-  done();
-}

@@ -2,7 +2,8 @@
 
 const { VehicleRegistry } = require('../lib/swarm/vehicle-registry');
 const { formationTargets, nextLeaderSysid, moveDistanceMeters } = require('../lib/swarm/formation');
-const { errorPayload, toMavlinkError } = require('../lib/util/errors');
+const { MavlinkError, errorPayload, toMavlinkError } = require('../lib/util/errors');
+const { makeFail } = require('../lib/util/node-errors');
 const { toInt, toNum, toBool, firstDefined, parseJsonObjectConfig } = require('../lib/util/validation');
 const { badgeForState } = require('../lib/util/status');
 const { safeDetach } = require('../lib/util/node-lifecycle');
@@ -83,15 +84,6 @@ module.exports = function registerMavlinkAiFormation(RED) {
     }
     if (node._configError) {
       node.status({ fill: 'red', shape: 'ring', text: 'invalid config' });
-    }
-
-    /** Emit a structured error and finish the input handler. */
-    function sendError(msg, send, done, code, message, context) {
-      node.status({ fill: 'red', shape: 'ring', text: code });
-      msg.topic = 'mavlink/error';
-      msg.payload = errorPayload({ node: 'mavlink-ai-formation', code, message, context });
-      send(msg);
-      done();
     }
 
     /** MAV_CMD_DO_REPOSITION in name or numeric (192) form. */
@@ -457,14 +449,20 @@ module.exports = function registerMavlinkAiFormation(RED) {
     }
 
     node.on('input', (msg, send, done) => {
+      /**
+       * The single error exit (#285): one closure binds node/msg/send/done,
+       * so call sites pass only the failure — no positional
+       * (msg, send, done, code, ...) threading to arity-shift (#276).
+       */
+      const fail = makeFail({ node, nodeName: 'mavlink-ai-formation', msg, send, done });
       if (node._configError) {
-        return sendError(msg, send, done, 'INVALID_CONFIG', `mavlink-ai-formation: ${node._configError}`);
+        return fail(new MavlinkError('INVALID_CONFIG', `mavlink-ai-formation: ${node._configError}`));
       }
 
       /** follow-leader: an input poke forces an immediate re-emit off the live registry. */
       if (isFollow) {
         if (!registry) {
-          return sendError(msg, send, done, 'NO_CONNECTION', 'Follow-leader needs a connection to receive telemetry on.');
+          return fail(new MavlinkError('NO_CONNECTION', 'Follow-leader needs a connection to receive telemetry on.'));
         }
         maybeEmit(true);
         return done();
@@ -474,8 +472,8 @@ module.exports = function registerMavlinkAiFormation(RED) {
       const p = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
       const sysids = extractSysids(p);
       if (!sysids.length) {
-        return sendError(msg, send, done, 'NO_TARGETS',
-          'Formation needs a vehicle list (payload.sysids, a swarm registry payload.vehicles, or payload.targets).');
+        return fail(new MavlinkError('NO_TARGETS',
+          'Formation needs a vehicle list (payload.sysids, a swarm registry payload.vehicles, or payload.targets).'));
       }
       const anchor = resolveAnchor(p);
       const heading =
@@ -496,7 +494,7 @@ module.exports = function registerMavlinkAiFormation(RED) {
         });
       } catch (err) {
         const e = toMavlinkError(err, 'FORMATION_FAILED');
-        return sendError(msg, send, done, e.code, e.message, e.context);
+        return fail(e);
       }
       msg.topic = 'swarm/formation';
       msg.payload = fanoutPayload(targets, baseFields(p));

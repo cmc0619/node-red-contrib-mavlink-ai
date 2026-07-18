@@ -4,7 +4,8 @@ const { getMessageClass } = require('../lib/dialects/dialect-loader');
 const normalizer = require('../lib/protocol/message-normalizer');
 const { validate } = require('../lib/protocol/message-validator');
 const { toBool, firstDefined, parseJsonObjectConfig } = require('../lib/util/validation');
-const { errorPayload } = require('../lib/util/errors');
+const { MavlinkError } = require('../lib/util/errors');
+const { makeFail } = require('../lib/util/node-errors');
 const { registerEditorApi } = require('../lib/editor-api');
 const { watchProfileBadge } = require('../lib/util/node-lifecycle');
 
@@ -47,22 +48,25 @@ module.exports = function registerMavlinkAiBuild(RED) {
     }
 
     node.on('input', (msg, send, done) => {
+      /**
+       * The single error exit (#285): one closure binds node/msg/send/done,
+       * so call sites pass only the failure — the shape that made the #276
+       * arity-shift bug impossible to write.
+       */
+      const fail = makeFail({ node, nodeName: 'mavlink-ai-build', msg, send, done });
       if (node._configError) {
-        sendError(node, msg, send, 'INVALID_CONFIG', `mavlink-ai-build: ${node._configError}`);
-        return done();
+        return fail(new MavlinkError('INVALID_CONFIG', `mavlink-ai-build: ${node._configError}`));
       }
       const bundle = node.profile && node.profile.isValid() ? node.profile.getDialect() : null;
       const name = msg.messageName || (msg.payload && msg.payload.name) || node.messageName;
 
       if (!bundle) {
-        sendError(node, msg, send, 'INVALID_PROFILE', 'Build node has no valid profile/dialect.');
-        return done();
+        return fail(new MavlinkError('INVALID_PROFILE', 'Build node has no valid profile/dialect.'));
       }
 
       const clazz = getMessageClass(bundle, name);
       if (!clazz) {
-        sendError(node, msg, send, 'UNKNOWN_MESSAGE', `Unknown message '${name}' for dialect '${bundle.name}'.`);
-        return done();
+        return fail(new MavlinkError('UNKNOWN_MESSAGE', `Unknown message '${name}' for dialect '${bundle.name}'.`));
       }
 
       // Merge config fields with msg.payload fields (payload wins). When the
@@ -95,9 +99,8 @@ module.exports = function registerMavlinkAiBuild(RED) {
       try {
         fields = normalizer.normalizeFields(bundle, clazz, merged);
       } catch (e) {
-        // e.g. UNRESOLVED_FIELD_VALUE: a misspelled enum name on a numeric field.
-        sendError(node, msg, send, e.code || 'BAD_FIELDS', e.message);
-        return done();
+        /** e.g. UNRESOLVED_FIELD_VALUE: a misspelled enum name on a numeric field. */
+        return fail(e, 'BAD_FIELDS');
       }
       const defaults = node.profile.getDefaults();
 
@@ -131,19 +134,3 @@ module.exports = function registerMavlinkAiBuild(RED) {
   RED.nodes.registerType('mavlink-ai-build', MavlinkAiBuildNode);
 };
 
-/**
- * Emit a structured `mavlink/error` message and set the node's error badge.
- *
- * @param {object} node
- * @param {object} msg   the message being processed
- * @param {function} send
- * @param {string} code
- * @param {string} message
- * @returns {void}
- */
-function sendError(node, msg, send, code, message) {
-  node.status({ fill: 'red', shape: 'ring', text: code });
-  msg.topic = 'mavlink/error';
-  msg.payload = errorPayload({ node: 'mavlink-ai-build', code, message });
-  send(msg);
-}

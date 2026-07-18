@@ -1,6 +1,7 @@
 'use strict';
 
 const { MavlinkError, errorPayload, toMavlinkError } = require('../lib/util/errors');
+const { makeFail } = require('../lib/util/node-errors');
 const { firstDefined, toInt, toNum, toBool, parseJsonObjectConfig } = require('../lib/util/validation');
 const { registerEditorApi } = require('../lib/editor-api');
 const { resolveFlightMode, splitPx4CustomMode } = require('../lib/command/flight-modes');
@@ -298,25 +299,24 @@ module.exports = function registerMavlinkAiCommand(RED) {
      * @param {object} [context]
      * @returns {void}
      */
-    function sendError(msg, send, done, code, message, context) {
-      node.status({ fill: 'red', shape: 'ring', text: code });
-      msg.topic = 'mavlink/error';
-      msg.payload = errorPayload({ node: 'mavlink-ai-command', code, message, context });
-      send(msg);
-      done();
-    }
-
     node.on('input', (msg, send, done) => {
+      /**
+       * The single error exit (#285): one closure binds node/msg/send/done,
+       * so call sites pass only the failure — the positional
+       * (msg, send, done, code, ...) threading that invited a #276-style
+       * arity shift is gone.
+       */
+      const fail = makeFail({ node, nodeName: 'mavlink-ai-command', msg, send, done });
       if (node._configError) {
-        return sendError(msg, send, done, 'INVALID_CONFIG', `mavlink-ai-command: ${node._configError}`);
+        return fail(new MavlinkError('INVALID_CONFIG', `mavlink-ai-command: ${node._configError}`));
       }
       const incoming = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
       const selected = msg.command || incoming.command || node.command;
       const builder = COMMANDS[selected];
 
       if (!node.profile) {
-        return sendError(msg, send, done, 'MISSING_PROFILE',
-          'Command node has no profile configured (deleted or disabled config node?).');
+        return fail(new MavlinkError('MISSING_PROFILE',
+          'Command node has no profile configured (deleted or disabled config node?).'));
       }
 
       const defaults = node.profile.getDefaults ? node.profile.getDefaults() : {};
@@ -343,7 +343,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
           params.custom_submode = firstDefined(merged.custom_submode, resolved.custom_submode);
         } catch (err) {
           const e = toMavlinkError(err, 'UNKNOWN_MODE');
-          return sendError(msg, send, done, e.code, e.message, e.context);
+          return fail(e);
         }
       }
 
@@ -356,8 +356,8 @@ module.exports = function registerMavlinkAiCommand(RED) {
         // checkbox cannot protect flows deployed via import/API. Require the
         // confirm flag (editor checkbox or msg.payload.confirm) here too.
         if (selected === 'reboot' && !toBool(params.confirm, false)) {
-          return sendError(msg, send, done, 'REBOOT_NOT_CONFIRMED',
-            "Reboot requires explicit confirmation: check 'Confirm reboot' in the editor or set msg.payload.confirm = true.");
+          return fail(new MavlinkError('REBOOT_NOT_CONFIRMED',
+            "Reboot requires explicit confirmation: check 'Confirm reboot' in the editor or set msg.payload.confirm = true."));
         }
         // Friendly presets validate their semantically required inputs (#87)
         // instead of inheriting the permissive zero defaults of the raw path.
@@ -365,14 +365,14 @@ module.exports = function registerMavlinkAiCommand(RED) {
           validatePresetInputs(selected, merged, configParams);
         } catch (err) {
           const e = toMavlinkError(err, 'MISSING_REQUIRED_FIELD');
-          return sendError(msg, send, done, e.code, e.message, e.context);
+          return fail(e);
         }
         built = builder(params);
       } else if (isRawCommand(selected)) {
         built = { command: selected };
       } else {
-        return sendError(msg, send, done, 'UNKNOWN_COMMAND',
-          `Unknown command '${selected}'. Use a preset (${Object.keys(COMMANDS).join(', ')}) or a MAV_CMD_* name.`);
+        return fail(new MavlinkError('UNKNOWN_COMMAND',
+          `Unknown command '${selected}'. Use a preset (${Object.keys(COMMANDS).join(', ')}) or a MAV_CMD_* name.`));
       }
 
       // COMMAND_INT (issue #17): some commands are only valid via COMMAND_INT,
@@ -398,8 +398,8 @@ module.exports = function registerMavlinkAiCommand(RED) {
         const y = Number(firstDefined(merged.y, lonDeg !== undefined ? degToDegE7(Number(lonDeg)) : undefined, 0));
         const z = Number(firstDefined(merged.z, merged.alt, merged.param7, configParams.param7, 0));
         if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
-          return sendError(msg, send, done, 'BAD_COORDINATES',
-            `COMMAND_INT coordinates must be numeric (got x=${x}, y=${y}, z=${z}).`);
+          return fail(new MavlinkError('BAD_COORDINATES',
+            `COMMAND_INT coordinates must be numeric (got x=${x}, y=${y}, z=${z}).`));
         }
         fields = Object.assign(
           {
@@ -522,14 +522,14 @@ module.exports = function registerMavlinkAiCommand(RED) {
         }
       } catch (err) {
         const e = toMavlinkError(err, 'INVALID_FIELD');
-        return sendError(msg, send, done, e.code, e.message, e.context);
+        return fail(e);
       }
 
       // --- await-ack mode (issue #16): run the command protocol ourselves ----
       if (node.awaitAck) {
         if (!node.connection) {
-          return sendError(msg, send, done, 'NO_CONNECTION',
-            'Await ack requires a connection to send on (select one in the node config).');
+          return fail(new MavlinkError('NO_CONNECTION',
+            'Await ack requires a connection to send on (select one in the node config).'));
         }
         if (Number(targetSystem) === 0) {
           /**
@@ -538,8 +538,8 @@ module.exports = function registerMavlinkAiCommand(RED) {
            * COMMAND_TIMEOUT. The payload and fan-out nodes reject this the
            * same way (BROADCAST_NO_ACK).
            */
-          return sendError(msg, send, done, 'BROADCAST_NO_ACK',
-            'Broadcast (target_system 0) cannot confirm a COMMAND_ACK — use the fan-out node for per-vehicle acks, or disable await ack.');
+          return fail(new MavlinkError('BROADCAST_NO_ACK',
+            'Broadcast (target_system 0) cannot confirm a COMMAND_ACK — use the fan-out node for per-vehicle acks, or disable await ack.'));
         }
         const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
         // The Local Identity this workflow transmits as (#228): the explicit
@@ -551,7 +551,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
           identity = node.connection.resolveOutboundIdentity(incoming.localIdentity);
         } catch (err) {
           const e = toMavlinkError(err, 'LOCAL_IDENTITY_UNRESOLVED');
-          return sendError(msg, send, done, e.code, e.message, e.context);
+          return fail(e);
         }
         const source = identity.getIdentity();
         let workflow;
@@ -580,7 +580,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
           });
         } catch (err) {
           const e = toMavlinkError(err, 'BAD_COMMAND');
-          return sendError(msg, send, done, e.code, e.message, e.context);
+          return fail(e);
         }
         activeWorkflows.add(workflow);
         workflow
