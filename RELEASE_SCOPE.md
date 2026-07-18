@@ -224,7 +224,7 @@ The code should not hard-code ArduPilot assumptions into generic paths.
 Good:
 
 ```text
-profile.firmware = generic | ardupilot | px4 | custom
+profile.firmware = generic | ardupilot | px4
 profile.vehicleType = gcs | copter | plane | rover | boat | sub | antenna-tracker
 profile.dialect = ardupilotmega | common | custom | etc.
 ```

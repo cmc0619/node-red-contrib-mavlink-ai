@@ -184,7 +184,7 @@ Target-facing only; it owns no local identity, heartbeat, or signing.
 - MAVLink version: v1, v2, or auto
 - vehicle family: copter, plane, rover, boat, sub, tracker, or generic
   (drives ArduPilot mode tables and parameter metadata)
-- firmware: generic, ArduPilot, PX4, custom
+- firmware: generic, ArduPilot, PX4
 - default target system/component id
 - mission defaults (mission type, preferred item format)
 
