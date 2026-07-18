@@ -25,6 +25,23 @@ test('recovers per-field enum association from .d.ts', () => {
   assert.strictEqual(enumOf('COMMAND_LONG', 'param1'), null);
 });
 
+test('flags bitmask-enum fields so editors render additive entry', () => {
+  const md = buildMetadata('ardupilotmega');
+  const fieldOf = (msg, field) => md.messages[msg].fields.find((f) => f.name === field);
+  // Real bitmasks: flags are OR-combined, not mutually exclusive.
+  assert.strictEqual(fieldOf('ATTITUDE_TARGET', 'type_mask').bitmask, true);
+  assert.strictEqual(fieldOf('SET_POSITION_TARGET_LOCAL_NED', 'type_mask').bitmask, true);
+  assert.strictEqual(fieldOf('HEARTBEAT', 'base_mode').bitmask, true); // MAV_MODE_FLAG
+  // Ordinary exclusive enums stay single-select.
+  assert.strictEqual(fieldOf('HEARTBEAT', 'type').bitmask, false); // MAV_TYPE
+  assert.strictEqual(fieldOf('MISSION_ITEM_INT', 'frame').bitmask, false); // MAV_FRAME
+  // CAMERA_MODE is {0,1,2}: two accidental power-of-two members must not
+  // flip an exclusive mode enum into a checklist (three-flag floor).
+  assert.strictEqual(fieldOf('CAMERA_SETTINGS', 'mode_id').bitmask, false);
+  // Non-enum fields carry the flag unset.
+  assert.strictEqual(fieldOf('COMMAND_LONG', 'param1').bitmask, false);
+});
+
 test('enum tables carry readable full names and values', () => {
   const md = buildMetadata('ardupilotmega');
   assert.ok(Array.isArray(md.enums.MAV_CMD));

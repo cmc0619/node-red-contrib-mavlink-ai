@@ -51,6 +51,34 @@ test('default targets from the profile apply, and applyDefaults:false omits them
   assert.ok(!('target_component' in result.collected[0].payload));
 });
 
+test('bitmask checklist output: a numeric-string type_mask carries the combined value', async () => {
+  /** The editor's additive checklist persists the OR-combined value as one
+   * number ("5" = roll|yaw rate ignore); the runtime must accept it as-is. */
+  const { RED, node } = setup({ messageName: 'ATTITUDE_TARGET', fields: '{"type_mask":"5"}' });
+  const { collected, err } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(err, undefined);
+  assert.strictEqual(collected[0].topic, 'mavlink/send');
+  assert.strictEqual(collected[0].payload.fields.type_mask, 5);
+});
+
+test('payload arrays OR-combine on scalar bitmask fields and reject elsewhere', async () => {
+  const { RED, node } = setup({ messageName: 'ATTITUDE_TARGET' });
+  const { collected } = await RED.inject(node, {
+    payload: {
+      type_mask: ['ATTITUDE_TARGET_TYPEMASK_BODY_ROLL_RATE_IGNORE', 'ATTITUDE_TARGET_TYPEMASK_BODY_YAW_RATE_IGNORE']
+    }
+  });
+  assert.strictEqual(collected[0].topic, 'mavlink/send');
+  assert.strictEqual(collected[0].payload.fields.type_mask, 5, 'flags are additive, not mutually exclusive');
+
+  /** An array on an exclusive-enum scalar is a caller bug, surfaced as the
+   * structured error instead of leaking an array into the scalar writer. */
+  const bad = setup({ messageName: 'HEARTBEAT' });
+  const result = await bad.RED.inject(bad.node, { payload: { type: ['MAV_TYPE_QUADROTOR', 'MAV_TYPE_GCS'] } });
+  assert.strictEqual(result.collected[0].topic, 'mavlink/error');
+  assert.strictEqual(result.collected[0].payload.code, 'FIELD_NOT_ARRAY');
+});
+
 test('an explicit target_system in the payload wins over the profile default', async () => {
   const { RED, node } = setup({ messageName: 'COMMAND_LONG' });
   const { collected } = await RED.inject(node, { payload: { command: 'MAV_CMD_DO_SET_SERVO', target_system: 7 } });

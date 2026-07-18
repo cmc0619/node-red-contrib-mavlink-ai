@@ -75,6 +75,119 @@
         return label;
       }
 
+      /**
+       * Unsigned 32-bit bitmask math (#242): byte-for-byte copies of
+       * lib/util/bitmask.js — the editor can't require it, and
+       * test/unit/bitmask-editor-spec.test.js runs the same acceptance matrix
+       * against both to guard drift. JS bitwise operators are signed 32-bit, so
+       * without `>>> 0` bit 31 flips values negative and the "other bits"
+       * residual can render as a negative number.
+       */
+      function parseBitmaskValue(v) {
+        var n;
+        if (typeof v === 'number') {
+          n = v;
+        } else if (typeof v === 'string' && v.trim() !== '') {
+          n = Number(v.trim());
+        } else {
+          return null;
+        }
+        return Number.isInteger(n) && n >= 0 && n <= 0xffffffff ? n : null;
+      }
+      function isSingleBit(v) {
+        var n = parseBitmaskValue(v);
+        return n !== null && n > 0 && ((n & (n - 1)) >>> 0) === 0;
+      }
+      function orBits(values) {
+        var acc = 0;
+        for (var i = 0; i < values.length; i++) {
+          acc = (acc | values[i]) >>> 0;
+        }
+        return acc;
+      }
+      function hasBit(mask, bit) {
+        return ((mask & bit) >>> 0) !== 0;
+      }
+      function residualBits(mask, known) {
+        return (mask & ~known) >>> 0;
+      }
+
+      /**
+       * Additive checklist for a bitmask-enum field: one checkbox per
+       * single-bit flag plus an "Other bits" numeric for values the flag list
+       * can't express; the OR-combined value lands in a hidden [data-field]
+       * sink so _collectFields persists a single number, which the runtime
+       * already accepts. Bitmask flags are NOT mutually exclusive — a
+       * single-select can only express one of them (ignoring all three body
+       * rates in ATTITUDE_TARGET's type_mask is 1|2|4 = 7) — so these fields
+       * skip the plain enum dropdown. A saved value round-trips through
+       * hasBit/residualBits; a value stored by the old single-select as an
+       * enum NAME resolves through the enum table first.
+       */
+      function bitmaskFieldControl(field, saved) {
+        const table = metadata.enums[field.enum] || [];
+        const members = table.filter(function (e) { return isSingleBit(e.value); });
+        const knownBits = orBits(members.map(function (e) { return e.value; }));
+        let initial = parseBitmaskValue(saved);
+        if (initial === null && saved !== undefined) {
+          const named = table.find(function (e) { return e.name === String(saved).trim().toUpperCase(); });
+          initial = named ? named.value : null;
+        }
+        const mask = initial === null ? 0 : initial;
+        const $box = $('<div style="display:inline-block; vertical-align:top;"></div>');
+        const $sink = $('<input type="hidden">').attr('data-field', field.name).val(mask ? String(mask) : '');
+        $sink.appendTo($box);
+        const $checks = [];
+        function recompute() {
+          const bits = [];
+          $checks.forEach(function (c) {
+            if (c.$el.is(':checked')) {
+              bits.push(c.bit);
+            }
+          });
+          /** An invalid "other bits" entry (fractional/negative/>uint32) is
+           * flagged and contributes nothing, so the sink never carries a stale
+           * or truncated value into oneditsave while the field shows garbage. */
+          const otherRaw = String($other.val() || '').trim();
+          const extra = parseBitmaskValue(otherRaw);
+          if (otherRaw !== '' && extra === null) {
+            $other.addClass('input-error');
+          } else {
+            $other.removeClass('input-error');
+            if (extra !== null) {
+              bits.push(extra);
+            }
+          }
+          const value = orBits(bits);
+          $sink.val(value ? String(value) : '');
+        }
+        members.forEach(function (m) {
+          const $line = $('<div style="margin:1px 0;"></div>');
+          const $cb = $('<input type="checkbox">')
+            .css({ width: 'auto', 'vertical-align': 'middle', 'margin-right': '4px' })
+            .prop('checked', hasBit(mask, m.value));
+          $cb.on('change', recompute);
+          $checks.push({ $el: $cb, bit: m.value });
+          $cb.appendTo($line);
+          const short = m.name.indexOf(field.enum + '_') === 0 ? m.name.slice(field.enum.length + 1) : m.name;
+          $('<span></span>')
+            .text(short + ' (' + m.value + ')')
+            .attr('title', m.description || '')
+            .appendTo($line);
+          $line.appendTo($box);
+        });
+        const $otherLine = $('<div style="margin-top:2px;"></div>');
+        $('<span style="color:#888; margin-right:4px;">Other bits:</span>').appendTo($otherLine);
+        const $other = $('<input type="number" step="1" min="0">')
+          .css({ width: '40%' })
+          .attr('placeholder', '0')
+          .val(residualBits(mask, knownBits) ? String(residualBits(mask, knownBits)) : '');
+        $other.on('input change', recompute);
+        $other.appendTo($otherLine);
+        $otherLine.appendTo($box);
+        return $box;
+      }
+
       // Render one labeled input per field of the selected message, each with a
       // visible Type/Units/description help box (issue #45) like the old
       // mavlink-msg editor.
@@ -121,7 +234,9 @@
           const saved = prefill && Object.prototype.hasOwnProperty.call(prefill, field.name) ? prefill[field.name] : undefined;
           let $input;
 
-          if (field.enum && metadata.enums[field.enum]) {
+          if (field.enum && field.bitmask && metadata.enums[field.enum]) {
+            $input = bitmaskFieldControl(field, saved).attr('id', id);
+          } else if (field.enum && metadata.enums[field.enum]) {
             $input = $('<select></select>').attr('id', id).attr('data-field', field.name);
             $('<option></option>').val('').text('(default)').appendTo($input);
             let matched = false;
@@ -270,6 +385,9 @@
               .map(function (s) { return s.trim(); })
               .filter(function (s) { return s !== ''; })
               .map(function (s) { return isNaN(Number(s)) ? s : Number(s); });
+          } else if (field && field.bitmask && !isNaN(Number(val))) {
+            // The bitmask checklist sink holds the OR-combined value.
+            out[name] = Number(val);
           } else if (field && !field.enum && /^(u?int|float|double)/.test(field.type) && !isNaN(Number(val))) {
             out[name] = Number(val);
           } else {
@@ -313,7 +431,7 @@
 
 <script type="text/html" data-help-name="mavlink-ai-build">
   <p>Builds a normalized outbound MAVLink message object (without sending it) for a downstream <b>MAVLink AI Out</b> node.</p>
-  <p>Pick a <b>Message</b> and the editor shows the message's MAVLink description plus a labeled input for each of its fields, with the field's wire type as the input placeholder and a visible <i>Type | Units | description</i> help box underneath. Fields backed by a MAVLink enum become dropdowns of readable names, values, and descriptions (e.g. <code>MAV_CMD_COMPONENT_ARM_DISARM</code>). The field list updates when you change the message or the profile's dialect.</p>
-  <p>Leave a field blank to let it zero-fill. <code>msg.payload</code> may still override fields at runtime, and enum-name strings are resolved against the profile dialect.</p>
+  <p>Pick a <b>Message</b> and the editor shows the message's MAVLink description plus a labeled input for each of its fields, with the field's wire type as the input placeholder and a visible <i>Type | Units | description</i> help box underneath. Fields backed by a MAVLink enum become dropdowns of readable names, values, and descriptions (e.g. <code>MAV_CMD_COMPONENT_ARM_DISARM</code>). Fields backed by a <b>bitmask</b> enum (e.g. <code>ATTITUDE_TARGET</code>'s <code>type_mask</code>) render an additive flag checklist instead — the flags are not mutually exclusive, so check any combination (plus an <i>Other bits</i> numeric for bits the list doesn't know) and the combined value is stored. The field list updates when you change the message or the profile's dialect.</p>
+  <p>Leave a field blank to let it zero-fill. <code>msg.payload</code> may still override fields at runtime, and enum-name strings are resolved against the profile dialect. On a scalar bitmask field, a payload may also supply an <b>array</b> of flag names/numbers, which are OR-combined into the single wire value.</p>
   <p><b>Note</b>: <code>COMMAND_LONG</code> / <code>COMMAND_INT</code> are low-level command transport messages. For normal vehicle commands prefer the <b>MAVLink AI Command</b> node — it adds MAV_CMD parameter help, COMMAND_ACK handling, and retries. Build them here only for raw/advanced use, debugging, or custom dialect behavior.</p>
 </script>
