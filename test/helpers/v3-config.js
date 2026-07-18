@@ -83,7 +83,7 @@ function makeConnection(RED, config = {}, opts = {}) {
     {
       id: uid('c'),
       name: 'C',
-      transport: 'udp-peer',
+      transport: 'udp',
       bindAddress: '127.0.0.1',
       bindPort: 0,
       reconnect: false,

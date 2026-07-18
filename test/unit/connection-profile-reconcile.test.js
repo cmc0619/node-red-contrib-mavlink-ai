@@ -90,7 +90,7 @@ function routedConnection(RED) {
   });
   return RED.create('mavlink-ai-connection', {
     id: 'c1', name: 'Routed', profile: 'p_def', localIdentity: 'id1',
-    transport: 'udp-peer', routingMode: 'routed', unmatchedPolicy: 'reject',
+    transport: 'udp', routingMode: 'routed', unmatchedPolicy: 'reject',
     routeTable: JSON.stringify([
       { sysid: 1, compid: '*', profile: 'pa' },
       { sysid: 2, compid: '*', profile: 'pb' }
@@ -225,7 +225,7 @@ test('profile resolution uses config-node IDs and re-resolves recreated nodes (#
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c1', name: 'Conn', profile: 'p_def', localIdentity: 'id1',
-    transport: 'udp-peer', routingMode: 'single-profile',
+    transport: 'udp', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   t.after(() => RED.close(conn));
@@ -252,7 +252,7 @@ test('profile display names are not accepted as references', (t) => {
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c1', name: 'Conn', profile: 'p_def', localIdentity: 'id1',
-    transport: 'udp-peer', routingMode: 'single-profile',
+    transport: 'udp', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   t.after(() => RED.close(conn));

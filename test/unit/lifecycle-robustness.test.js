@@ -89,7 +89,7 @@ test('connection close completes (done) even when decoder teardown throws (#140)
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c1', name: 'UDP', profile: 'p1', localIdentity: 'id1',
-    transport: 'udp-peer', routingMode: 'single-profile',
+    transport: 'udp', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   RED.events.emit('flows:started');

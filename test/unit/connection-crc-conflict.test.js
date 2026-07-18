@@ -54,7 +54,7 @@ function setup(routeProfiles) {
     name: 'Routed',
     profile: 'p_default',
     localIdentity: 'id1',
-    transport: 'udp-peer',
+    transport: 'udp',
     routingMode: 'routed',
     unmatchedPolicy: 'default',
     routeTable: JSON.stringify(routeProfiles.map((profile, i) => ({ sysid: i + 1, compid: '*', profile }))),

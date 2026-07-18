@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Launch a virtual multi-drone MAVLink SITL fleet in a single Node process (no
-# Docker required) and stream it at a GCS/Node-RED udp-peer.
+# Docker required) and stream it at a GCS/Node-RED udp connection.
 #
 #   ./test/sitl/start-fleet.sh                 # 3 drones (sysid 1..3) -> 127.0.0.1:14550
 #   FLEET_COUNT=5 ./test/sitl/start-fleet.sh   # 5 drones (sysid 1..5)

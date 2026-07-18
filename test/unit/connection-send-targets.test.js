@@ -31,7 +31,7 @@ function setup() {
     name: 'C',
     profile: 'p1',
     localIdentity: 'id1',
-    transport: 'udp-peer',
+    transport: 'udp',
     bindAddress: '127.0.0.1',
     bindPort: 0,
     reconnect: false,
@@ -217,7 +217,7 @@ test('under auto version, a broadcast is framed with the connection default, not
     id: 'ida', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'ca', name: 'CA', profile: 'pa', localIdentity: 'ida', transport: 'udp-peer',
+    id: 'ca', name: 'CA', profile: 'pa', localIdentity: 'ida', transport: 'udp',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   const sent = [];

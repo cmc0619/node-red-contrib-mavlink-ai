@@ -1,10 +1,10 @@
 # Multi-drone MAVLink SITL fleet — one container per drone, each a distinct
-# system id, all streaming to a single GCS/Node-RED udp-peer on the host.
+# system id, all streaming to a single GCS/Node-RED udp connection on the host.
 #
 #   docker compose -f test/sitl/docker-compose.yml up --build
 #
 # Import examples/08-sitl/multi-drone-fleet-wringer.json into Node-RED first: it
-# binds udp-peer 0.0.0.0:14550 and routes each system id to its own profile.
+# binds udp 0.0.0.0:14550 and routes each system id to its own profile.
 # By default the drones reach the host at host.docker.internal:14550; override
 # with GCS_HOST / GCS_PORT in your shell if Node-RED runs elsewhere.
 #

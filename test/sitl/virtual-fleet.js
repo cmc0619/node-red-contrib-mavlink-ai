@@ -303,7 +303,7 @@ class VirtualDrone {
 
 /**
  * A fleet of {@link VirtualDrone}s sharing one UDP socket. The socket sends all
- * traffic to a single GCS endpoint (a `udp-peer` connection, or a router that
+ * traffic to a single GCS endpoint (a `udp` connection, or a router that
  * fans out to one). Inbound commands are dispatched to the addressed drone by
  * `target_system`; a broadcast (0) reaches every drone.
  */
@@ -368,7 +368,7 @@ class VirtualFleet extends EventEmitter {
    *
    * @param {object} [opts]
    * @param {string} [opts.gcsHost='127.0.0.1']
-   * @param {number} [opts.gcsPort]   the GCS's udp-peer port to stream to
+   * @param {number} [opts.gcsPort]   the GCS's udp port to stream to
    * @param {string} [opts.bindAddress='0.0.0.0']
    * @param {number} [opts.bindPort=0] fleet socket port (0 = ephemeral)
    * @returns {Promise<{port:number}>}

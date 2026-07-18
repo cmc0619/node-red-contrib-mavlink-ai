@@ -50,7 +50,7 @@ test('editing a profile dialect updates a running connection on redeploy (messag
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c1', name: 'UDP', profile: 'p1', localIdentity: 'id1',
-    transport: 'udp-peer', routingMode: 'single-profile',
+    transport: 'udp', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   t.after(() => RED.close(conn));
@@ -107,7 +107,7 @@ test('an edited default profile that is now invalid fails the connection closed 
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c1', name: 'UDP', profile: 'p1', localIdentity: 'id1',
-    transport: 'udp-peer', routingMode: 'single-profile',
+    transport: 'udp', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   t.after(() => RED.close(conn));
@@ -159,7 +159,7 @@ test('deleting the default profile deactivates the connection and releases the t
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c1', name: 'UDP', profile: 'p1', localIdentity: 'id1',
-    transport: 'udp-peer', routingMode: 'single-profile',
+    transport: 'udp', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   t.after(() => RED.close(conn));
@@ -200,7 +200,7 @@ test('restoring a valid default profile reactivates a deactivated connection (#1
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c1', name: 'UDP', profile: 'p1', localIdentity: 'id1',
-    transport: 'udp-peer', routingMode: 'single-profile',
+    transport: 'udp', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   t.after(() => RED.close(conn));
@@ -251,7 +251,7 @@ test('a connection CONSTRUCTED with a missing profile activates once the profile
    */
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c1', name: 'UDP', profile: 'p1', localIdentity: 'id1',
-    transport: 'udp-peer', routingMode: 'single-profile',
+    transport: 'udp', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   t.after(() => RED.close(conn));
@@ -283,7 +283,7 @@ test('a connection CONSTRUCTED with a missing identity activates once the identi
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c1', name: 'UDP', profile: 'p1', localIdentity: 'id1',
-    transport: 'udp-peer', routingMode: 'single-profile',
+    transport: 'udp', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   t.after(() => RED.close(conn));
@@ -315,7 +315,7 @@ test('rebuilding the profile preserves the codec learned per-peer wire version (
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c1', name: 'UDP', profile: 'p1', localIdentity: 'id1',
-    transport: 'udp-peer', routingMode: 'single-profile',
+    transport: 'udp', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   t.after(() => RED.close(conn));

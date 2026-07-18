@@ -30,7 +30,7 @@ function setup() {
     id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
   });
   const conn = RED.create('mavlink-ai-connection', {
-    id: 'c1', name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp-peer',
+    id: 'c1', name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   return { RED, conn };

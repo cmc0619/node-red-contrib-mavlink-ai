@@ -20,10 +20,23 @@ async function waitFor(cond, timeoutMs = 1000) {
   }
 }
 
-test('factory maps transport types (no serialport required for udp/tcp)', () => {
-  assert.ok(createTransport({ transport: 'udp-peer' }) instanceof UdpTransport);
-  assert.ok(createTransport({ transport: 'tcp-client' }) instanceof TcpTransport);
+test('factory maps the three protocols (no serialport required for udp/tcp)', () => {
+  assert.ok(createTransport({ transport: 'udp', bindPort: 14550 }) instanceof UdpTransport);
+  assert.ok(createTransport({ transport: 'tcp', remoteHost: 'h', remotePort: 5760 }) instanceof TcpTransport);
   assert.ok(createTransport({ transport: 'serial' }) instanceof SerialTransport);
+});
+
+test('factory derives the TCP role from field presence (#243)', () => {
+  const client = createTransport({ transport: 'tcp', remoteHost: '10.0.0.5', remotePort: 5760 });
+  assert.strictEqual(client.role, 'client');
+  const server = createTransport({ transport: 'tcp', bindAddress: '0.0.0.0', bindPort: 5760 });
+  assert.strictEqual(server.role, 'server');
+});
+
+test('factory rejects the pre-#243 mode names (clean break)', () => {
+  for (const legacy of ['udp-peer', 'udp-in', 'udp-out', 'tcp-client', 'tcp-server']) {
+    assert.throws(() => createTransport({ transport: legacy }), /UNKNOWN_TRANSPORT|Unknown transport/i, legacy);
+  }
 });
 
 test('factory forwards the reconnect flag to the UDP transport (#149)', () => {
@@ -32,12 +45,12 @@ test('factory forwards the reconnect flag to the UDP transport (#149)', () => {
    * for udp), but the factory still forwards it for API consistency with the
    * connection-oriented transports.
    */
-  assert.strictEqual(createTransport({ transport: 'udp-in', reconnect: false }).reconnect, false);
-  assert.strictEqual(createTransport({ transport: 'udp-in' }).reconnect, true);
+  assert.strictEqual(createTransport({ transport: 'udp', bindPort: 14550, reconnect: false }).reconnect, false);
+  assert.strictEqual(createTransport({ transport: 'udp', bindPort: 14550 }).reconnect, true);
 });
 
 test('udp-peer learns peer and round-trips bytes', async () => {
-  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  const transport = new UdpTransport({ bindAddress: '127.0.0.1', bindPort: 0 });
   const addr = await new Promise((resolve) => {
     transport.on('listening', resolve);
     transport.start();
@@ -70,7 +83,7 @@ test('udp-peer learns peer and round-trips bytes', async () => {
 });
 
 test('udp-peer send before any peer rejects clearly', async () => {
-  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  const transport = new UdpTransport({ bindAddress: '127.0.0.1', bindPort: 0 });
   await new Promise((resolve) => {
     transport.on('listening', resolve);
     transport.start();
@@ -78,24 +91,6 @@ test('udp-peer send before any peer rejects clearly', async () => {
   await assert.rejects(
     () => transport.send(Buffer.from([1])),
     (err) => err.code === 'UDP_NO_PEER'
-  );
-  await transport.stop();
-});
-
-test('udp-out with no remote rejects with UDP_NO_REMOTE, not the transient UDP_NO_PEER', async () => {
-  /**
-   * udp-out never learns a peer, so an empty target set is a permanent
-   * misconfiguration — a distinct code so a fire-and-forget sender surfaces it
-   * instead of quietly waiting for a peer that can never appear.
-   */
-  const transport = new UdpTransport({ mode: 'udp-out', bindAddress: '127.0.0.1', bindPort: 0 });
-  await new Promise((resolve) => {
-    transport.on('listening', resolve);
-    transport.start();
-  });
-  await assert.rejects(
-    () => transport.send(Buffer.from([1])),
-    (err) => err.code === 'UDP_NO_REMOTE'
   );
   await transport.stop();
 });
@@ -108,7 +103,7 @@ test('udp-peer send before bind completes rejects UDP_NOT_STARTED, not UDP_NO_PE
    * check, so a listener that never actually bound can't masquerade as the
    * transient UDP_NO_PEER the Out node silently waits out (Codex review).
    */
-  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  const transport = new UdpTransport({ bindAddress: '127.0.0.1', bindPort: 0 });
   /** Before start(): socket is null. */
   await assert.rejects(() => transport.send(Buffer.from([1])), (err) => err.code === 'UDP_NOT_STARTED');
   /** After start() but before the 'listening' event: socket assigned, not bound. */
@@ -128,7 +123,7 @@ test('tcp-server send before listen completes rejects TCP_NOT_LISTENING, not TCP
    * actually listened can't masquerade as the transient TCP_NO_CLIENT the Out
    * node silently waits out (Codex review).
    */
-  const transport = new TcpTransport({ mode: 'tcp-server', host: '127.0.0.1', port: 0 });
+  const transport = new TcpTransport({ role: 'server', host: '127.0.0.1', port: 0 });
   /** Before start(): server is null. */
   await assert.rejects(() => transport.send(Buffer.from([1])), (err) => err.code === 'TCP_NOT_LISTENING');
   /** After start() but before the 'listening' callback: server assigned, not listening. */
@@ -164,7 +159,7 @@ test('serial fails clearly on an unsupported Node.js runtime (#102)', () => {
 });
 
 test('udp-peer routes sends to the addressed sysid endpoint (#21)', () => {
-  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  const transport = new UdpTransport({ bindAddress: '127.0.0.1', bindPort: 0 });
   // Simulate two vehicles having been heard (as the message handler would).
   transport.peersBySysid.set(1, { address: '127.0.0.1', port: 11111 });
   transport.peersBySysid.set(2, { address: '127.0.0.1', port: 22222 });
@@ -190,7 +185,7 @@ test('udp-peer routes sends to the addressed sysid endpoint (#21)', () => {
 });
 
 test('udp-peer receipt commits nothing; confirmPeer commits the validated endpoint (#21, #85, #239)', async () => {
-  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  const transport = new UdpTransport({ bindAddress: '127.0.0.1', bindPort: 0 });
   const addr = await new Promise((resolve) => {
     transport.on('listening', resolve);
     transport.start();
@@ -237,7 +232,7 @@ test('udp-peer receipt commits nothing; confirmPeer commits the validated endpoi
 });
 
 test('udp-peer broadcast (target_system 0) fans out to every learned peer (#148)', async () => {
-  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  const transport = new UdpTransport({ bindAddress: '127.0.0.1', bindPort: 0 });
   const addr = await new Promise((resolve) => { transport.on('listening', resolve); transport.start(); });
 
   const v1 = dgram.createSocket('udp4');
@@ -267,7 +262,7 @@ test('udp-peer broadcast (target_system 0) fans out to every learned peer (#148)
 });
 
 test('a later GCS confirmation does not steal the fallback; untargeted sends still reach the vehicle (#148)', async () => {
-  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  const transport = new UdpTransport({ bindAddress: '127.0.0.1', bindPort: 0 });
   const addr = await new Promise((resolve) => { transport.on('listening', resolve); transport.start(); });
 
   const vehicle = dgram.createSocket('udp4');
@@ -302,7 +297,7 @@ test('a later GCS confirmation does not steal the fallback; untargeted sends sti
 });
 
 test('broadcast fan-out de-duplicates peers that share one endpoint (#148)', () => {
-  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  const transport = new UdpTransport({ bindAddress: '127.0.0.1', bindPort: 0 });
   /** Two sysids learned from the same socket resolve to a single endpoint;
    * the fan-out must send one datagram, not two. */
   transport.peersBySysid.set(1, { address: '127.0.0.1', port: 9999 });
@@ -311,7 +306,7 @@ test('broadcast fan-out de-duplicates peers that share one endpoint (#148)', () 
 });
 
 test('a partial fan-out failure still resolves but emits sendPartialFailure (#148)', async () => {
-  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  const transport = new UdpTransport({ bindAddress: '127.0.0.1', bindPort: 0 });
   await new Promise((resolve) => { transport.on('listening', resolve); transport.start(); });
   const good = dgram.createSocket('udp4');
   await new Promise((r) => good.bind(0, '127.0.0.1', r));
@@ -342,7 +337,7 @@ test('confirmPeer without a valid endpoint commits nothing (#85, #239)', async (
    * invalid one must be a no-op, so nothing but a real datagram source can
    * enter the routing tables.
    */
-  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  const transport = new UdpTransport({ bindAddress: '127.0.0.1', bindPort: 0 });
   transport.confirmPeer(1);
   transport.confirmPeer(1, null);
   transport.confirmPeer(1, { address: '', port: 14550 });
@@ -368,7 +363,7 @@ test('validateDestination accepts good targets and rejects bad ones (#77)', () =
 test('udp send rejects an out-of-range manual destination before the socket send (#77)', async () => {
   // A truthy-but-invalid manual remote port passes _target's presence check and
   // must be caught by destination validation instead of reaching the socket.
-  const transport = new UdpTransport({ mode: 'udp-out', remoteHost: '127.0.0.1', remotePort: 70000 });
+  const transport = new UdpTransport({ remoteHost: '127.0.0.1', remotePort: 70000 });
   await new Promise((resolve) => {
     transport.on('listening', resolve);
     transport.start();
@@ -381,7 +376,7 @@ test('udp send rejects an out-of-range manual destination before the socket send
 });
 
 test('tcp server destroys a client socket after its error and drops it (#78)', async () => {
-  const transport = new TcpTransport({ mode: 'tcp-server', host: '127.0.0.1' });
+  const transport = new TcpTransport({ role: 'server', host: '127.0.0.1' });
   transport.port = 0; // ephemeral port to avoid fixed-port conflicts in CI
   const errorsSeen = [];
   transport.on('error', (e) => errorsSeen.push(e));
@@ -408,7 +403,7 @@ test('tcp server destroys a client socket after its error and drops it (#78)', a
 });
 
 test('udp stop() keeps an error handler so a late socket error does not crash (#149)', async () => {
-  const transport = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0 });
+  const transport = new UdpTransport({ bindAddress: '127.0.0.1', bindPort: 0 });
   await new Promise((resolve) => {
     transport.on('listening', resolve);
     transport.start();
@@ -420,7 +415,7 @@ test('udp stop() keeps an error handler so a late socket error does not crash (#
 });
 
 test('tcp stop() keeps an error handler so a late server error does not crash (#149)', async () => {
-  const transport = new TcpTransport({ mode: 'tcp-server', host: '127.0.0.1' });
+  const transport = new TcpTransport({ role: 'server', host: '127.0.0.1' });
   transport.port = 0;
   const server = await new Promise((resolve) => {
     transport.on('listening', () => resolve(transport.server));
@@ -439,7 +434,7 @@ test('udp bind failure is not terminal: it retries and binds once the port frees
    * reconnect:false on purpose — the editor hides the Reconnect control for all
    * udp modes, so bind recovery must not be gated on that hidden flag (#149).
    */
-  const transport = new UdpTransport({ mode: 'udp-in', bindAddress: '127.0.0.1', bindPort: port, reconnect: false, reconnectDelayMs: 15 });
+  const transport = new UdpTransport({ bindAddress: '127.0.0.1', bindPort: port, reconnect: false, reconnectDelayMs: 15 });
   /** The reconnect timer is unref'd (must not hold the process open); keep the test's loop alive so it can fire. */
   const keepAlive = setInterval(() => {}, 5);
   t.after(() => {
@@ -470,7 +465,7 @@ test('tcp-server listen failure is not terminal: it retries and listens once the
    * reconnect:false on purpose — the editor hides the Reconnect control for
    * tcp-server, so bind recovery must not be gated on that hidden flag (#149).
    */
-  const transport = new TcpTransport({ mode: 'tcp-server', host: '127.0.0.1', port, reconnect: false, reconnectDelayMs: 15 });
+  const transport = new TcpTransport({ role: 'server', host: '127.0.0.1', port, reconnect: false, reconnectDelayMs: 15 });
   /** The reconnect timer is unref'd; keep the test's loop alive so it can fire. */
   const keepAlive = setInterval(() => {}, 5);
   t.after(() => {
@@ -493,7 +488,7 @@ test('tcp-server listen failure is not terminal: it retries and listens once the
 });
 
 test('tcp-server stamps a distinct clientId per client and emits peer-disconnect on close (#147)', async (t) => {
-  const transport = new TcpTransport({ mode: 'tcp-server', host: '127.0.0.1' });
+  const transport = new TcpTransport({ role: 'server', host: '127.0.0.1' });
   transport.port = 0;
   const addr = await new Promise((resolve) => {
     transport.on('listening', resolve);
@@ -531,7 +526,7 @@ test('tcp-server stamps a distinct clientId per client and emits peer-disconnect
 
 test('tcp-server broadcast is not blocked by a stalled client, which is kicked (#147)', async (t) => {
   /** Short write timeout so the stalled client is dropped quickly. */
-  const transport = new TcpTransport({ mode: 'tcp-server', writeTimeoutMs: 30 });
+  const transport = new TcpTransport({ role: 'server', writeTimeoutMs: 30 });
   /** send()'s per-client timeout is unref'd; keep the loop alive so it fires. */
   const keepAlive = setInterval(() => {}, 5);
   t.after(() => clearInterval(keepAlive));
@@ -572,7 +567,7 @@ test('tcp-server broadcast is not blocked by a stalled client, which is kicked (
 });
 
 test('tcp-server drops a client already backed up past the backlog cap without waiting (#147)', async () => {
-  const transport = new TcpTransport({ mode: 'tcp-server' });
+  const transport = new TcpTransport({ role: 'server' });
   const errors = [];
   transport.on('error', (e) => errors.push(e));
 
@@ -626,7 +621,7 @@ test('a serial write whose callback never fires times out with SERIAL_SEND_TIMEO
 });
 
 test('a UDP send whose callback never fires times out with UDP_SEND_TIMEOUT (#237)', async (t) => {
-  const transport = new UdpTransport({ mode: 'udp-peer', writeTimeoutMs: 20 });
+  const transport = new UdpTransport({ writeTimeoutMs: 20 });
   transport.socket = { send() {} };
   transport._bound = true;
   transport.remoteHost = '127.0.0.1';
@@ -643,13 +638,13 @@ test('a listener that stops the transport mid-emit cannot re-arm the reconnect t
    * re-checks, the helper would install a fresh timer after teardown,
    * leaving _reconnectTimer live past the close lifecycle.
    */
-  const stopped = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0, reconnectDelayMs: 1 });
+  const stopped = new UdpTransport({ bindAddress: '127.0.0.1', bindPort: 0, reconnectDelayMs: 1 });
   stopped.on('reconnecting', () => stopped.stop());
   stopped._scheduleReconnect();
   assert.strictEqual(stopped._reconnectTimer, null, 'no timer armed after a mid-emit stop()');
 
   /** An error listener stopping the transport ends the retry loop the same way. */
-  const failing = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0, reconnectDelayMs: 1 });
+  const failing = new UdpTransport({ bindAddress: '127.0.0.1', bindPort: 0, reconnectDelayMs: 1 });
   failing.start = () => {
     throw new Error('bind exploded');
   };
@@ -660,7 +655,7 @@ test('a listener that stops the transport mid-emit cannot re-arm the reconnect t
   assert.strictEqual(failing._reconnectTimer, null, 'the failed-start retry loop ends once stopped');
 
   /** And a stop() before any scheduling stays a no-op. */
-  const closed = new UdpTransport({ mode: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0, reconnectDelayMs: 1 });
+  const closed = new UdpTransport({ bindAddress: '127.0.0.1', bindPort: 0, reconnectDelayMs: 1 });
   await closed.stop();
   closed._scheduleReconnect();
   assert.strictEqual(closed._reconnectTimer, null, 'a closed transport never re-arms');

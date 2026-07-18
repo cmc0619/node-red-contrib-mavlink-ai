@@ -187,7 +187,7 @@ test('out node still surfaces a permanent udp-out misconfiguration (UDP_NO_REMOT
   const { RED } = setup({ sendError: badRemote });
   const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
   const { err } = await RED.inject(node, { topic: 'mavlink/send', payload: { name: 'HEARTBEAT', fields: {} } });
-  assert.ok(err, 'a permanent udp-out misconfiguration surfaces via done(err)');
+  assert.ok(err, 'a permanent udp misconfiguration surfaces via done(err)');
   assert.strictEqual(err.code, 'UDP_NO_REMOTE');
 });
 

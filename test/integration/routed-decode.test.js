@@ -78,7 +78,7 @@ test('routed connection decodes with the matched profile dialect', async (t) => 
 
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c_routed', name: 'Routed UDP', profile: 'p_min', localIdentity: 'id1',
-    transport: 'udp-peer', routingMode: 'routed', unmatchedPolicy: 'default',
+    transport: 'udp', routingMode: 'routed', unmatchedPolicy: 'default',
     routeTable: JSON.stringify([
       { sysid: 1, compid: '*', profile: 'p_ardu' },
       { sysid: 2, compid: '*', profile: 'p_min2' },
@@ -170,7 +170,7 @@ test('outbound send transmits as the selected Local Identity, not a profile', as
     // Explicit multi-identity binding: the connection may also transmit as id_alt.
     allowMultipleIdentities: true,
     additionalIdentities: JSON.stringify([{ identity: 'id_alt', allowOutbound: true }]),
-    transport: 'udp-peer', routingMode: 'single-profile',
+    transport: 'udp', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   // Stop the real UDP transport up front and capture outbound frames instead of
@@ -221,7 +221,7 @@ test('route entries resolve Vehicle Profile config-node IDs', async (t) => {
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c_routes', name: 'ID routes', profile: 'p_min', localIdentity: 'id1',
-    transport: 'udp-peer', routingMode: 'routed', unmatchedPolicy: 'reject',
+    transport: 'udp', routingMode: 'routed', unmatchedPolicy: 'reject',
     routeTable: JSON.stringify([{ sysid: 1, compid: '*', profile: 'p_ardu' }]),
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
@@ -267,7 +267,7 @@ test('a route naming an unknown profile rejects its packets and reports loudly',
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c_ghost', name: 'Bad routes', profile: 'p_def', localIdentity: 'id1',
-    transport: 'udp-peer', routingMode: 'routed', unmatchedPolicy: 'default',
+    transport: 'udp', routingMode: 'routed', unmatchedPolicy: 'default',
     routeTable: JSON.stringify([
       { sysid: 1, compid: '*', profile: 'Ghost' }
     ]),
@@ -323,7 +323,7 @@ test('fixing a broken route table on redeploy clears the stale error status', as
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c_late', name: 'Late profile', profile: 'p_def', localIdentity: 'id1',
-    transport: 'udp-peer', routingMode: 'routed', unmatchedPolicy: 'reject',
+    transport: 'udp', routingMode: 'routed', unmatchedPolicy: 'reject',
     routeTable: JSON.stringify([{ sysid: 1, compid: '*', profile: 'p_late' }]),
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
@@ -372,7 +372,7 @@ test('outbound send resolves profile IDs, keeps source identity, and rejects unk
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c_send2', name: 'Send UDP 2', profile: 'p_def', localIdentity: 'id_def',
-    transport: 'udp-peer', routingMode: 'single-profile',
+    transport: 'udp', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   await new Promise((resolve) => conn._transport.once('listening', resolve));

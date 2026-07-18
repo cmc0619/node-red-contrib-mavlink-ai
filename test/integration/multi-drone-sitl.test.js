@@ -88,7 +88,7 @@ async function setupFleet(t, opts = {}) {
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c', name: 'Fleet UDP', profile: 'p1', localIdentity: 'gcs',
-    transport: 'udp-peer', routingMode: 'routed', unmatchedPolicy: 'default',
+    transport: 'udp', routingMode: 'routed', unmatchedPolicy: 'default',
     routeTable: JSON.stringify(routeTable),
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });

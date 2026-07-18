@@ -47,7 +47,7 @@ function tcpServerConnection(RED) {
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c1', name: 'Server', profile: 'p1', localIdentity: 'id1',
-    transport: 'tcp-server', routingMode: 'single-profile',
+    transport: 'tcp', routingMode: 'single-profile',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   RED.events.emit('flows:started');

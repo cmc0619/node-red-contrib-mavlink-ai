@@ -50,7 +50,7 @@ function udpPeerConnection(RED, config) {
   });
   const conn = RED.create('mavlink-ai-connection', Object.assign({
     id: 'c1', name: 'Peer', profile: 'p1', localIdentity: 'id1',
-    transport: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0,
+    transport: 'udp', bindAddress: '127.0.0.1', bindPort: 0,
     reconnect: false, heartbeat: false
   }, config));
   RED.events.emit('flows:started');

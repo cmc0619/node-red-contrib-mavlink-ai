@@ -46,7 +46,7 @@ this resolves on Linux too). Override the destination with `GCS_HOST` /
 ### Drive it from Node-RED
 
 Import `examples/08-sitl/multi-drone-fleet-wringer.json`. It binds a routed
-`udp-peer` on `0.0.0.0:14550`, routes each system id to its own Vehicle Profile,
+`udp` on `0.0.0.0:14550`, routes each system id to its own Vehicle Profile,
 lists the fleet in a Swarm registry, and puts it through the wringer: arm the
 fleet, take off to staggered altitude layers, then reshuffle the formation
 end-for-end while a Separation monitor confirms no two drones ever come within
