@@ -46,16 +46,23 @@ test('malformed id lists fail closed: subscribe throws instead of widening to a 
    * ''/null to 0, so bare coercion would register a REAL filter on id 1/0
    * instead of throwing (#288 review).
    */
-  for (const bad of [['bad'], [1, 'bad'], [1.5], [-1], [256], [true], [[1]], [''], [null], 'not-an-array', 5]) {
+  /** BigInt and circular entries also break JSON.stringify — the rejection
+   * must still be a structured BAD_FILTER, not a bare TypeError. */
+  const circular = {};
+  circular.self = circular;
+  const badForms = [['bad'], [1, 'bad'], [1.5], [-1], [256], [true], [[1]], [''], [null], [1n], [circular], 'not-an-array', 5];
+  for (const bad of badForms) {
+    /** String(), not JSON.stringify(): the BigInt/circular forms are here
+     * precisely because stringify throws on them. */
     assert.throws(
       () => reg.subscribe({ sysids: bad }, () => {}),
       (e) => e.code === 'BAD_FILTER',
-      `sysids ${JSON.stringify(bad)} must be rejected`
+      `sysids ${String(bad)} must be rejected`
     );
     assert.throws(
       () => reg.subscribe({ compids: bad }, () => {}),
       (e) => e.code === 'BAD_FILTER',
-      `compids ${JSON.stringify(bad)} must be rejected`
+      `compids ${String(bad)} must be rejected`
     );
   }
   /** Nothing was registered by the failed subscribes. */
