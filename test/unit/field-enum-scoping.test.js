@@ -155,3 +155,28 @@ test('a 64-bit bitmask field ORs an array of flags as BigInt', () => {
   });
   assert.strictEqual(out.capabilities, 17n, 'uint64 field: 1 | 16 combined as BigInt');
 });
+
+test('flag-array elements are validated before the OR (no silent bitwise wrap)', () => {
+  const clazz = getMessageClass(common, 'ATTITUDE_TARGET');
+  /** JS bitwise would wrap these into valid-looking masks: [-1] -> 4294967295,
+   * [2^32] -> 0. Both must fail loudly instead (Codex review on the additive
+   * array form). */
+  for (const bad of [-1, 4294967296, 1.5]) {
+    assert.throws(
+      () => normalizeFields(common, clazz, { type_mask: [1, bad] }),
+      (err) => ['BAD_FLAG_VALUE', 'FIELD_NOT_INTEGER'].includes(err.code) && err.context.field === 'type_mask',
+      `rejects ${bad}`
+    );
+  }
+  /** A flag above the field's unsigned wire width cannot ride the mask —
+   * ATTITUDE_TARGET.type_mask is uint8_t, so bit 31 must be rejected. */
+  assert.throws(
+    () => normalizeFields(common, clazz, { type_mask: [2147483648] }),
+    (err) => err.code === 'BAD_FLAG_VALUE' && /8-bit/.test(err.message)
+  );
+  /** 64-bit fields reject negative elements rather than OR-ing them in. */
+  assert.throws(
+    () => normalizeFields(common, getMessageClass(common, 'AUTOPILOT_VERSION'), { capabilities: ['-1'] }),
+    (err) => err.code === 'BAD_FLAG_VALUE' && err.context.field === 'capabilities'
+  );
+});
