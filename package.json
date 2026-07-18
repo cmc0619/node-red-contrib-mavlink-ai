@@ -40,6 +40,11 @@
   "optionalDependencies": {
     "serialport": "^13.0.0"
   },
+  "overrides": {
+    "mavlink-mappings-gen": {
+      "xml2js": "^0.5.0"
+    }
+  },
   "scripts": {
     "test": "npm run test:smoke && npm run test:unit && npm run test:integration",
     "test:smoke": "node test/smoke-load.js",
