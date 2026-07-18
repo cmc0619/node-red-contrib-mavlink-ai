@@ -234,7 +234,7 @@ test('routed connection verifies signed frames against the default identity key'
   // Signed with the identity key -> accepted, and labeled with the matched
   // route's profile (proving routing decode still applies the matched profile).
   const msg = await until(
-    (done) => conn.subscribe({ messageNames: ['HEARTBEAT'], sysid: 2 }, done),
+    (done) => conn.subscribe({ messageNames: ['HEARTBEAT'], sysids: [2] }, done),
     () =>
       sock.send(
         enc(routedSigner, 'HEARTBEAT', HEARTBEAT, { sysid: 2, compid: 1, signing: { key: goodKey, linkId: 1 } }),

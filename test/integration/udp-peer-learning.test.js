@@ -96,7 +96,7 @@ test('peer learning requires validated packets (#85)', async (t) => {
   // 3. Valid, accepted frame from sysid 1: NOW the sender becomes the fallback
   //    peer and owns its sysid mapping, so addressed sends reach it.
   await until(
-    (done) => conn.subscribe({ messageNames: ['HEARTBEAT'], sysid: 1 }, done),
+    (done) => conn.subscribe({ messageNames: ['HEARTBEAT'], sysids: [1] }, done),
     () => sock.send(enc(fromSys1, 'HEARTBEAT', HEARTBEAT, { sysid: 1, compid: 1 }), port, '127.0.0.1'),
     'accepted packet'
   );
@@ -152,7 +152,7 @@ test('signature-rejected packets do not teach a peer mapping (#85)', async (t) =
 
   // A properly signed frame passes verification and is learned.
   await until(
-    (done) => conn.subscribe({ messageNames: ['HEARTBEAT'], sysid: 3 }, done),
+    (done) => conn.subscribe({ messageNames: ['HEARTBEAT'], sysids: [3] }, done),
     () =>
       sock.send(
         enc(signed, 'HEARTBEAT', HEARTBEAT, { sysid: 3, compid: 1, signing: { key: signingKey, linkId: 1 } }),
