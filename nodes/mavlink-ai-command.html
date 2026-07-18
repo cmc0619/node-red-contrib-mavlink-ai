@@ -521,7 +521,7 @@
 
       /**
        * Unsigned 32-bit bitmask math (#242): byte-for-byte copies of
-       * lib/command/bitmask.js — the editor can't require it, and
+       * lib/util/bitmask.js — the editor can't require it, and
        * test/unit/bitmask-editor-spec.test.js runs the same acceptance matrix
        * against both to guard drift. JS bitwise operators are signed 32-bit, so
        * without `>>> 0` bit 31 flips values negative and the "other bits"

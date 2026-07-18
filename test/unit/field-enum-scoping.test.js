@@ -109,3 +109,90 @@ test('the command workflow resolves names against MavCmd only (#153)', () => {
     (err) => err.code === 'BAD_COMMAND'
   );
 });
+
+test('a scalar bitmask field OR-combines an array of flags (additive entry)', () => {
+  const clazz = getMessageClass(common, 'ATTITUDE_TARGET');
+  const out = normalizeFields(common, clazz, {
+    type_mask: ['ATTITUDE_TARGET_TYPEMASK_BODY_ROLL_RATE_IGNORE', 'ATTITUDE_TARGET_TYPEMASK_BODY_YAW_RATE_IGNORE']
+  });
+  assert.strictEqual(out.type_mask, 5, 'flags 1|4 combine, they are not mutually exclusive');
+  /** Mixed forms: bare member names and raw numbers OR together too. */
+  const mixed = normalizeFields(common, clazz, { type_mask: ['BODY_ROLL_RATE_IGNORE', 64] });
+  assert.strictEqual(mixed.type_mask, 65);
+  /** An explicit empty array is zero flags, not an error. */
+  assert.strictEqual(normalizeFields(common, clazz, { type_mask: [] }).type_mask, 0);
+  /** A misspelled flag inside the array still fails with the scoped-enum error. */
+  assert.throws(
+    () => normalizeFields(common, clazz, { type_mask: ['BODY_ROLL_RATE_IGNORE', 'NOT_A_FLAG'] }),
+    (err) => err.code === 'UNRESOLVED_FIELD_VALUE' && err.context.field === 'type_mask'
+  );
+});
+
+test('an array on a scalar non-bitmask field fails loudly instead of leaking through', () => {
+  const clazz = getMessageClass(common, 'HEARTBEAT');
+  /** MAV_TYPE is an exclusive enum: an array of members is a caller bug. The
+   * per-element mapping used to pass the array to node-mavlink's scalar
+   * writer, which silently serialized garbage. */
+  assert.throws(
+    () => normalizeFields(common, clazz, { type: ['MAV_TYPE_QUADROTOR', 'MAV_TYPE_GCS'] }),
+    (err) => {
+      assert.strictEqual(err.code, 'FIELD_NOT_ARRAY');
+      assert.strictEqual(err.context.field, 'type');
+      return true;
+    }
+  );
+  /** A scalar field with no declared enum rejects arrays the same way. */
+  assert.throws(
+    () => normalizeFields(common, clazz, { custom_mode: [1, 2] }),
+    (err) => err.code === 'FIELD_NOT_ARRAY' && err.context.field === 'custom_mode'
+  );
+});
+
+test('a 64-bit bitmask field ORs an array of flags as BigInt', () => {
+  const clazz = getMessageClass(common, 'AUTOPILOT_VERSION');
+  const out = normalizeFields(common, clazz, {
+    capabilities: ['MAV_PROTOCOL_CAPABILITY_MISSION_FLOAT', 'MAV_PROTOCOL_CAPABILITY_PARAM_ENCODE_BYTEWISE']
+  });
+  assert.strictEqual(out.capabilities, 17n, 'uint64 field: 1 | 16 combined as BigInt');
+});
+
+test('flag-array elements are validated before the OR (no silent bitwise wrap)', () => {
+  const clazz = getMessageClass(common, 'ATTITUDE_TARGET');
+  /** JS bitwise would wrap these into valid-looking masks: [-1] -> 4294967295,
+   * [2^32] -> 0. Both must fail loudly instead (Codex review on the additive
+   * array form). */
+  for (const bad of [-1, 4294967296, 1.5]) {
+    assert.throws(
+      () => normalizeFields(common, clazz, { type_mask: [1, bad] }),
+      (err) => ['BAD_FLAG_VALUE', 'FIELD_NOT_INTEGER'].includes(err.code) && err.context.field === 'type_mask',
+      `rejects ${bad}`
+    );
+  }
+  /** A flag above the field's unsigned wire width cannot ride the mask —
+   * ATTITUDE_TARGET.type_mask is uint8_t, so bit 31 must be rejected. */
+  assert.throws(
+    () => normalizeFields(common, clazz, { type_mask: [2147483648] }),
+    (err) => err.code === 'BAD_FLAG_VALUE' && /8-bit/.test(err.message)
+  );
+  /** 64-bit fields reject negative elements rather than OR-ing them in. */
+  assert.throws(
+    () => normalizeFields(common, getMessageClass(common, 'AUTOPILOT_VERSION'), { capabilities: ['-1'] }),
+    (err) => err.code === 'BAD_FLAG_VALUE' && err.context.field === 'capabilities'
+  );
+});
+
+test('an empty flag array on a uint64 bitmask field returns 0n, not Number 0', () => {
+  /** Keyed off the FIELD type: with no elements to inspect, the BigInt path
+   * must still engage or the uint64 serializer receives the wrong type. */
+  const clazz = getMessageClass(common, 'AUTOPILOT_VERSION');
+  assert.strictEqual(normalizeFields(common, clazz, { capabilities: [] }).capabilities, 0n);
+});
+
+test('a one-flag *_FLAGS bitmask still accepts the array form (name rescue)', () => {
+  /** HIL_ACTUATOR_CONTROLS_FLAGS defines only LOCKSTEP = 1; the flag-count
+   * floor alone would send this to FIELD_NOT_ARRAY (Codex review). The field
+   * is uint64, so the single flag also proves the BigInt path end-to-end. */
+  const clazz = getMessageClass(common, 'HIL_ACTUATOR_CONTROLS');
+  const out = normalizeFields(common, clazz, { flags: ['HIL_ACTUATOR_CONTROLS_FLAGS_LOCKSTEP'] });
+  assert.strictEqual(out.flags, 1n);
+});
