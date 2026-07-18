@@ -11,13 +11,20 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
 fi
 
-if ! claude plugin list 2>/dev/null | grep -q "superpowers@claude-plugins-official"; then
-  claude plugin marketplace add anthropics/claude-plugins-official >/dev/null 2>&1 || true
-  claude plugin install superpowers@claude-plugins-official >/dev/null 2>&1 || true
-fi
-
 if claude plugin list 2>/dev/null | grep -q "superpowers@claude-plugins-official"; then
   echo "superpowers plugin available"
+  exit 0
+fi
+
+claude plugin marketplace add anthropics/claude-plugins-official >/dev/null 2>&1 || true
+claude plugin install superpowers@claude-plugins-official >/dev/null 2>&1 || true
+
+if claude plugin list 2>/dev/null | grep -q "superpowers@claude-plugins-official"; then
+  # A plugin installed DURING SessionStart may not activate until the
+  # harness rescans (there is no non-interactive /reload-plugins); in
+  # practice skills appear by the next turn, and the cached container
+  # state makes every later session start with the plugin present.
+  echo "superpowers plugin installed (fresh container); skills activate on rescan if not immediately visible"
 else
   echo "WARNING: superpowers plugin could not be installed; see .claude/README.md for manual setup"
 fi

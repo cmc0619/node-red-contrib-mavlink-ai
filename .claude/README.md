@@ -8,8 +8,13 @@ verification workflows), and runs `hooks/session-start.sh` at session start.
 Enabling alone does not INSTALL the plugin in a fresh environment — web
 sessions run in ephemeral containers that start without it — so the
 SessionStart hook performs an idempotent install on the web
-(`$CLAUDE_CODE_REMOTE` only). If a session ever reports the plugin missing,
-install it manually:
+(`$CLAUDE_CODE_REMOTE` only). One caveat on a brand-new container: a plugin
+installed during SessionStart may not activate until the harness rescans
+(there is no non-interactive `/reload-plugins`), so the very first session
+may pick the skills up a turn late; the cached container state makes every
+later session start with the plugin already present, taking the fast path.
+
+If a session ever reports the plugin missing, install it manually:
 
 ```bash
 claude plugin marketplace add anthropics/claude-plugins-official
