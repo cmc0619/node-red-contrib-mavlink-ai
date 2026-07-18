@@ -20,7 +20,7 @@ implemented in the v2 baseline.
 - [x] system/component defaults
 - [x] mission defaults
 - [x] heartbeat identity defaults
-- [x] firmware abstraction field (generic | ardupilot | px4 | custom)
+- [x] firmware abstraction field (generic | ardupilot | px4)
 - [x] validation errors for invalid config (loud dialect-load failure)
 
 ## Phase 2: Protocol layer
