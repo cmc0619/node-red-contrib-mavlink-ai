@@ -1,7 +1,7 @@
 'use strict';
 
 const { VehicleRegistry } = require('../lib/swarm/vehicle-registry');
-const { formationTargets, nextLeaderSysid, moveDistanceMeters, SHAPES } = require('../lib/swarm/formation');
+const { formationTargets, nextLeaderSysid, moveDistanceMeters } = require('../lib/swarm/formation');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { toInt, toNum, toBool, firstDefined, parseJsonObjectConfig } = require('../lib/util/validation');
 const { badgeForState } = require('../lib/util/status');
