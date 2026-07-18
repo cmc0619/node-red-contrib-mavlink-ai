@@ -83,3 +83,50 @@ test('editor transport field spec matches the shared module', () => {
     );
   }
 });
+
+test('editor presence rules agree with the runtime validator, case by case (#243, CodeRabbit review)', () => {
+  /**
+   * The editor inlines a pure copy of the presence rules
+   * (transportPresenceState) that both the field validators and the live
+   * derived-role hint consume. Extract and execute it against the shared
+   * runtime validator across the interesting cases, so the hint can never
+   * claim a role the runtime would reject.
+   */
+  const match = /function transportPresenceState\(t, v\) \{[\s\S]*?\n    \}/.exec(HTML);
+  assert.ok(match, 'expected the editor to define transportPresenceState');
+  const isBlank = (v) => v === undefined || v === null || String(v).trim() === '';
+  const editorState = new Function('isBlank', `return ${match[0]}`)(isBlank);
+
+  const cases = [
+    { t: 'udp', v: { bindPort: 14550, remoteHost: '', remotePort: '' } },
+    { t: 'udp', v: { bindPort: '', remoteHost: '10.0.0.5', remotePort: 14550 } },
+    { t: 'udp', v: { bindPort: 14550, remoteHost: '10.0.0.5', remotePort: 14551 } },
+    { t: 'udp', v: { bindPort: '', remoteHost: '', remotePort: '' } },
+    { t: 'udp', v: { bindPort: 14550, remoteHost: '10.0.0.5', remotePort: '' } },
+    { t: 'udp', v: { bindPort: 14550, remoteHost: '', remotePort: 14551 } },
+    { t: 'udp', v: { bindPort: '', remoteHost: '10.0.0.5', remotePort: 0 } },
+    { t: 'udp', v: { bindPort: '', remoteHost: '10.0.0.5', remotePort: 70000 } },
+    { t: 'tcp', v: { bindPort: 5760, remoteHost: '', remotePort: '' } },
+    { t: 'tcp', v: { bindPort: '', remoteHost: '10.0.0.5', remotePort: 5760 } },
+    { t: 'tcp', v: { bindPort: 5760, remoteHost: '10.0.0.5', remotePort: 5761 } },
+    { t: 'tcp', v: { bindPort: '', remoteHost: '', remotePort: '' } },
+    { t: 'tcp', v: { bindPort: 5760, remoteHost: '10.0.0.5', remotePort: '' } },
+    { t: 'tcp', v: { bindPort: '', remoteHost: '10.0.0.5', remotePort: 0 } }
+  ];
+  for (const { t, v } of cases) {
+    const runtime = validateConnectionConfig(Object.assign({ transport: t }, v));
+    const editor = editorState(t, v);
+    const label = `${t} ${JSON.stringify(v)}`;
+    // Deployability must agree exactly.
+    assert.strictEqual(
+      Object.keys(editor.bad).length === 0,
+      runtime.length === 0,
+      `${label}: editor says ${JSON.stringify(editor.bad)}, runtime says ${JSON.stringify(runtime)}`
+    );
+    // And every runtime-implicated field must be flagged by the editor too, so
+    // the red marker lands on the same input the deploy error names.
+    for (const problem of runtime) {
+      assert.ok(editor.bad[problem.field], `${label}: editor misses field '${problem.field}' (${JSON.stringify(editor.bad)})`);
+    }
+  }
+});

@@ -61,25 +61,28 @@
     }
 
     /**
-     * Mirror of the runtime presence rules (#243): the set of field names
-     * implicated in a violated rule for the currently edited values.
+     * Pure mirror of the runtime presence rules (#243) — no DOM access, so the
+     * drift-guard test (connection-editor-spec.test.js) can execute it against
+     * the shared runtime validator. Returns the presence state plus the set of
+     * implicated fields for the given raw values.
      *
-     *   udp: remote pair all-or-nothing; blank bind + no remote is undeployable.
+     *   udp: remote pair all-or-nothing (port must be 1..65535); blank bind +
+     *        no usable remote is undeployable.
      *   tcp: remote pair all-or-nothing; exactly one of remote-pair / bind port.
      *   serial: handled by the static required list.
      *
-     * @param {object} node
-     * @returns {Object<string, boolean>} implicated field -> true
+     * @param {string} t  transport ('udp' | 'tcp' | anything else = no rules)
+     * @param {object} v  raw values { bindPort, remoteHost, remotePort }
+     * @returns {{bad: Object<string, boolean>, hasRemote: boolean, hasBind: boolean}}
      */
-    function presenceProblemFields(node) {
-      var t = currentTransport(node);
+    function transportPresenceState(t, v) {
       var bad = {};
       if (t !== 'udp' && t !== 'tcp') {
-        return bad;
+        return { bad: bad, hasRemote: false, hasBind: false };
       }
-      var hasHost = !isBlank(formValue(node, 'remoteHost'));
-      var hasPort = !isBlank(formValue(node, 'remotePort'));
-      var hasBind = !isBlank(formValue(node, 'bindPort'));
+      var hasHost = !isBlank(v.remoteHost);
+      var hasPort = !isBlank(v.remotePort);
+      var hasBind = !isBlank(v.bindPort);
       if (hasHost && !hasPort) {
         bad.remotePort = true;
       }
@@ -89,7 +92,7 @@
       if (hasPort) {
         // A present remote port must be a usable destination (1..65535):
         // port 0 deploys as "no fixed destination" and fails silently (#243).
-        var portNum = Number(formValue(node, 'remotePort'));
+        var portNum = Number(v.remotePort);
         if (!(portNum >= 1 && portNum <= 65535 && portNum === Math.floor(portNum))) {
           bad.remotePort = true;
         }
@@ -105,7 +108,21 @@
           bad.remoteHost = true;
         }
       }
-      return bad;
+      return { bad: bad, hasRemote: hasRemote, hasBind: hasBind };
+    }
+
+    /**
+     * Presence-rule problems for the currently edited values (live form reads).
+     *
+     * @param {object} node
+     * @returns {Object<string, boolean>} implicated field -> true
+     */
+    function presenceProblemFields(node) {
+      return transportPresenceState(currentTransport(node), {
+        bindPort: formValue(node, 'bindPort'),
+        remoteHost: formValue(node, 'remoteHost'),
+        remotePort: formValue(node, 'remotePort')
+      }).bad;
     }
 
     /**
@@ -158,7 +175,10 @@
 
     /**
      * Human-readable statement of what the current field combination will do —
-     * the role is derived, so show the derivation live (#243).
+     * the role is derived, so show the derivation live (#243). Uses the SAME
+     * validated presence state as the field validators, so an undeployable
+     * combination (partial pair, port 0) never earns a confident Client/Server/
+     * Peer hint (CodeRabbit review).
      *
      * @returns {string}
      */
@@ -167,9 +187,13 @@
       var bind = $('#node-config-input-bindPort').val();
       var host = $('#node-config-input-remoteHost').val();
       var port = $('#node-config-input-remotePort').val();
-      var hasRemote = !isBlank(host) && !isBlank(port);
-      var hasBind = !isBlank(bind);
+      var state = transportPresenceState(t, { bindPort: bind, remoteHost: host, remotePort: port });
+      var hasRemote = state.hasRemote;
+      var hasBind = state.hasBind;
       if (t === 'udp') {
+        if (state.bad.remoteHost || state.bad.remotePort) {
+          return 'Remote host and port must both be set (port 1-65535), or both left blank.';
+        }
         if (hasBind && hasRemote) {
           return 'Peer on :' + bind + ', sending to ' + host + ':' + port + '.';
         }
@@ -182,6 +206,12 @@
         return 'Fill a bind port to listen, a remote host/port to send, or both.';
       }
       if (t === 'tcp') {
+        if (state.bad.remoteHost && (hasBind || state.bad.remotePort)) {
+          return 'Remote host and port must both be set (port 1-65535), or both left blank.';
+        }
+        if (state.bad.remotePort) {
+          return 'Remote host and port must both be set (port 1-65535), or both left blank.';
+        }
         if (hasRemote && hasBind) {
           return 'Pick one role: remote host/port to connect out, OR bind port to accept.';
         }
