@@ -41,7 +41,12 @@ test('malformed id lists fail closed: subscribe throws instead of widening to a 
    * — and an empty list means accept-all. A filter meant to narrow delivery
    * must never fail open; every malformed form throws BAD_FILTER instead.
    */
-  for (const bad of [['bad'], [1, 'bad'], [1.5], [-1], [256], 'not-an-array', 5]) {
+  /**
+   * The Number-coercible impostors matter most: true/[1] coerce to 1 and
+   * ''/null to 0, so bare coercion would register a REAL filter on id 1/0
+   * instead of throwing (#288 review).
+   */
+  for (const bad of [['bad'], [1, 'bad'], [1.5], [-1], [256], [true], [[1]], [''], [null], 'not-an-array', 5]) {
     assert.throws(
       () => reg.subscribe({ sysids: bad }, () => {}),
       (e) => e.code === 'BAD_FILTER',
