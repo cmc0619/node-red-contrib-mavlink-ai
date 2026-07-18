@@ -47,6 +47,9 @@ function setup() {
     this.acquireLock = (key, owner) => this.locks.acquire(key, owner);
     this.releaseLock = (key, owner) => this.locks.release(key, owner);
     this.resolveOutboundIdentity = () => fakeIdentity();
+    /** #233 capability API (unused here, required by the contract). */
+    this.getVehicleCapabilities = () => undefined;
+    this.requestVehicleCapabilities = () => {};
   });
   const conn = RED.create('stub-connection', { id: 'conn1' });
   return { RED, conn };
