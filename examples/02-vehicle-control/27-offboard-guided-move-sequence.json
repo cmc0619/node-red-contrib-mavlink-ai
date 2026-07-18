@@ -38,12 +38,12 @@
     "type": "mavlink-ai-connection",
     "name": "Vehicle UDP 14550",
     "profile": "ai_profile_copter",
-    "transport": "udp-peer",
+    "transport": "udp",
     "routingMode": "single-profile",
     "bindAddress": "0.0.0.0",
     "bindPort": 14550,
     "remoteHost": "",
-    "remotePort": 14550,
+    "remotePort": "",
     "serialPath": "",
     "serialBaud": 57600,
     "reconnect": true,
@@ -73,7 +73,7 @@
     "id": "n27_i1",
     "type": "inject",
     "z": "flow27",
-    "name": "1 \u00b7 Start stream (hold 0 m/s)",
+    "name": "1 · Start stream (hold 0 m/s)",
     "props": [
       {
         "p": "payload"
@@ -127,7 +127,7 @@
     "id": "n27_i2",
     "type": "inject",
     "z": "flow27",
-    "name": "2 \u00b7 Set mode GUIDED (PX4: OFFBOARD)",
+    "name": "2 · Set mode GUIDED (PX4: OFFBOARD)",
     "props": [
       {
         "p": "payload"
@@ -169,7 +169,7 @@
     "id": "n27_i3",
     "type": "inject",
     "z": "flow27",
-    "name": "3 \u00b7 One-shot: N10 / Alt5",
+    "name": "3 · One-shot: N10 / Alt5",
     "props": [
       {
         "p": "payload"
@@ -223,7 +223,7 @@
     "id": "n27_i4",
     "type": "inject",
     "z": "flow27",
-    "name": "4 \u00b7 Refresh stream: forward 2 m/s",
+    "name": "4 · Refresh stream: forward 2 m/s",
     "props": [
       {
         "p": "payload"
@@ -243,7 +243,7 @@
     "id": "n27_i5",
     "type": "inject",
     "z": "flow27",
-    "name": "5 \u00b7 Stop stream",
+    "name": "5 · Stop stream",
     "props": [
       {
         "p": "payload"

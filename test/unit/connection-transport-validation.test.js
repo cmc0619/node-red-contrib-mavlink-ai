@@ -42,9 +42,9 @@ function connect(RED, config) {
   );
 }
 
-test('udp-out with no remote host is rejected at deploy', () => {
+test('udp with a partial remote pair is rejected at deploy', () => {
   const RED = withProfile();
-  const conn = connect(RED, { transport: 'udp-out', remoteHost: '', remotePort: 14550 });
+  const conn = connect(RED, { transport: 'udp', remoteHost: '', remotePort: 14550 });
   assert.strictEqual(conn.statusState, 'error');
   const logged = conn.errors.map(String).join('\n');
   assert.match(logged, /TRANSPORT_CONFIG_INVALID/);
@@ -55,7 +55,7 @@ test('udp-out with no remote host is rejected at deploy', () => {
 
 test('a rejected connection sends reject rather than throwing', async () => {
   const RED = withProfile();
-  const conn = connect(RED, { transport: 'udp-out', remoteHost: '' });
+  const conn = connect(RED, { transport: 'udp', remoteHost: '' });
   await assert.rejects(() => conn.send({ name: 'HEARTBEAT', fields: {} }), /not initialised/);
 });
 
@@ -66,25 +66,46 @@ test('serial with no device path is rejected at deploy', () => {
   assert.match(conn.errors.map(String).join('\n'), /TRANSPORT_CONFIG_INVALID.*serial path/is);
 });
 
-test('tcp-client with no remote host is rejected at deploy', () => {
+test('tcp with a partial remote pair is rejected at deploy', () => {
   const RED = withProfile();
-  const conn = connect(RED, { transport: 'tcp-client', remoteHost: '', remotePort: 5760 });
+  const conn = connect(RED, { transport: 'tcp', remoteHost: '', remotePort: 5760 });
   assert.strictEqual(conn.statusState, 'error');
   assert.match(conn.errors.map(String).join('\n'), /TRANSPORT_CONFIG_INVALID/);
 });
 
-test('udp-peer with a blank remote is accepted (learn-first)', async (t) => {
+test('udp with a blank remote is accepted (learn-first peer)', async (t) => {
   const RED = withProfile();
-  const conn = connect(RED, { transport: 'udp-peer', bindAddress: '127.0.0.1', bindPort: 0, remoteHost: '' });
+  const conn = connect(RED, { transport: 'udp', bindAddress: '127.0.0.1', bindPort: 0, remoteHost: '' });
   t.after(() => RED.close(conn));
   assert.notStrictEqual(conn.statusState, 'error', `status: ${conn.statusState} ${conn.statusDetail}`);
   assert.ok(conn._transport, 'transport started');
 });
 
-test('udp-out with a remote endpoint is accepted', async (t) => {
+test('udp with only a remote endpoint is accepted (send-first, ephemeral bind)', async (t) => {
   const RED = withProfile();
-  const conn = connect(RED, { transport: 'udp-out', remoteHost: '127.0.0.1', remotePort: 14550 });
+  const conn = connect(RED, { transport: 'udp', remoteHost: '127.0.0.1', remotePort: 14550 });
   t.after(() => RED.close(conn));
   assert.notStrictEqual(conn.statusState, 'error', `status: ${conn.statusState} ${conn.statusDetail}`);
   assert.ok(conn._transport, 'transport started');
+});
+
+test('tcp with both roles filled is rejected at deploy (#243 strict xor)', () => {
+  const RED = withProfile();
+  const conn = connect(RED, { transport: 'tcp', bindPort: 5760, remoteHost: '127.0.0.1', remotePort: 5761 });
+  assert.strictEqual(conn.statusState, 'error');
+  assert.match(conn.errors.map(String).join('\n'), /TRANSPORT_CONFIG_INVALID.*exactly one role/is);
+});
+
+test('tcp with neither role filled is rejected at deploy (#243)', () => {
+  const RED = withProfile();
+  const conn = connect(RED, { transport: 'tcp' });
+  assert.strictEqual(conn.statusState, 'error');
+  assert.match(conn.errors.map(String).join('\n'), /TRANSPORT_CONFIG_INVALID/);
+});
+
+test('a pre-#243 mode name is rejected at deploy (clean break)', () => {
+  const RED = withProfile();
+  const conn = connect(RED, { transport: 'udp-peer', bindPort: 14550 });
+  assert.strictEqual(conn.statusState, 'error');
+  assert.match(conn.errors.map(String).join('\n'), /TRANSPORT_CONFIG_INVALID.*Unknown transport/is);
 });

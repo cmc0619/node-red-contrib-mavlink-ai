@@ -41,7 +41,7 @@ implemented in the v2 baseline.
 ## Phase 3: Connection layer
 
 - [x] `mavlink-ai-connection` config node
-- [x] UDP peer transport (+ udp-in / udp-out)
+- [x] UDP transport (peer semantics; condensed to udp/serial/tcp in #243)
 - [x] connection status
 - [x] clean resource close on redeploy
 - [x] inbound packet decode

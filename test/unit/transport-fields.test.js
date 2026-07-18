@@ -10,86 +10,104 @@ const {
 } = require('../../lib/transport/transport-fields');
 
 /**
- * Transport-aware field spec (issue #103). The editor and the runtime share
- * this module so a transport shows (and requires) only the settings it uses.
+ * Condensed transport spec (#243): three protocols — udp, serial, tcp — whose
+ * role derives from field presence instead of a mode picker. The editor and the
+ * runtime share this module, so these presence rules are the single source of
+ * truth for both.
  */
 
-test('every transport has a field spec', () => {
-  for (const t of TRANSPORTS) {
-    // A blank config for the transport must produce a defined problem list.
-    assert.ok(Array.isArray(validateConnectionConfig({ transport: t })), `spec for ${t}`);
-  }
+test('the transport list is exactly udp, serial, tcp', () => {
+  assert.deepStrictEqual(TRANSPORTS, ['udp', 'serial', 'tcp']);
 });
 
-test('udp-out requires a remote endpoint', () => {
-  const problems = validateConnectionConfig({ transport: 'udp-out', remoteHost: '', remotePort: '' });
-  const fields = problems.map((p) => p.field);
-  assert.ok(fields.includes('remoteHost'), 'remoteHost required');
-  assert.ok(fields.includes('remotePort'), 'remotePort required');
-});
-
-test('udp-out is valid once the remote is set', () => {
-  const problems = validateConnectionConfig({ transport: 'udp-out', remoteHost: '10.0.0.5', remotePort: 14550 });
+test('udp: bind only (peer/listen) is valid', () => {
+  const problems = validateConnectionConfig({ transport: 'udp', bindPort: 14550 });
   assert.strictEqual(problems.length, 0, JSON.stringify(problems));
 });
 
-test('tcp-client requires a remote host and port', () => {
-  const problems = validateConnectionConfig({ transport: 'tcp-client', remoteHost: '', remotePort: 5760 });
-  assert.deepStrictEqual(problems.map((p) => p.field), ['remoteHost']);
+test('udp: remote only (send-first with ephemeral bind) is valid', () => {
+  const problems = validateConnectionConfig({ transport: 'udp', remoteHost: '10.0.0.5', remotePort: 14550 });
+  assert.strictEqual(problems.length, 0, JSON.stringify(problems));
 });
 
-test('serial requires a device path', () => {
-  const problems = validateConnectionConfig({ transport: 'serial', serialPath: '', serialBaud: 57600 });
-  assert.deepStrictEqual(problems.map((p) => p.field), ['serialPath']);
-});
-
-test('serial is valid with a path', () => {
-  const problems = validateConnectionConfig({ transport: 'serial', serialPath: '/dev/ttyACM0', serialBaud: 57600 });
-  assert.strictEqual(problems.length, 0);
-});
-
-test('udp-peer does not require a remote (learn-first) but needs a bind port', () => {
-  const learn = validateConnectionConfig({ transport: 'udp-peer', bindPort: 14550, remoteHost: '', remotePort: '' });
-  assert.strictEqual(learn.length, 0, 'blank remote is fine for udp-peer (learned peer)');
-
-  const noBind = validateConnectionConfig({ transport: 'udp-peer', bindPort: '' });
-  assert.deepStrictEqual(noBind.map((p) => p.field), ['bindPort']);
-});
-
-test('udp-in only needs a bind port (receive-only)', () => {
-  const ok = validateConnectionConfig({ transport: 'udp-in', bindPort: 14550 });
-  assert.strictEqual(ok.length, 0);
-  const blank = validateConnectionConfig({ transport: 'udp-in', bindPort: '  ' });
-  assert.deepStrictEqual(blank.map((p) => p.field), ['bindPort']);
-});
-
-test('field visibility is transport-specific', () => {
-  assert.ok(isFieldVisible('serial', 'serialPath'));
-  assert.ok(!isFieldVisible('serial', 'remoteHost'), 'serial hides remote host');
-  assert.ok(isFieldVisible('udp-in', 'bindPort'));
-  assert.ok(!isFieldVisible('udp-in', 'remoteHost'), 'udp-in hides remote host (receive-only)');
-  assert.ok(isFieldVisible('udp-peer', 'bindPort') && isFieldVisible('udp-peer', 'remoteHost'));
-  assert.ok(isFieldVisible('tcp-client', 'remoteHost') && !isFieldVisible('tcp-client', 'bindPort'));
-});
-
-test('migration: a legacy config carrying every field still validates for any transport', () => {
-  // Old flows saved all fields regardless of transport. A fully-populated
-  // config must remain valid after the transport-aware spec is applied, so an
-  // upgrade never invalidates a working saved connection.
-  const legacy = {
-    bindAddress: '0.0.0.0',
+test('udp: bind plus fixed remote is valid', () => {
+  const problems = validateConnectionConfig({
+    transport: 'udp',
     bindPort: 14550,
-    remoteHost: '127.0.0.1',
-    remotePort: 14550,
-    serialPath: '/dev/ttyACM0',
-    serialBaud: 57600
-  };
-  for (const t of TRANSPORTS) {
-    const problems = validateConnectionConfig(Object.assign({ transport: t }, legacy));
-    assert.strictEqual(problems.length, 0, `${t}: ${JSON.stringify(problems)}`);
+    remoteHost: '10.0.0.5',
+    remotePort: 14551
+  });
+  assert.strictEqual(problems.length, 0, JSON.stringify(problems));
+});
+
+test('udp: everything blank is a deploy error', () => {
+  // An ephemeral socket nobody can reach, with nowhere to send, is dead weight.
+  const problems = validateConnectionConfig({ transport: 'udp', bindPort: '', remoteHost: '', remotePort: '' });
+  assert.ok(problems.length >= 1, 'expected at least one problem');
+});
+
+test('udp: a partial remote pair is a deploy error', () => {
+  const hostOnly = validateConnectionConfig({ transport: 'udp', bindPort: 14550, remoteHost: '10.0.0.5' });
+  assert.ok(hostOnly.some((p) => p.field === 'remotePort'), JSON.stringify(hostOnly));
+  const portOnly = validateConnectionConfig({ transport: 'udp', bindPort: 14550, remotePort: 14551 });
+  assert.ok(portOnly.some((p) => p.field === 'remoteHost'), JSON.stringify(portOnly));
+});
+
+test('tcp: remote pair only (client role) is valid', () => {
+  const problems = validateConnectionConfig({ transport: 'tcp', remoteHost: '10.0.0.5', remotePort: 5760 });
+  assert.strictEqual(problems.length, 0, JSON.stringify(problems));
+});
+
+test('tcp: bind port only (server role) is valid', () => {
+  const problems = validateConnectionConfig({ transport: 'tcp', bindPort: 5760 });
+  assert.strictEqual(problems.length, 0, JSON.stringify(problems));
+});
+
+test('tcp: both roles filled is a deploy error (strict xor)', () => {
+  const problems = validateConnectionConfig({
+    transport: 'tcp',
+    bindPort: 5760,
+    remoteHost: '10.0.0.5',
+    remotePort: 5760
+  });
+  assert.ok(problems.length >= 1, 'expected a problem for both roles');
+});
+
+test('tcp: neither role filled is a deploy error', () => {
+  const problems = validateConnectionConfig({ transport: 'tcp' });
+  assert.ok(problems.length >= 1, 'expected a problem for no role');
+});
+
+test('tcp: a partial remote pair is a deploy error', () => {
+  const problems = validateConnectionConfig({ transport: 'tcp', remoteHost: '10.0.0.5' });
+  assert.ok(problems.some((p) => p.field === 'remotePort'), JSON.stringify(problems));
+});
+
+test('serial requires a device path and baud', () => {
+  const blank = validateConnectionConfig({ transport: 'serial', serialPath: '', serialBaud: '' });
+  const fields = blank.map((p) => p.field);
+  assert.ok(fields.includes('serialPath'), 'serialPath required');
+  assert.ok(fields.includes('serialBaud'), 'serialBaud required');
+  const ok = validateConnectionConfig({ transport: 'serial', serialPath: '/dev/ttyACM0', serialBaud: 57600 });
+  assert.strictEqual(ok.length, 0);
+});
+
+test('legacy mode names are rejected, not silently remapped (#243 clean break)', () => {
+  for (const legacy of ['udp-peer', 'udp-in', 'udp-out', 'tcp-client', 'tcp-server']) {
+    const problems = validateConnectionConfig({ transport: legacy, bindPort: 14550, remoteHost: 'h', remotePort: 1 });
+    assert.ok(problems.length >= 1, `${legacy} must fail validation`);
   }
 });
 
-test('an unknown transport falls back to a usable spec instead of throwing', () => {
-  assert.doesNotThrow(() => validateConnectionConfig({ transport: 'not-a-transport' }));
+test('field visibility is protocol-specific', () => {
+  assert.ok(isFieldVisible('serial', 'serialPath'));
+  assert.ok(!isFieldVisible('serial', 'remoteHost'), 'serial hides remote host');
+  assert.ok(isFieldVisible('udp', 'bindPort') && isFieldVisible('udp', 'remoteHost'));
+  assert.ok(!isFieldVisible('udp', 'serialPath'), 'udp hides serial path');
+  assert.ok(isFieldVisible('tcp', 'remoteHost') && isFieldVisible('tcp', 'bindPort'), 'tcp shows both role fields');
+  assert.ok(isFieldVisible('tcp', 'reconnect'));
+});
+
+test('an unknown transport still yields a usable visibility spec (editor safety)', () => {
+  assert.doesNotThrow(() => isFieldVisible('not-a-transport', 'bindPort'));
 });

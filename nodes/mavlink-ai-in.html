@@ -123,7 +123,7 @@
   <ul>
     <li><b>decoded</b> — always the first output. Decoded messages (<code>mavlink/&lt;NAME&gt;</code>).</li>
     <li><b>raw</b> — present only when <b>Raw output</b> is enabled; always directly after <i>decoded</i>. Raw packet buffers.</li>
-    <li><b>errors</b> — present only when <b>Errors output</b> is enabled; always the last output (output 2 when raw is disabled, output 3 when raw is enabled). Connection diagnostics: <code>mavlink/error</code> for packets the matched dialect could not decode (with raw hex), and <code>mavlink/rejected</code> for packets dropped by routing/accept filters. Both include the sender endpoint (<code>remoteAddress</code>/<code>remotePort</code>, plus <code>clientId</code> on tcp-server) where the transport provides one, so you can tell which endpoint sent the offending traffic.</li>
+    <li><b>errors</b> — present only when <b>Errors output</b> is enabled; always the last output (output 2 when raw is disabled, output 3 when raw is enabled). Connection diagnostics: <code>mavlink/error</code> for packets the matched dialect could not decode (with raw hex), and <code>mavlink/rejected</code> for packets dropped by routing/accept filters. Both include the sender endpoint (<code>remoteAddress</code>/<code>remotePort</code>, plus <code>clientId</code> on a tcp server) where the transport provides one, so you can tell which endpoint sent the offending traffic.</li>
   </ul>
   <p>So the possible layouts are: <code>decoded</code> · <code>decoded, raw</code> · <code>decoded, errors</code> · <code>decoded, raw, errors</code>. Hover a port in the editor to see its label.</p>
   <p>Use the filters to subscribe to specific messages, systems, components, or a routed profile, and rate-limit high-rate telemetry.</p>

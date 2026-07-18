@@ -79,7 +79,7 @@ resolved design decisions, not open work.)
   servo, relay, and gripper verbs for any vehicle type.
 - **Multi-vehicle routing**: route inbound packets by sysid/compid to the
   correct profile and decode with that profile's dialect.
-- **UDP peer tracking by sysid**: `udp-peer` learns multiple vehicle endpoints
+- **UDP peer tracking by sysid**: the `udp` transport learns multiple vehicle endpoints
   on one port and sends target-specific traffic back to the right sysid.
 - **Swarm helpers**: discover active systems from HEARTBEAT, maintain named
   groups, fan out commands per vehicle, convert local meter offsets to global
@@ -480,7 +480,7 @@ Two layers, on purpose:
    - For ArduPilot, start with the `ardupilotmega` dialect and set the vehicle
      family (e.g. Copter); for generic MAVLink-only traffic, `common` is fine.
 4. Create a **MAVLink AI Connection** referencing the Vehicle Profile and the
-   Local Identity, transport `udp-peer`, bind `0.0.0.0:14550`. Enable heartbeat
+   Local Identity, transport `udp`, bind `0.0.0.0:14550`. Enable heartbeat
    if this node should act like a lightweight GCS.
 5. Point SITL or a vehicle at `udp:127.0.0.1:14550` and watch HEARTBEAT decode.
 6. Add a **MAVLink AI Command** node (Arm, Set Mode, Takeoff, Request Message,

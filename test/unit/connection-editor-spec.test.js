@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { TRANSPORT_FIELDS } = require('../../lib/transport/transport-fields');
+const { TRANSPORT_FIELDS, validateConnectionConfig } = require('../../lib/transport/transport-fields');
 
 /**
  * The connection editor (nodes/mavlink-ai-connection.html) runs in the browser
@@ -63,10 +63,23 @@ test('editor transport field spec matches the shared module', () => {
       sorted(TRANSPORT_FIELDS[transport].visible),
       `visible fields for ${transport} match`
     );
+    /**
+     * Static required-ness was replaced by presence rules (#243). The one
+     * statically-required protocol is serial; derive its required fields from
+     * the shared validator (what an all-blank config reports) so the editor's
+     * asterisk markers can't drift from the runtime. udp/tcp deployability is
+     * combination-based, so their static marker lists must stay empty — the
+     * editor mirrors those rules in presenceProblemFields, exercised against
+     * the runtime rules in transport-fields.test.js.
+     */
+    const derivedRequired =
+      transport === 'serial'
+        ? validateConnectionConfig({ transport, serialPath: '', serialBaud: '' }).map((p) => p.field)
+        : [];
     assert.deepStrictEqual(
       sorted(editorRequired[transport]),
-      sorted(TRANSPORT_FIELDS[transport].required),
-      `required fields for ${transport} match`
+      sorted(derivedRequired),
+      `required fields for ${transport} match the shared validator`
     );
   }
 });

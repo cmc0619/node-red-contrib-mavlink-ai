@@ -500,7 +500,7 @@ Suggested fields:
 ```text
 Name
 Default profile
-Transport: serial | udp-peer | udp-in | udp-out | tcp-client | tcp-server
+Transport: udp | serial | tcp  (role derived from field presence, #243)
 Serial path
 Serial baud
 Serial data bits
@@ -568,7 +568,7 @@ Most users start here:
 
 ```text
 Connection: Copter UDP 14550
-Transport: udp-peer
+Transport: udp
 Bind: 0.0.0.0:14550
 Mode: single-profile
 Profile: Copter
@@ -583,7 +583,7 @@ Listen on UDP 14550.
 Decode inbound packets.
 Only accept sysid 1 unless configured otherwise.
 Treat accepted packets as belonging to Copter Profile.
-Send replies to the learned UDP peer if udp-peer mode is used.
+Send replies to the learned UDP peer (or the fixed remote when one is set).
 ```
 
 ### 9.2 Routed UDP Mode
@@ -592,7 +592,7 @@ Advanced users may receive multiple MAVLink systems on one UDP socket:
 
 ```text
 Connection: Swarm UDP 14550
-Transport: udp-peer
+Transport: udp
 Bind: 0.0.0.0:14550
 Mode: routed
 
@@ -1059,7 +1059,7 @@ The module needs stable message contracts. Do not let every node invent its own 
     },
     transport: {
       name: "Copter UDP 14550",
-      type: "udp-peer",
+      type: "udp",
       remoteAddress: "127.0.0.1",
       remotePort: 14550
     },
@@ -1081,7 +1081,7 @@ legacy bucket.
 
 **Per-message endpoint (#239).** `transport.remoteAddress` / `remotePort` name
 the actual source of the transport read that carried *this* packet — the UDP
-datagram's sender, or the tcp-server client socket (which additionally stamps
+datagram's sender, or the tcp server-role client socket (which additionally stamps
 its per-client `clientId`) — not the connection's configured or fallback
 remote, so on a multi-peer link every decoded message says which endpoint sent
 it. The remaining `transport` fields (`name`, `type`, bind/remote config)
@@ -1090,8 +1090,8 @@ decode-error diagnostics. Serial has no network endpoint, so these fields are
 absent there. Attribution rule: a packet belongs to the read that *completed*
 its frame — frames concatenated in one read share that read's endpoint, and a
 frame split across reads (abnormal for UDP, routine for TCP) reports the
-completing read's. Framing state is keyed per stream (per tcp-server client,
-per UDP source endpoint, one shared stream for serial/tcp-client), so the
+completing read's. Framing state is keyed per stream (per tcp server client,
+per UDP source endpoint, one shared stream for serial/tcp client-role), so the
 completing read is by construction from the same endpoint that started the
 frame — one peer's partial or phantom bytes can never buffer onto another
 peer's datagram, and a frame recovered by the splitter's resync always carries
@@ -1172,7 +1172,7 @@ payload — never as a MAVLink frame:
   node: "mavlink-ai-connection",
   connection: "Copter UDP 14550",
   state: "connected",
-  transport: "udp-peer",
+  transport: "udp",
   timestamp: 1782849600000,
   detail: "Listening on 0.0.0.0:14550"
 }
@@ -1332,45 +1332,28 @@ every message id any routed profile can decode.
 
 Transport belongs to the connection layer.
 
-Supported transports:
+Supported transports (#243 — three protocols, role from field presence):
 
 ```text
-serial
-udp-peer
-udp-in
-udp-out
-tcp-client
-tcp-server
+udp     always a peer: binds (explicit port, or ephemeral when blank), learns
+        validated senders, sends to the fixed remote when set, else to
+        learned peers. Blank bind + blank remote is rejected at deploy.
+serial  device path + baud.
+tcp     exactly one role: a filled remote host/port dials out (client); a
+        filled bind port accepts inbound (server). Both or neither is
+        rejected at deploy.
 ```
+
+The pre-#243 mode names (`udp-peer`, `udp-in`, `udp-out`, `tcp-client`,
+`tcp-server`) are rejected everywhere — a deliberate pre-1.0 clean break with
+no legacy remapping.
 
 ### 17.1 UDP
 
-UDP modes:
+Every UDP socket is a peer. `udp` is the default for GCS/SITL style usage.
 
-```text
-udp-in    listen only
-udp-out   send only
-udp-peer  listen, learn peer, and reply
-```
-
-`udp-peer` should be the likely default for GCS/SITL style usage.
-
-UDP peer tracking should remember the most recent valid sender for a route/profile when configured to do so.
-
-Questions to decide during implementation:
-
-```text
-- Should peer tracking be global per connection?
-- Per sysid?
-- Per sysid/compid?
-- Manually pinned remote host/port only?
-```
-
-Likely default:
-
-```text
-udp-peer learns remote endpoint per sysid, with manual remote host/port override available.
-```
+Peer tracking learns the remote endpoint per sysid, with a manual remote
+host/port override available as the default destination for outbound.
 
 Peer learning trust boundary (#85, #239): receiving a datagram commits
 nothing. The transport commits an endpoint (fallback peer / per-sysid mapping)
@@ -1398,14 +1381,9 @@ Serial is optional. The module must not require `serialport` for UDP/TCP users.
 
 ### 17.3 TCP
 
-TCP modes:
-
-```text
-tcp-client
-tcp-server
-```
-
-TCP is secondary to UDP and serial for initial development.
+One `tcp` transport whose role is derived once at deploy: a filled remote
+host/port dials out (client); a filled bind port accepts inbound (server);
+exactly one must be set. TCP is secondary to UDP and serial.
 
 ## 18. Dependency Rules
 
@@ -1714,7 +1692,7 @@ see §14.4; not a flow message):
   node: "mavlink-ai-connection",
   connection: "Copter UDP 14550",
   state: "connected",
-  transport: "udp-peer",
+  transport: "udp",
   detail: "Listening on 0.0.0.0:14550"
 }
 ```

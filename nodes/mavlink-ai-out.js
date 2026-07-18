@@ -112,7 +112,7 @@ module.exports = function registerMavlinkAiOut(RED) {
         done();
       } catch (err) {
         /**
-         * A transport that is passively waiting for the other side — a udp-peer
+         * A transport that is passively waiting for the other side — a udp socket
          * that hasn't learned a peer, a TCP server with no client connected yet —
          * is a normal transient state, not a send failure. Badge it "waiting for
          * link" and warn once (re-armed on the next successful send) instead of

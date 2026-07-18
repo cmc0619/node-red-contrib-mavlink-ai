@@ -36,7 +36,7 @@ const KNOWN_INCOMPAT_FLAGS = 0x01;
 
 /**
  * Stream key for transports that carry a single peer's byte stream (serial,
- * tcp-client). They share one decoder; tcp-server keys one per client via its
+ * tcp client-role). They share one decoder; a tcp server keys one per client via its
  * `clientId` (#147) and UDP one per source endpoint (#262 review) — see
  * {@link streamKeyFor}.
  */
@@ -53,7 +53,7 @@ const SHARED_STREAM_KEY = '__shared__';
 const HEARTBEAT_EXPECTED_IDLE_CODES = TRANSPORT_NOT_READY_CODES;
 
 /**
- * Ceiling on live per-stream decoders. `peer-disconnect` evicts a tcp-server
+ * Ceiling on live per-stream decoders. `peer-disconnect` evicts a tcp server
  * client's decoder as soon as its socket closes, but this bounds memory if a
  * burst of short-lived clients ever churns faster than eviction (#147) — and
  * bounds UDP per-endpoint decoders outright, since spoofed source addresses
@@ -122,12 +122,14 @@ module.exports = function registerMavlinkAiConnection(RED) {
 
     node.name = config.name;
     node.profile = RED.nodes.getNode(config.profile);
-    node.transportType = config.transport || 'udp-peer';
+    node.transportType = config.transport || 'udp';
     node.routingMode = config.routingMode || 'single-profile';
     node.bindAddress = config.bindAddress || '0.0.0.0';
-    node.bindPort = toInt(config.bindPort, 14550);
+    // 0 = blank in the editor: UDP binds ephemeral; role/remote presence is
+    // judged on the raw config below, never on a defaulted copy (#243).
+    node.bindPort = toInt(config.bindPort, 0);
     node.remoteHost = config.remoteHost || '';
-    node.remotePort = toInt(config.remotePort, 14550);
+    node.remotePort = toInt(config.remotePort, 0);
     node.serialPath = config.serialPath || '';
     node.serialBaud = toInt(config.serialBaud, 57600);
     node.reconnect = toBool(config.reconnect, true);
@@ -278,7 +280,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node._heartbeatTimers = new Map();
     /**
      * Stream decoders keyed by stream identity: `SHARED_STREAM_KEY` for
-     * single-peer transports, or a tcp-server client's `clientId` so two
+     * single-peer transports, or a tcp server client's `clientId` so two
      * clients' interleaved bytes never corrupt each other's framing (#147).
      */
     node._decoders = new Map();
@@ -538,7 +540,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     // Reject an impossible transport/settings combination loudly at deploy
-    // (issue #103): e.g. udp-out or tcp-client with no remote endpoint, or
+    // (issue #103): e.g. tcp with both roles (or neither) filled, or
     // serial with no device path. The editor validates the same rules before
     // deploy, but a flow imported as JSON (or authored before those validators
     // existed) can still carry a blank required field — surface it here instead
@@ -1185,7 +1187,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
 
     /**
      * Destroy and drop every live stream decoder (single shared decoder, or one
-     * per tcp-server client). Used on teardown, deactivate, and profile reset so
+     * per tcp server client). Used on teardown, deactivate, and profile reset so
      * no decoder keeps splitting frames with a stale dialect (#147).
      *
      * @returns {void}
@@ -1585,7 +1587,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       const fields = message.fields && typeof message.fields === 'object' ? { ...message.fields } : {};
       // Normalize targets once, before encoding and transport routing (#84).
       // A message can carry target ids top-level and inside fields; the two
-      // used to be resolved independently (top-level for the udp-peer routing
+      // used to be resolved independently (top-level for the udp routing
       // metadata, field-level preserved by the codec), so a conflicting pair
       // sent the packet to one endpoint while the payload addressed another.
       // One location wins when only one is set, defaults fill when neither is,
@@ -1622,7 +1624,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
        * A message with no target_system field is a broadcast (#148) and must not
        * be framed for one specific peer. The target is gated on `addressesTarget`
        * for *both* the encoder and the routing metadata:
-       *   - routing: an addressed packet goes to that sysid's udp-peer endpoint
+       *   - routing: an addressed packet goes to that sysid's learned udp endpoint
        *     (#21); a broadcast fans out to every learned peer instead of
        *     unicasting to the profile default.
        *   - encoding: under `mavlinkVersion: 'auto'`, the effective version is
@@ -1848,7 +1850,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
        * connection's configured view of the link; the origin carries the
        * actual source of the read that completed this frame. Merging the
        * origin last makes `remoteAddress`/`remotePort` (and `clientId` on
-       * tcp-server) per-message truth, so on a multi-peer link every decoded
+       * tcp server) per-message truth, so on a multi-peer link every decoded
        * payload says which endpoint sent it rather than reporting the
        * configured/fallback remote for all of them.
        */
@@ -1888,7 +1890,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       /**
        * Only now is the sender trusted enough to route replies to (#85): the
        * frame passed CRC in the splitter, its identity passed routing, and it
-       * satisfied the signature policy. Tell a udp-peer transport to commit
+       * satisfied the signature policy. Tell a udp transport to commit
        * this packet's OWN source endpoint for its sysid (#239) — malformed,
        * route-rejected, or signature-rejected traffic never reaches here, and
        * a racing datagram from another endpoint can no longer be the one
@@ -2037,14 +2039,6 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (!specs.length) {
         return;
       }
-      if (node.transportType === 'udp-in') {
-        // Listen-only transport: sending can never succeed, so a heartbeat
-        // timer would just log an error every tick forever.
-        node.warn(
-          `mavlink-ai-connection '${node.name || node.id}': heartbeat is enabled but transport udp-in is listen-only; not sending heartbeats.`
-        );
-        return;
-      }
       for (const spec of specs) {
         if (node._heartbeatTimers.has(spec.identity.id)) {
           continue;
@@ -2074,7 +2068,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
               /**
                * Expected "no link yet / link down / tearing down" states must
                * not log an error every tick forever — heartbeats resume
-               * silently once the link is up. UDP_NO_PEER: udp-peer hasn't
+               * silently once the link is up. UDP_NO_PEER: udp hasn't
                * learned a peer; TCP_NO_CLIENT / TCP_NOT_CONNECTED /
                * SERIAL_NOT_OPEN: the same "nothing to send to yet" state for
                * the other transports (each already surfaced once through
@@ -2146,13 +2140,19 @@ module.exports = function registerMavlinkAiConnection(RED) {
      */
     function startTransport() {
       try {
+        /**
+         * Presence-sensitive fields (bindPort, remoteHost/Port) are passed raw
+         * (#243): the factory derives the TCP role and UDP bind/remote shape
+         * from which fields are actually filled, so a defaulted copy would
+         * fabricate presence the user never configured.
+         */
         node._transport = createTransport({
           name: node.name,
           transport: node.transportType,
           bindAddress: node.bindAddress,
-          bindPort: node.bindPort,
-          remoteHost: node.remoteHost,
-          remotePort: node.remotePort,
+          bindPort: config.bindPort,
+          remoteHost: config.remoteHost,
+          remotePort: config.remotePort,
           serialPath: node.serialPath,
           serialBaud: node.serialBaud,
           reconnect: node.reconnect
@@ -2260,7 +2260,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
         }
       });
       /**
-       * When a tcp-server client disconnects, drop its stream decoder so a churn
+       * When a tcp server client disconnects, drop its stream decoder so a churn
        * of clients can't leak decoders and any half-buffered frame from the dead
        * link is discarded rather than corrupting a future client that reuses the
        * same `clientId` (it won't — ids are monotonic) (#147).
@@ -2286,12 +2286,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
       node._transport.on('reconnecting', () => {
         /**
          * The dropped session may have left a partial frame buffered in a
-         * stream decoder — the shared one (tcp-client / serial), or a
+         * stream decoder — the shared one (tcp client-role / serial), or a
          * per-endpoint UDP decoder that had a partial/phantom frame pending
          * when the socket errored (#262 review). The next session's bytes
          * would be appended mid-frame and force a lossy resync, garbling the
          * first frames — start the new session with clean framing state for
-         * EVERY stream instead. tcp-server per-client decoders are also
+         * EVERY stream instead. tcp server per-client decoders are also
          * covered: after a server rebind those client sockets are gone, so
          * their buffered state can only be stale.
          */
@@ -2583,20 +2583,16 @@ function resolveTargetId(name, topLevel, fieldLevel, fallback) {
 /**
  * Build a human-readable status detail describing what the transport bound to
  * or connected to. The transport's own listening/connected info is preferred
- * over the node config: an ephemeral bind (port 0) reports the actually
- * assigned port, and udp-out — which binds ephemerally for sending only and
- * signals that with `{ sending: true }` — reports its send target instead of
- * a "Listening" it never does.
+ * over the node config: an ephemeral bind (blank/0 port) reports the actually
+ * assigned port.
  *
  * @param {object} node  the connection node
  * @param {object} info  transport listening/connected info
  * @returns {string}
  */
 function describeListening(node, info) {
-  if (info && info.sending) {
-    return `Sending to ${node.remoteHost}:${node.remotePort}`;
-  }
-  if (node.transportType.startsWith('udp') || node.transportType === 'tcp-server') {
+  if (node.transportType === 'udp' || (node._transport && node._transport.role === 'server')) {
+    // Prefer the live socket address: a blank bind port binds ephemeral.
     const address = info && info.address ? info.address : node.bindAddress;
     const port = info && info.port != null ? info.port : node.bindPort;
     return `Listening on ${address}:${port}`;
@@ -2608,7 +2604,7 @@ function describeListening(node, info) {
 }
 
 /**
- * Stream identity for framing (#147, #262 review): tcp-server keys a decoder
+ * Stream identity for framing (#147, #262 review): a tcp server keys a decoder
  * per client via its `clientId`; UDP keys one per source endpoint — datagrams
  * from different peers are independent streams, so one peer's partial or
  * phantom bytes can never buffer onto another peer's datagram, and a frame
@@ -2616,7 +2612,7 @@ function describeListening(node, info) {
  * from its own endpoint. Without this, a phantom header from peer A could sit
  * buffered until peer B's bytes completed its window, and A's recovered frame
  * would inherit B's origin — teaching confirmPeer A's sysid at B's endpoint.
- * Single-peer transports (serial, tcp-client) share one decoder.
+ * Single-peer transports (serial, tcp client-role) share one decoder.
  *
  * @param {?object} rinfo  the transport 'data' event's source info
  * @param {string} transportType  the connection's transport type
@@ -2636,9 +2632,9 @@ function streamKeyFor(rinfo, transportType) {
  * Immutable per-read source context (#239): the endpoint that produced one
  * transport read, captured before framing so every packet completed by that
  * read can carry it — through the decoded payload's `transport` (§14.1), the
- * rejected/decode-error diagnostics, and the udp-peer confirmPeer trust
- * commit. UDP supplies the datagram's sender, tcp-server the client socket
- * (plus its per-client `clientId`), tcp-client the configured remote; serial
+ * rejected/decode-error diagnostics, and the udp confirmPeer trust
+ * commit. UDP supplies the datagram's sender, a tcp server the client socket
+ * (plus its per-client `clientId`), a tcp client the configured remote; serial
  * has no network endpoint and yields null. Frozen so nothing downstream can
  * mutate the shared reference after packets have been attributed to it.
  *

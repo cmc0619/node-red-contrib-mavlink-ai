@@ -16,7 +16,7 @@ const { VirtualFleet } = require('./virtual-fleet');
  *   --count N          drones in this process              (FLEET_COUNT, default 3)
  *   --sysid N          first system id; drones are N..N+count-1 (SYSID, default 1)
  *   --gcs-host HOST    where the GCS/Node-RED listens       (GCS_HOST, default 127.0.0.1)
- *   --gcs-port PORT    the udp-peer port to stream to       (GCS_PORT, default 14550)
+ *   --gcs-port PORT    the GCS udp port to stream to        (GCS_PORT, default 14550)
  *   --bind-port PORT   this fleet's UDP source port, 0=any  (BIND_PORT, default 0)
  *   --dialect NAME     MAVLink dialect                      (DIALECT, default ardupilotmega)
  *   --lat --lon --alt  fleet origin (deg, deg, m AMSL)      (default 39.1 / -75.1 / 40)

@@ -4,7 +4,7 @@
     "type": "tab",
     "label": "MAVLink AI - 30 Shared Connection Subscribers",
     "disabled": false,
-    "info": "Shows that MAVLink In is a subscription, not a connection. One shared Connection decodes the incoming stream once; three MAVLink In nodes each subscribe to a different message and apply their own filters \u2014 HEARTBEAT, GLOBAL_POSITION_INT, and COMMAND_ACK. Adding In nodes does not open extra ports or re-decode the bytes. The same connection can be shared across separate flow tabs the same way. Point the connection at your MAVLink source (SITL, a vehicle, or mavlink-router on UDP 14550)."
+    "info": "Shows that MAVLink In is a subscription, not a connection. One shared Connection decodes the incoming stream once; three MAVLink In nodes each subscribe to a different message and apply their own filters — HEARTBEAT, GLOBAL_POSITION_INT, and COMMAND_ACK. Adding In nodes does not open extra ports or re-decode the bytes. The same connection can be shared across separate flow tabs the same way. Point the connection at your MAVLink source (SITL, a vehicle, or mavlink-router on UDP 14550)."
   },
   {
     "id": "ai_profile_copter",
@@ -38,12 +38,12 @@
     "type": "mavlink-ai-connection",
     "name": "AI Conn - Copter UDP 14550",
     "profile": "ai_profile_copter",
-    "transport": "udp-peer",
+    "transport": "udp",
     "routingMode": "single-profile",
     "bindAddress": "0.0.0.0",
     "bindPort": 14550,
     "remoteHost": "",
-    "remotePort": 14550,
+    "remotePort": "",
     "serialPath": "",
     "serialBaud": 57600,
     "reconnect": true,
@@ -63,7 +63,7 @@
     "id": "n30_note",
     "type": "comment",
     "z": "flow30",
-    "name": "One shared Connection \u2192 three In subscribers",
+    "name": "One shared Connection → three In subscribers",
     "info": "",
     "x": 260,
     "y": 40,

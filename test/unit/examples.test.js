@@ -75,3 +75,25 @@ test('web assets and telemetry replay fixture are packaged and valid', () => {
     assert.ok(record.payload.profile_id);
   }
 });
+
+test('every example connection is deployable under the transport presence rules (#243, Codex review)', () => {
+  /**
+   * The transport rename left examples carrying the old editor default
+   * (remoteHost "" with remotePort 14550) — a partial remote pair the runtime
+   * now rejects at deploy. Run every shipped connection config through the
+   * shared validator so an undeployable example can never ship again.
+   */
+  const { validateConnectionConfig } = require('../../lib/transport/transport-fields');
+  const files = filesBelow(EXAMPLES).filter((file) => file.endsWith('.json'));
+  for (const file of files) {
+    const flow = JSON.parse(fs.readFileSync(file, 'utf8'));
+    for (const node of flow.filter((item) => item.type === 'mavlink-ai-connection')) {
+      const problems = validateConnectionConfig(node);
+      assert.deepStrictEqual(
+        problems,
+        [],
+        `${file}: connection '${node.name || node.id}' is undeployable: ${JSON.stringify(problems)}`
+      );
+    }
+  }
+});

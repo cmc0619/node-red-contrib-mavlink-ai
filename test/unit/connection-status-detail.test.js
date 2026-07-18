@@ -7,9 +7,10 @@ const { MockRED } = require('../helpers/mock-red');
 /**
  * Status detail for the transport lifecycle events. describeListening used to
  * ignore the transport's own listening/connected info and echo the node
- * config back: an ephemeral bind (port 0) reported "port 0" instead of the
- * actually assigned port, and udp-out — send-only, signalled by
- * `{ sending: true }` — claimed to be "Listening".
+ * config back: an ephemeral bind (blank/0 port) reported "port 0" instead of
+ * the actually assigned port. Under the condensed model (#243) every UDP
+ * socket listens — including a send-first one — so the detail always reports
+ * the live bound address.
  */
 
 /**
@@ -39,7 +40,7 @@ function connection(RED, config) {
 
 test('an ephemeral bind reports the assigned port from the transport, not the configured 0', async (t) => {
   const RED = new MockRED().loadNodes();
-  const conn = connection(RED, { transport: 'udp-peer' });
+  const conn = connection(RED, { transport: 'udp' });
   t.after(() => RED.close(conn));
 
   conn._transport.emit('listening', { address: '127.0.0.1', family: 'IPv4', port: 45678 });
@@ -48,12 +49,12 @@ test('an ephemeral bind reports the assigned port from the transport, not the co
   assert.strictEqual(conn.statusDetail, 'Listening on 127.0.0.1:45678');
 });
 
-test('udp-out reports its send target instead of a "Listening" it never does', async (t) => {
+test('a send-first udp socket reports its live ephemeral bind (it listens for replies, #243)', async (t) => {
   const RED = new MockRED().loadNodes();
-  const conn = connection(RED, { transport: 'udp-out', remoteHost: '10.1.2.3', remotePort: 14550 });
+  const conn = connection(RED, { transport: 'udp', bindPort: '', remoteHost: '10.1.2.3', remotePort: 14550 });
   t.after(() => RED.close(conn));
 
-  conn._transport.emit('listening', { sending: true });
+  conn._transport.emit('listening', { address: '0.0.0.0', family: 'IPv4', port: 51234 });
 
-  assert.strictEqual(conn.statusDetail, 'Sending to 10.1.2.3:14550');
+  assert.strictEqual(conn.statusDetail, 'Listening on 0.0.0.0:51234');
 });

@@ -131,7 +131,7 @@ test('connection refuses to start with no default identity (#228)', async () => 
     id: 'c-noid',
     name: 'C',
     profile: 'p1',
-    transport: 'udp-peer',
+    transport: 'udp',
     bindPort: 0
   });
   assert.ok(connection.errors.some((e) => /LOCAL_IDENTITY_REQUIRED/.test(String(e))));

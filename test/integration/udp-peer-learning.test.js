@@ -51,7 +51,7 @@ test('peer learning requires validated packets (#85)', async (t) => {
   });
   const conn = RED.create('mavlink-ai-connection', {
     id: 'c1', name: 'C', profile: 'p1', localIdentity: 'id1',
-    transport: 'udp-peer', acceptedSysids: '1',
+    transport: 'udp', acceptedSysids: '1',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   const addr = await new Promise((resolve) => conn._transport.once('listening', resolve));
@@ -121,7 +121,7 @@ test('signature-rejected packets do not teach a peer mapping (#85)', async (t) =
     id: 'c_sig', name: 'CSig', profile: 'p_sig', localIdentity: 'id_sig',
     verifyInbound: true, requireSignature: true,
     credentials: { signingPassphrase: 'the-shared-secret' },
-    transport: 'udp-peer',
+    transport: 'udp',
     bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
   });
   const addr = await new Promise((resolve) => conn._transport.once('listening', resolve));
