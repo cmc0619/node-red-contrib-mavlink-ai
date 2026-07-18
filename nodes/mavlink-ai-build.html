@@ -396,8 +396,11 @@
               .map(function (s) { return s.trim(); })
               .filter(function (s) { return s !== ''; })
               .map(function (s) { return isNaN(Number(s)) ? s : Number(s); });
-          } else if (field && field.bitmask && !isNaN(Number(val))) {
-            // The bitmask checklist sink holds the OR-combined value.
+          } else if (field && field.bitmask && !/64/.test(field.type) && !isNaN(Number(val))) {
+            // The uint32 checklist sink holds the OR-combined value. 64-bit
+            // bitmask fields (rendered as the select) must stay STRINGS:
+            // Number() rounds above 2^53, silently changing the mask, while
+            // the runtime BigInt()s a numeric string exactly.
             out[name] = Number(val);
           } else if (field && !field.enum && /^(u?int|float|double)/.test(field.type) && !isNaN(Number(val))) {
             out[name] = Number(val);
