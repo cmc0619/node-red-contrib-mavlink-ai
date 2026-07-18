@@ -4,7 +4,7 @@
     "type": "tab",
     "label": "MAVLink AI - 23 Upload, Verify, and Clear Mission",
     "disabled": false,
-    "info": "Mission upload/clear parity example. Uploads a small waypoint mission using the friendly waypoints shape, supports acknowledged clear, and provides a separate download trigger for verification. Test in SITL before real hardware."
+    "info": "Mission upload/clear parity example. Uploads a small waypoint mission using the canonical payload.action/items shape, supports acknowledged clear, and provides a separate download trigger for verification. Test in SITL before real hardware."
   },
   {
     "id": "mission23_note",
@@ -23,13 +23,8 @@
     "name": "Upload 3-waypoint mission",
     "props": [
       {
-        "p": "topic",
-        "v": "upload_mission",
-        "vt": "str"
-      },
-      {
         "p": "payload",
-        "v": "{\"waypoints\":[{\"lat\":39.1000,\"lon\":-75.1000,\"alt\":30,\"command\":\"MAV_CMD_NAV_TAKEOFF\"},{\"lat\":39.1005,\"lon\":-75.1005,\"alt\":40},{\"lat\":39.1000,\"lon\":-75.1000,\"alt\":0,\"command\":\"MAV_CMD_NAV_LAND\"}]}",
+        "v": "{\"action\": \"upload\", \"items\": [{\"lat\": 39.1, \"lon\": -75.1, \"alt\": 30, \"command\": \"MAV_CMD_NAV_TAKEOFF\"}, {\"lat\": 39.1005, \"lon\": -75.1005, \"alt\": 40}, {\"lat\": 39.1, \"lon\": -75.1, \"alt\": 0, \"command\": \"MAV_CMD_NAV_LAND\"}]}",
         "vt": "json"
       }
     ],
@@ -50,13 +45,8 @@
     "name": "Download to verify",
     "props": [
       {
-        "p": "topic",
-        "v": "download_mission",
-        "vt": "str"
-      },
-      {
         "p": "payload",
-        "v": "{}",
+        "v": "{\"action\": \"download\"}",
         "vt": "json"
       }
     ],
@@ -77,13 +67,8 @@
     "name": "Clear and wait for ACK",
     "props": [
       {
-        "p": "topic",
-        "v": "clear_mission",
-        "vt": "str"
-      },
-      {
         "p": "payload",
-        "v": "{\"wait_ack\":true,\"timeout_ms\":10000}",
+        "v": "{\"action\": \"clear\", \"wait_ack\": true, \"timeout_ms\": 10000}",
         "vt": "json"
       }
     ],
@@ -104,13 +89,8 @@
     "name": "Best-effort clear",
     "props": [
       {
-        "p": "topic",
-        "v": "clear_mission",
-        "vt": "str"
-      },
-      {
         "p": "payload",
-        "v": "{}",
+        "v": "{\"action\": \"clear\"}",
         "vt": "json"
       }
     ],

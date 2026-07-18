@@ -407,7 +407,7 @@ test('missing profile emits MISSING_PROFILE', async () => {
  * Node-RED leaves this node in place when only the referenced profile config
  * node changed, so its constructor never re-runs. Before the fix, a profile
  * fixed after deploy left a stale "invalid profile" badge (and node.profile
- * pointing at the destroyed old profile). watchProfileBadge re-resolves and
+ * pointing at the destroyed old profile). watchConfigBadge re-resolves and
  * refreshes on flows:started.
  */
 test('move node clears a stale "invalid profile" badge when the profile is fixed on redeploy', () => {

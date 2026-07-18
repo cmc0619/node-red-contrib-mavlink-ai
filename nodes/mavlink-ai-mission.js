@@ -5,7 +5,7 @@ const { MissionUpload } = require('../lib/mission/mission-upload');
 const { MissionClear } = require('../lib/mission/mission-clear');
 const { missionTypeToNumber } = require('../lib/mission/mission-state-machine');
 const { PRIORITY } = require('../lib/runtime/send-priority');
-const { topicAction, normalizeUploadItems, resolveUploadItems, validateMissionItems } = require('../lib/mission/upload-input');
+const { normalizeUploadItems, resolveUploadItems, validateMissionItems } = require('../lib/mission/upload-input');
 const { toInt, toBool, firstDefined } = require('../lib/util/validation');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { MavlinkError } = require('../lib/util/errors');
@@ -97,9 +97,9 @@ module.exports = function registerMavlinkAiMission(RED) {
       }
 
       const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
-      // Aigen-style topic aliases (#56): `upload_mission` etc. select the action
-      // without an explicit payload.action. Explicit action still wins.
-      const action = msg.action || payload.action || topicAction(msg.topic) || node.action;
+      /** Canonical action selection (#283): msg.action / payload.action /
+       * the editor config — the pre-1.0 topic aliases are gone. */
+      const action = msg.action || payload.action || node.action;
 
       // Effective profile for the whole workflow: an explicit override (msg or
       // node config) or the target's routed profile, not blindly the
@@ -161,7 +161,7 @@ module.exports = function registerMavlinkAiMission(RED) {
 
       /**
        * Prepare upload items BEFORE the lock (#236). A missing or non-array
-       * items/waypoints payload must fail loudly rather than be uploaded as
+       * items payload must fail loudly rather than be uploaded as
        * MISSION_COUNT 0 — which the mission spec treats as a clear, silently
        * erasing the vehicle's mission on a wiring typo. An explicit empty upload
        * clears only with an allow_empty confirmation (the separate `clear` action

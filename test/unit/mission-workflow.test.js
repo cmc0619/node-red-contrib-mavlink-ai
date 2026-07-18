@@ -7,7 +7,7 @@ const { MissionDownload, extractItem } = require('../../lib/mission/mission-down
 const { MissionUpload, buildItemFields } = require('../../lib/mission/mission-upload');
 const { MissionClear } = require('../../lib/mission/mission-clear');
 const { DEFAULT_TIMEOUT_MS } = require('../../lib/mission/mission-state-machine');
-const { topicAction, normalizeUploadItems, resolveUploadItems, validateMissionItems } = require('../../lib/mission/upload-input');
+const { normalizeUploadItems, resolveUploadItems, validateMissionItems } = require('../../lib/mission/upload-input');
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -352,25 +352,27 @@ test('upload answers MISSION_REQUEST_INT with MISSION_ITEM_INT (degE7) even if p
   await p;
 });
 
-// --- #56: waypoints alias + default command --------------------------------
+// --- #56 default command / #283 canonical items -----------------------------
 
-test('topicAction maps Aigen topics to actions (#56)', () => {
-  assert.strictEqual(topicAction('upload_mission'), 'upload');
-  assert.strictEqual(topicAction('download_mission'), 'download');
-  assert.strictEqual(topicAction('clear_mission'), 'clear');
-  assert.strictEqual(topicAction('something_else'), undefined);
+test('the removed pre-1.0 aliases are gone: waypoints is not an items alias (#283)', () => {
+  /** A payload still using the old spelling must fail loudly (MISSION_NO_ITEMS
+   * from resolveUploadItems), never silently upload. */
+  assert.deepStrictEqual(normalizeUploadItems({ waypoints: [{ lat: 1, lon: 2 }] }), []);
+  assert.throws(
+    () => resolveUploadItems({ waypoints: [{ lat: 1, lon: 2 }] }),
+    (e) => e.code === 'MISSION_NO_ITEMS'
+  );
 });
 
-test('normalizeUploadItems accepts waypoints alias and defaults NAV_WAYPOINT (#56)', () => {
-  const wp = normalizeUploadItems({ waypoints: [{ lat: 37.7749, lon: -122.4194, alt: 100 }] });
+test('normalizeUploadItems defaults bare waypoint entries to NAV_WAYPOINT (#56)', () => {
+  const wp = normalizeUploadItems({ items: [{ lat: 37.7749, lon: -122.4194, alt: 100 }] });
   assert.strictEqual(wp.length, 1);
   assert.strictEqual(wp[0].command, 'MAV_CMD_NAV_WAYPOINT');
   assert.strictEqual(wp[0].lat, 37.7749);
 
-  // items wins over waypoints when both present, and explicit command is kept.
+  // An explicit command is kept as-is (no NAV_WAYPOINT default).
   const both = normalizeUploadItems({
-    items: [{ command: 'MAV_CMD_NAV_TAKEOFF', lat: 1, lon: 2, alt: 10 }],
-    waypoints: [{ lat: 9, lon: 9 }]
+    items: [{ command: 'MAV_CMD_NAV_TAKEOFF', lat: 1, lon: 2, alt: 10 }]
   });
   assert.strictEqual(both.length, 1);
   assert.strictEqual(both[0].command, 'MAV_CMD_NAV_TAKEOFF');
@@ -430,17 +432,16 @@ test('validateMissionItems rejects a missing command and out-of-range coords (#5
 /** #236: upload gate + per-field validation. */
 
 test('resolveUploadItems rejects malformed/empty payloads that would implicitly clear (#236)', () => {
-  /** Missing items/waypoints is a wiring typo, not a clear — never MISSION_COUNT 0. */
+  /** Missing items is a wiring typo, not a clear — never MISSION_COUNT 0. */
   assert.throws(() => resolveUploadItems({}), (e) => e.code === 'MISSION_NO_ITEMS');
   assert.throws(() => resolveUploadItems({ items: 'nope' }), (e) => e.code === 'MISSION_ITEMS_NOT_ARRAY');
   assert.throws(() => resolveUploadItems({ items: null }), (e) => e.code === 'MISSION_ITEMS_NOT_ARRAY');
   /** An explicit empty array clears only with the documented confirmation flag. */
   assert.throws(() => resolveUploadItems({ items: [] }), (e) => e.code === 'MISSION_EMPTY_UPLOAD');
   assert.deepStrictEqual(resolveUploadItems({ items: [] }, { allowEmpty: true }), []);
-  /** A valid items/waypoints array passes through unchanged. */
+  /** A valid items array passes through unchanged. */
   const items = [{ command: 16, lat: 1, lon: 2 }];
   assert.strictEqual(resolveUploadItems({ items }), items);
-  assert.deepStrictEqual(resolveUploadItems({ waypoints: [{ lat: 1, lon: 2 }] }), [{ lat: 1, lon: 2 }]);
 });
 
 test('validateMissionItems rejects non-numeric garbage but preserves NaN sentinels (#236)', () => {
