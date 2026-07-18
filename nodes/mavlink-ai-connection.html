@@ -242,6 +242,21 @@
         $('#row-' + f).toggle(visible.indexOf(f) !== -1);
         $('#req-' + f).toggle(required.indexOf(f) !== -1);
       });
+      if (t === 'tcp') {
+        /**
+         * Reconnect only governs the client role's redial; the server role
+         * always recovers a failed listen regardless (tcp-transport.js), so a
+         * visible checkbox there would be silently ignored (Codex review).
+         */
+        var state = transportPresenceState(t, {
+          bindPort: $('#node-config-input-bindPort').val(),
+          remoteHost: $('#node-config-input-remoteHost').val(),
+          remotePort: $('#node-config-input-remotePort').val()
+        });
+        if (state.hasBind && !state.hasRemote) {
+          $('#row-reconnect').hide();
+        }
+      }
       $('.transport-hint').hide();
       $('#transport-hint-' + t).show();
       $('#transport-derived-role').text(describeDerivedRole());
