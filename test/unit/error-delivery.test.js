@@ -15,7 +15,7 @@ const { fakeIdentity } = require('../helpers/v3-config');
  * outputs (mavlink-ai-out) call done(err), which IS their delivery path.
  */
 
-function setup({ sendError } = {}) {
+function setup({ sendError, identityError } = {}) {
   const RED = new MockRED().loadNodes();
   const profile = RED.create('mavlink-ai-vehicle', {
     id: 'p1',
@@ -46,7 +46,12 @@ function setup({ sendError } = {}) {
     this.acquireLock = (key, owner) => this.locks.acquire(key, owner);
     this.releaseLock = (key, owner) => this.locks.release(key, owner);
     // v3: the connection resolves the outbound Local Identity (#228).
-    this.resolveOutboundIdentity = () => fakeIdentity();
+    this.resolveOutboundIdentity = () => {
+      if (identityError) {
+        throw identityError;
+      }
+      return fakeIdentity();
+    };
   });
   RED.create('stub-connection', { id: 'conn1' });
   return { RED };
@@ -78,6 +83,39 @@ test('param workflow failure: error output once, done() (#89)', async () => {
   assert.strictEqual(errorOuts.length, 1, 'exactly one error message on output 3');
   assert.strictEqual(errorOuts[0][2].payload.code, 'PARAM_FAILED');
   assert.match(errorOuts[0][2].payload.message, /link down/);
+  assert.strictEqual(err, undefined, 'done() without the error — Catch must not fire too');
+});
+
+test('mission identity-resolution failure: error output once, done() (#89)', async () => {
+  /**
+   * These catch blocks used to call finishError without the `msg` argument:
+   * the arity shift invoked done() with a truthy value (firing Catch nodes
+   * with garbage instead of delivering on output 3) and then crashed calling
+   * the payload object as a function. The one failure mode the block exists
+   * to report broke the delivery contract in every way at once.
+   */
+  const detached = Object.assign(new Error('identity detached'), { code: 'LOCAL_IDENTITY_UNRESOLVED' });
+  const { RED } = setup({ identityError: detached });
+  const node = RED.create('mavlink-ai-mission', { id: 'm1', connection: 'conn1', action: 'download' });
+  const { collected, err } = await RED.inject(node, { payload: { action: 'download' } });
+
+  const errorOuts = collected.filter((out) => out[2]);
+  assert.strictEqual(errorOuts.length, 1, 'exactly one error message on output 3');
+  assert.strictEqual(errorOuts[0][2].topic, 'mavlink/error');
+  assert.strictEqual(errorOuts[0][2].payload.code, 'LOCAL_IDENTITY_UNRESOLVED');
+  assert.match(errorOuts[0][2].payload.message, /identity detached/);
+  assert.strictEqual(err, undefined, 'done() without the error — Catch must not fire too');
+});
+
+test('param identity-resolution failure: error output once, done() (#89)', async () => {
+  const detached = Object.assign(new Error('identity detached'), { code: 'LOCAL_IDENTITY_UNRESOLVED' });
+  const { RED } = setup({ identityError: detached });
+  const node = RED.create('mavlink-ai-param', { id: 'pr1', connection: 'conn1', action: 'read', paramId: 'X' });
+  const { collected, err } = await RED.inject(node, { payload: {} });
+
+  const errorOuts = collected.filter((out) => out[2]);
+  assert.strictEqual(errorOuts.length, 1, 'exactly one error message on output 3');
+  assert.strictEqual(errorOuts[0][2].payload.code, 'LOCAL_IDENTITY_UNRESOLVED');
   assert.strictEqual(err, undefined, 'done() without the error — Catch must not fire too');
 });
 

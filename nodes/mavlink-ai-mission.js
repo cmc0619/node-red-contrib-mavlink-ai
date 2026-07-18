@@ -216,23 +216,21 @@ module.exports = function registerMavlinkAiMission(RED) {
         send([null, progress, null]);
       };
 
-      // The Local Identity this workflow transmits as (#228): the explicit
-      // payload request when present, else the connection default. Its source
-      // ids also gate inbound protocol-message addressing checks below.
+      /**
+       * The Local Identity this workflow transmits as (#228): the explicit
+       * payload request when present, else the connection default. Its source
+       * ids also gate inbound protocol-message addressing checks below. This
+       * block used to hand-roll the error delivery and dropped the `msg`
+       * argument — the arity shift called done() with a truthy value (firing
+       * Catch with garbage) and then crashed calling the payload as a
+       * function; the shared exit takes the arguments it actually needs.
+       */
       let identity;
       try {
         identity = node.connection.resolveOutboundIdentity(payload.localIdentity);
       } catch (err) {
-        const e = toMavlinkError(err, 'LOCAL_IDENTITY_UNRESOLVED');
-        node.status({ fill: 'red', shape: 'ring', text: e.code });
         lock.release();
-        return finishError(node, send, done, errorPayload({
-          node: 'mavlink-ai-mission',
-          connection: node.connection.name,
-          code: e.code,
-          message: e.message,
-          context: e.context
-        }));
+        return fail(err, 'LOCAL_IDENTITY_UNRESOLVED');
       }
       const source = identity.getIdentity();
 
