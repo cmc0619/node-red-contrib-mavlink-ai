@@ -83,6 +83,7 @@ node-red-contrib-mavlink-ai
 Internal Node-RED type names:
 
 ```text
+mavlink-ai-local-identity
 mavlink-ai-vehicle
 mavlink-ai-connection
 mavlink-ai-in
@@ -96,6 +97,7 @@ mavlink-ai-mission
 Palette display names:
 
 ```text
+MAVLink AI Local Identity
 MAVLink AI Vehicle Profile
 MAVLink AI Connection
 MAVLink AI In
@@ -105,6 +107,9 @@ MAVLink AI Filter
 MAVLink AI Command
 MAVLink AI Mission
 ```
+
+(The lists above are the founding set; the shipped palette has since grown —
+`package.json`'s `node-red.nodes` map is the authoritative roster.)
 
 The `mavlink-ai-*` prefix is intentional. The module must coexist with earlier modules such as:
 
@@ -121,14 +126,16 @@ No migration support is required for v2 unless explicitly requested later. v2 sh
 
 Node-RED config nodes are reusable shared configuration objects. Users can create multiple instances of the same config-node type, and regular nodes can reference them.
 
-This module should use two config-node layers:
+This module should use three config-node layers:
 
 ```text
+mavlink-ai-local-identity
 mavlink-ai-vehicle
 mavlink-ai-connection
 ```
 
-A profile can be reused by one or more connections.
+Every connection requires exactly one default Local Identity (5.5.2). A Local
+Identity and a Vehicle Profile can each be reused by one or more connections.
 
 A connection can be reused by nodes on multiple Node-RED flow tabs.
 
