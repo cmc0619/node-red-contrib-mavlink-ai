@@ -38,7 +38,6 @@ helper.init(nodeRedPath);
  * @returns {Promise<void>}
  */
 async function main() {
-  // eslint-disable-next-line import/no-dynamic-require, global-require
   const nodeRedVersion = require('node-red/package.json').version;
   console.log(`Loading nodes on Node ${process.version} / Node-RED ${nodeRedVersion}`);
 

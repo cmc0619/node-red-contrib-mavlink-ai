@@ -40,6 +40,9 @@ jobs:
       # Install without optional deps: serialport is optional and lazy-loaded,
       # so the suite must pass without it. This run also proves that contract.
       - run: npm ci --omit=optional
+      # Minimal lint gate (#286): unused variables/imports and unreachable
+      # code only — see eslint.config.js for why the rule set stays small.
+      - run: npm run lint
       - run: npm test
       # Prove the package registers and instantiates in a real Node-RED runtime
       # at the matrix Node-RED version (issue #102). Installed unsaved so the

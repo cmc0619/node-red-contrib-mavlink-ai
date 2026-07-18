@@ -152,7 +152,7 @@ test('onWrite fires only for actually-written buffers, never for coalesced drops
   let release;
   const gate = new Promise((r) => (release = r));
   let calls = 0;
-  const queue = new OutboundQueue((buf) => {
+  const queue = new OutboundQueue(() => {
     calls += 1;
     return calls === 1 ? gate : Promise.resolve();
   });

@@ -617,7 +617,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
           if (resolved === identity || resolved.id === identity.id) {
             return spec;
           }
-        } catch (e) {
+        } catch {
           /** An unresolved binding matches nothing; reported by validation. */
         }
       }
@@ -730,7 +730,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
             seen.add(identity.id);
             out.push({ identity, binding: spec });
           }
-        } catch (e) {
+        } catch {
           /** Unresolved bindings are reported by validateIdentityBindings. */
         }
       }
@@ -2435,7 +2435,7 @@ function describeBindings(node) {
     try {
       const identity = node.resolveLocalIdentity(spec.identity);
       return `'${identity.describe()}'${spec.allowOutbound === false ? ' (outbound disabled)' : ''}`;
-    } catch (e) {
+    } catch {
       return `'${spec.identity}' (unresolved)`;
     }
   });

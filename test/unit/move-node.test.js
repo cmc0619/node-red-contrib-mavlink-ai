@@ -350,7 +350,7 @@ test('refreshing a running stream does not force an extra immediate send — the
 });
 
 test('a plain input keeps a payload-started stream alive and refreshes it (not one-shot) (#128)', async (t) => {
-  const { RED, node, conn } = setup(
+  const { RED, node } = setup(
     { coordinate: 'local', preset: 'position', north: '0', east: '0', altitude: '5', streamRateHz: 50 },
     { withConnection: true }
   );
