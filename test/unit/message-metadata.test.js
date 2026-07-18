@@ -38,6 +38,9 @@ test('flags bitmask-enum fields so editors render additive entry', () => {
   // CAMERA_MODE is {0,1,2}: two accidental power-of-two members must not
   // flip an exclusive mode enum into a checklist (three-flag floor).
   assert.strictEqual(fieldOf('CAMERA_SETTINGS', 'mode_id').bitmask, false);
+  // A one-flag bitmask (HIL_ACTUATOR_CONTROLS_FLAGS = {LOCKSTEP: 1}) is
+  // rescued by its *_FLAGS naming (Codex review).
+  assert.strictEqual(fieldOf('HIL_ACTUATOR_CONTROLS', 'flags').bitmask, true);
   // Non-enum fields carry the flag unset.
   assert.strictEqual(fieldOf('COMMAND_LONG', 'param1').bitmask, false);
 });

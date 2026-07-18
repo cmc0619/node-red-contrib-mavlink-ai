@@ -240,7 +240,12 @@
           const saved = prefill && Object.prototype.hasOwnProperty.call(prefill, field.name) ? prefill[field.name] : undefined;
           let $input;
 
-          if (field.enum && field.bitmask && metadata.enums[field.enum]) {
+          // The checklist's inline math is uint32 (matching lib/util/bitmask);
+          // a uint64 bitmask (AUTOPILOT_VERSION.capabilities) keeps the
+          // value-preserving single-select — a saved high bit must not be
+          // silently reinitialized to zero. The payload array form still
+          // OR-combines 64-bit flags at runtime.
+          if (field.enum && field.bitmask && !/64/.test(field.type) && metadata.enums[field.enum]) {
             $input = bitmaskFieldControl(field, saved).attr('id', id);
           } else if (field.enum && metadata.enums[field.enum]) {
             $input = $('<select></select>').attr('id', id).attr('data-field', field.name);

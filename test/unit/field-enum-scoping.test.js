@@ -187,3 +187,12 @@ test('an empty flag array on a uint64 bitmask field returns 0n, not Number 0', (
   const clazz = getMessageClass(common, 'AUTOPILOT_VERSION');
   assert.strictEqual(normalizeFields(common, clazz, { capabilities: [] }).capabilities, 0n);
 });
+
+test('a one-flag *_FLAGS bitmask still accepts the array form (name rescue)', () => {
+  /** HIL_ACTUATOR_CONTROLS_FLAGS defines only LOCKSTEP = 1; the flag-count
+   * floor alone would send this to FIELD_NOT_ARRAY (Codex review). The field
+   * is uint64, so the single flag also proves the BigInt path end-to-end. */
+  const clazz = getMessageClass(common, 'HIL_ACTUATOR_CONTROLS');
+  const out = normalizeFields(common, clazz, { flags: ['HIL_ACTUATOR_CONTROLS_FLAGS_LOCKSTEP'] });
+  assert.strictEqual(out.flags, 1n);
+});

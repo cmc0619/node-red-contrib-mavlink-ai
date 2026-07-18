@@ -111,19 +111,27 @@ for (const [label, impl] of [
  * decides which fields render the additive checklist, so pin it here next to
  * the math it builds on.
  */
-test('lib/util/bitmask: isBitmaskEnum detects flag-shaped enums, three-flag floor', () => {
-  // ATTITUDE_TARGET_TYPEMASK shape: pure single-bit flags.
+test('lib/util/bitmask: isBitmaskEnum detects flag-shaped enums, name rescue below three flags', () => {
+  // ATTITUDE_TARGET_TYPEMASK shape: pure single-bit flags — no name needed.
   assert.strictEqual(lib.isBitmaskEnum([1, 2, 4, 32, 64, 128]), true);
   // A zero "none" member is ignored, not disqualifying.
   assert.strictEqual(lib.isBitmaskEnum([0, 1, 2, 4]), true);
-  // CAMERA_MODE shape {0,1,2}: two accidental flags — exclusive enum, NOT a bitmask.
-  assert.strictEqual(lib.isBitmaskEnum([0, 1, 2]), false);
+  // CAMERA_MODE shape {0,1,2}: two accidental flags — exclusive enum, NOT a
+  // bitmask, and its name doesn't rescue it.
+  assert.strictEqual(lib.isBitmaskEnum([0, 1, 2], 'CAMERA_MODE'), false);
   assert.strictEqual(lib.isBitmaskEnum([1, 2]), false);
-  // Any non-power-of-two member disqualifies (sequential enums).
+  // Below three flags, bitmask NAMING disambiguates: common.xml's
+  // HIL_ACTUATOR_CONTROLS_FLAGS currently defines only LOCKSTEP = 1
+  // (Codex review — member count must not be a hard floor).
+  assert.strictEqual(lib.isBitmaskEnum([1], 'HIL_ACTUATOR_CONTROLS_FLAGS'), true);
+  assert.strictEqual(lib.isBitmaskEnum([1, 2], 'SOME_FUTURE_MASK'), true);
+  assert.strictEqual(lib.isBitmaskEnum([1], 'TUNE_FORMAT'), false);
+  // Any non-power-of-two member disqualifies regardless of name.
   assert.strictEqual(lib.isBitmaskEnum([1, 2, 3, 4]), false);
-  assert.strictEqual(lib.isBitmaskEnum([0, 1, 2, 3, 4, 5]), false);
+  assert.strictEqual(lib.isBitmaskEnum([0, 1, 2, 3], 'SOME_FLAGS'), false);
   // Degenerate inputs.
   assert.strictEqual(lib.isBitmaskEnum([]), false);
+  assert.strictEqual(lib.isBitmaskEnum([], 'EMPTY_FLAGS'), false);
   assert.strictEqual(lib.isBitmaskEnum([1]), false);
   assert.strictEqual(lib.isBitmaskEnum('nope'), false);
   // Bit 31 is a valid flag; above uint32 disqualifies (conservative).
