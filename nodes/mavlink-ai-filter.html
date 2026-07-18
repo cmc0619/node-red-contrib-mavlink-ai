@@ -45,11 +45,19 @@
 
       function populateFieldPicker() {
         $fieldPick.empty();
-        $('<option></option>').val('').text('(pick field)').appendTo($fieldPick);
         const def = metadata.messages[focusMessage()];
+        /**
+         * The pulldown enumerates fields of the FIRST message in Messages, so
+         * with no message picked it has nothing to offer — hide the row
+         * rather than show an empty "(pick field)" stub. Everything below it
+         * (Field, Field =, Field exists) has independent value: a hand-typed
+         * field name matches at runtime with no message restriction at all.
+         */
+        $('.mav-filter-field-pick-row').toggle(!!def);
         if (!def) {
           return;
         }
+        $('<option></option>').val('').text('(pick field — ' + focusMessage() + ')').appendTo($fieldPick);
         def.fields.forEach(function (f) {
           $('<option></option>').val(f.name).text(f.name + (f.enum ? ' [enum]' : '')).appendTo($fieldPick);
         });
@@ -74,7 +82,9 @@
         $msgPick.empty();
         $('<option></option>').val('').text('(add message…)').appendTo($msgPick);
         Object.keys(metadata.messages).sort().forEach(function (n) {
-          $('<option></option>').val(n).text(n).appendTo($msgPick);
+          // Label carries the numeric message id (ALTITUDE (141)); the VALUE
+          // stays the bare name, which is what messageNames stores.
+          $('<option></option>').val(n).text(n + ' (' + metadata.messages[n].id + ')').appendTo($msgPick);
         });
       }
 
@@ -96,8 +106,12 @@
               return;
             }
             metadata = { messages: {}, enums: {} };
+            populateFieldPicker(); // keeps the pick-field row hidden
           });
       }
+
+      // Until metadata arrives the pick-field pulldown has nothing to offer.
+      populateFieldPicker();
 
       $.getJSON('mavlink-ai/dialects')
         .done(function (data) {
@@ -180,7 +194,7 @@
     <label for="node-input-targetComponent">Target Comp</label>
     <input type="text" id="node-input-targetComponent" placeholder="any">
   </div>
-  <div class="form-row">
+  <div class="form-row mav-filter-field-pick-row">
     <label for="mav-filter-field-pick">Pick field</label>
     <select id="mav-filter-field-pick" style="width:60%;"></select>
   </div>
@@ -209,6 +223,6 @@
 
 <script type="text/html" data-help-name="mavlink-ai-filter">
   <p>Filters decoded MAVLink messages by name, id, profile, system/component, target, or field value, with optional rate limiting and changed-only passing.</p>
-  <p>Use the <b>Dialect</b>/<b>Add message</b>/<b>Pick field</b> helpers to fill the fields below with readable names; when a picked field is enum-backed, the <b>Field =</b> box offers those enum names. The text fields remain authoritative (multiple messages are comma-separated).</p>
+  <p>Use the <b>Dialect</b>/<b>Add message</b>/<b>Pick field</b> helpers to fill the fields below with readable names; when a picked field is enum-backed, the <b>Field =</b> box offers those enum names. <b>Pick field</b> appears once a message is picked — it enumerates the fields of the <i>first</i> message in the list. The text fields remain authoritative (multiple messages are comma-separated), and a hand-typed <b>Field</b> matches with or without any message restriction.</p>
   <p>Rate limiting and changed-only are keyed per connection + message name + sysid + compid, so high-rate telemetry can be throttled without starving other streams, and two Connections carrying the same vehicle identity never suppress each other's traffic.</p>
 </script>
