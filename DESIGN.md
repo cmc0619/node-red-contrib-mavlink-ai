@@ -222,8 +222,8 @@ dialect codec (this satisfies #192).
 
 ```text
 mavlink-ai-local-identity        mavlink-ai-vehicle (Vehicle Profile)
-   (source ids, heartbeat,           (dialect, targets, vehicle family,
-    signing policy/key)               firmware, mission prefs)
+   (source ids, heartbeat            (dialect, targets, vehicle family,
+    identity)                         firmware, mission prefs)
           \                                   /
            \                                 /
             \                               /
@@ -231,7 +231,7 @@ mavlink-ai-local-identity        mavlink-ai-vehicle (Vehicle Profile)
              mavlink-ai-connection  (transport + channel state)
              ├── default Local Identity   (required, exactly one)
              ├── additional identities    (advanced, opt-in, disabled by default)
-             ├── signing link id
+             ├── signing key + policy + link id   (5.5.8)
              └── LinkState: seq / signing-ts / replay / detected-version
 ```
 
@@ -244,8 +244,8 @@ Encoding an outbound frame composes three independently resolved inputs:
 
 ```text
 Vehicle Profile  -> dialect, message definitions, target defaults
-Local Identity   -> source ids, role, heartbeat fields, signing policy/key
-Connection       -> transport, queue, link id, channel state (LinkState)
+Local Identity   -> source ids, role, heartbeat fields
+Connection       -> transport, queue, signing key/policy/link id, channel state
 ```
 
 Codecs are cached per Vehicle Profile (dialect) and are otherwise stateless:
