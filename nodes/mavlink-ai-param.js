@@ -3,7 +3,8 @@
 const { ParamRead, ParamSet, ParamSetAuto, ParamList } = require('../lib/param/param-workflow');
 const { toInt, firstDefined } = require('../lib/util/validation');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
-const { errorPayload, toMavlinkError } = require('../lib/util/errors');
+const { MavlinkError } = require('../lib/util/errors');
+const { makeFail } = require('../lib/util/node-errors');
 const { resolveWorkflowContext } = require('../lib/util/workflow-profile');
 const { watchConfigBadge } = require('../lib/util/node-lifecycle');
 
@@ -53,36 +54,26 @@ module.exports = function registerMavlinkAiParam(RED) {
     let closed = false;
 
     node.on('input', async (msg, send, done) => {
-      if (!node.connection) {
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-param',
-          code: 'NO_CONNECTION',
-          message: 'Param node has no connection configured.'
-        }));
-      }
-
       /**
        * The single error exit: red badge, structured §14.5 payload, delivered
-       * exactly once via finishError (#89). Every failure below leaves through
-       * this one door, so there is one place to change how param errors
-       * leave the node instead of copies that can drift apart.
-       *
-       * @param {*} err  the thrown/failed value
-       * @param {string} fallbackCode  code when err carries none
-       * @param {string} [badgeText]  status badge override (defaults to the code)
-       * @returns {void}
+       * exactly once (#89). Every failure, the no-connection guard included,
+       * leaves through this one shared door (#285), so a call site can only
+       * get the failure itself wrong. The connection label is read lazily:
+       * absent for the no-connection guard, named on every later exit.
        */
-      const fail = (err, fallbackCode, badgeText) => {
-        const e = toMavlinkError(err, fallbackCode);
-        node.status({ fill: 'red', shape: 'ring', text: badgeText || e.code });
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-param',
-          connection: node.connection.name,
-          code: e.code,
-          message: e.message,
-          context: e.context
-        }));
-      };
+      const fail = makeFail({
+        node,
+        nodeName: 'mavlink-ai-param',
+        msg,
+        send,
+        done,
+        outputs: 3,
+        errorIndex: 2,
+        connectionName: () => node.connection && node.connection.name
+      });
+      if (!node.connection) {
+        return fail(new MavlinkError('NO_CONNECTION', 'Param node has no connection configured.'));
+      }
 
       const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
       const action = msg.action || payload.action || node.action;
@@ -119,14 +110,8 @@ module.exports = function registerMavlinkAiParam(RED) {
        * locking/sending, like the command/payload/fanout nodes (#197).
        */
       if (Number(targetSystem) === 0) {
-        node.status({ fill: 'red', shape: 'ring', text: 'BROADCAST_NO_ACK' });
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-param',
-          connection: node.connection.name,
-          code: 'BROADCAST_NO_ACK',
-          message:
-            'Broadcast (target_system 0) cannot run a parameter handshake — every echo is ignored and the request times out after the fleet may have applied it. Address a specific system.'
-        }));
+        return fail(new MavlinkError('BROADCAST_NO_ACK',
+          'Broadcast (target_system 0) cannot run a parameter handshake — every echo is ignored and the request times out after the fleet may have applied it. Address a specific system.'));
       }
 
       // Only one PARAM workflow per connection/profile/target at a time — the
@@ -300,30 +285,3 @@ function progressText(p) {
   return p.param_id ? `${p.state} ${p.param_id}` : p.state;
 }
 
-/**
- * Emit an error on output 3 and finish the input handler.
- *
- * Package rule (#89): a node with a dedicated error output delivers an
- * operational failure exactly once — as a structured message on that output —
- * and finishes with done(), so the same failure does not also fire Catch
- * nodes. Nodes without outputs (e.g. mavlink-ai-out) use done(err) instead.
- *
- * @param {object} node
- * @param {object} msg  inbound Node-RED message to reuse for the error output
- * @param {function} send
- * @param {function} done
- * @param {object} payload  error payload (§14.5)
- * @returns {void}
- */
-function finishError(node, msg, send, done, payload) {
-  /**
-   * Re-use the inbound msg (Node-RED convention): a fresh object would drop
-   * `_msgid` correlation, `msg.parts` (split/join), and user-attached
-   * properties on exactly the error branch — the success paths already mutate
-   * and forward `msg`, and the command/fanout nodes do the same for errors.
-   */
-  msg.topic = 'mavlink/error';
-  msg.payload = payload;
-  send([null, null, msg]);
-  done();
-}

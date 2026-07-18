@@ -1,6 +1,7 @@
 'use strict';
 
-const { errorPayload, toMavlinkError } = require('../lib/util/errors');
+const { MavlinkError, toMavlinkError } = require('../lib/util/errors');
+const { makeFail } = require('../lib/util/node-errors');
 const { firstDefined, toInt, toBool, parseJsonObjectConfig } = require('../lib/util/validation');
 const { buildFanout } = require('../lib/swarm/fanout');
 const { CommandSend } = require('../lib/command/command-workflow');
@@ -69,14 +70,6 @@ module.exports = function registerMavlinkAiFanout(RED) {
     }
 
     /** Emit a structured error and finish the handler. */
-    function sendError(msg, send, done, code, message, context) {
-      node.status({ fill: 'red', shape: 'ring', text: code });
-      msg.topic = 'mavlink/error';
-      msg.payload = errorPayload({ node: 'mavlink-ai-fanout', code, message, context });
-      send(msg);
-      done();
-    }
-
     const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     /**
@@ -89,14 +82,20 @@ module.exports = function registerMavlinkAiFanout(RED) {
     let closed = false;
 
     node.on('input', async (msg, send, done) => {
+      /**
+       * The single error exit (#285): one closure binds node/msg/send/done,
+       * so call sites pass only the failure — no positional
+       * (msg, send, done, code, ...) threading to arity-shift (#276).
+       */
+      const fail = makeFail({ node, nodeName: 'mavlink-ai-fanout', msg, send, done });
       if (node._configError) {
-        return sendError(msg, send, done, 'INVALID_CONFIG', `mavlink-ai-fanout: ${node._configError}`);
+        return fail(new MavlinkError('INVALID_CONFIG', `mavlink-ai-fanout: ${node._configError}`));
       }
       const incoming = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
 
       if (!node.profile) {
-        return sendError(msg, send, done, 'MISSING_PROFILE',
-          'Fan-out node has no profile configured (deleted or disabled config node?).');
+        return fail(new MavlinkError('MISSING_PROFILE',
+          'Fan-out node has no profile configured (deleted or disabled config node?).'));
       }
       const defaults = node.profile.getDefaults ? node.profile.getDefaults() : {};
 
@@ -138,7 +137,7 @@ module.exports = function registerMavlinkAiFanout(RED) {
         });
       } catch (err) {
         const e = toMavlinkError(err, 'FANOUT_FAILED');
-        return sendError(msg, send, done, e.code, e.message, e.context);
+        return fail(e);
       }
       // `vehicleProfile` carries the config-node id — the canonical reference
       // the connection resolves a codec by. The name is display-only. An
@@ -168,12 +167,12 @@ module.exports = function registerMavlinkAiFanout(RED) {
       // --- await-acks mode: run the command protocol per vehicle -------------
       if (node.awaitAck) {
         if (!node.connection) {
-          return sendError(msg, send, done, 'NO_CONNECTION',
-            'Await acks requires a connection to send on (select one in the node config).');
+          return fail(new MavlinkError('NO_CONNECTION',
+            'Await acks requires a connection to send on (select one in the node config).'));
         }
         if (broadcast) {
-          return sendError(msg, send, done, 'BROADCAST_NO_ACK',
-            'Broadcast (target_system 0) cannot collect per-vehicle ACKs — use fan-out mode, or disable await acks.');
+          return fail(new MavlinkError('BROADCAST_NO_ACK',
+            'Broadcast (target_system 0) cannot collect per-vehicle ACKs — use fan-out mode, or disable await acks.'));
         }
         const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
         // The Local Identity these workflows transmit as (#228): the explicit
@@ -184,7 +183,7 @@ module.exports = function registerMavlinkAiFanout(RED) {
           source = node.connection.resolveOutboundIdentity(incoming.localIdentity).getIdentity();
         } catch (err) {
           const e = toMavlinkError(err, 'LOCAL_IDENTITY_UNRESOLVED');
-          return sendError(msg, send, done, e.code, e.message, e.context);
+          return fail(e);
         }
         const results = {};
         const accepted = [];

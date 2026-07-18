@@ -4,7 +4,8 @@ const { buildPayload } = require('../lib/payload/payload');
 const { DEFAULT_TARGET_COMPONENT } = require('../lib/payload/components');
 const { CommandSend } = require('../lib/command/command-workflow');
 const { toNum, toBool, firstDefined } = require('../lib/util/validation');
-const { errorPayload, toMavlinkError } = require('../lib/util/errors');
+const { MavlinkError } = require('../lib/util/errors');
+const { makeFail } = require('../lib/util/node-errors');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { watchConfigBadge } = require('../lib/util/node-lifecycle');
 const { PRIORITY, commandPriorityFor } = require('../lib/runtime/send-priority');
@@ -84,14 +85,35 @@ module.exports = function registerMavlinkAiPayload(RED) {
     node._closed = false;
 
     node.on('input', async (msg, send, done) => {
+      /**
+       * The single error exit (#285): one closure binds node/msg/send/done —
+       * call sites (including runWithAck, via ctx.fail) pass only the
+       * failure, so the positional threading that produced the #276 arity
+       * shift cannot recur. The connection label is read lazily at failure
+       * time.
+       */
+      /**
+       * A send/ack failure must name the connection it actually used, even if
+       * a live redeploy replaced node.connection mid-flight (#128/#238) — the
+       * send and await-ack paths record their captured connection here before
+       * awaiting.
+       */
+      let sentOn = null;
+      const fail = makeFail({
+        node,
+        nodeName: 'mavlink-ai-payload',
+        msg,
+        send,
+        done,
+        connectionName: () => {
+          const c = sentOn || node.connection;
+          return c && c.name;
+        }
+      });
       const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
 
       if (!node.profile || !node.profile.isValid || !node.profile.isValid()) {
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-payload',
-          code: 'MISSING_PROFILE',
-          message: 'Payload node has no valid profile/dialect.'
-        }));
+        return fail(new MavlinkError('MISSING_PROFILE', 'Payload node has no valid profile/dialect.'));
       }
 
       const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
@@ -118,13 +140,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
         validateTargetSystem(targetSystem);
         validateTargetComponent(targetComponent);
       } catch (err) {
-        const e = toMavlinkError(err, 'INVALID_FIELD');
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-payload',
-          code: e.code,
-          message: e.message,
-          context: e.context
-        }));
+        return fail(err, 'INVALID_FIELD');
       }
 
       let built;
@@ -161,14 +177,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
           period: toNum(firstDefined(payload.period, node.period), undefined)
         });
       } catch (err) {
-        const e = toMavlinkError(err, 'BAD_PAYLOAD');
-        node.status({ fill: 'red', shape: 'ring', text: e.code });
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-payload',
-          code: e.code,
-          message: e.message,
-          context: e.context
-        }));
+        return fail(err, 'BAD_PAYLOAD');
       }
 
       /**
@@ -178,12 +187,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
        * instead (only for the COMMAND_LONG verbs that can be acked).
        */
       if (node.awaitAck && built.name === 'COMMAND_LONG' && !node.connection) {
-        node.status({ fill: 'red', shape: 'ring', text: 'NO_CONNECTION' });
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-payload',
-          code: 'NO_CONNECTION',
-          message: 'Await-ack requires a Connection to receive the COMMAND_ACK.'
-        }));
+        return fail(new MavlinkError('NO_CONNECTION', 'Await-ack requires a Connection to receive the COMMAND_ACK.'));
       }
 
       /**
@@ -194,12 +198,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
        * report a false failure. (Broadcast is fine for fire-and-forget verbs.)
        */
       if (node.awaitAck && built.name === 'COMMAND_LONG' && Number(targetSystem) === 0) {
-        node.status({ fill: 'red', shape: 'ring', text: 'BROADCAST_NO_ACK' });
-        return finishError(node, msg, send, done, errorPayload({
-          node: 'mavlink-ai-payload',
-          code: 'BROADCAST_NO_ACK',
-          message: 'Broadcast (target_system 0) cannot collect a COMMAND_ACK — address a specific system, or disable await-ack.'
-        }));
+        return fail(new MavlinkError('BROADCAST_NO_ACK', 'Broadcast (target_system 0) cannot collect a COMMAND_ACK — address a specific system, or disable await-ack.'));
       }
 
       /**
@@ -211,6 +210,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
        * not TypeError on a stale null and leave done() uncalled.
        */
       const connection = node.connection;
+      sentOn = connection;
       if (connection) {
         /**
          * Optional await-ack (#129): confirm the device accepted a command
@@ -219,7 +219,9 @@ module.exports = function registerMavlinkAiPayload(RED) {
          * fire-and-forget even when await-ack is on.
          */
         if (node.awaitAck && built.name === 'COMMAND_LONG') {
+          sentOn = node.connection;
           return runWithAck(node, msg, send, done, {
+            fail,
             connection,
             built,
             action,
@@ -245,15 +247,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
           node.status({ fill: 'green', shape: 'dot', text: `sent ${action}` });
           return done();
         } catch (err) {
-          const e = toMavlinkError(err, 'SEND_FAILED');
-          node.status({ fill: 'red', shape: 'ring', text: e.code });
-          return finishError(node, msg, send, done, errorPayload({
-            node: 'mavlink-ai-payload',
-            connection: connection.name,
-            code: e.code,
-            message: e.message,
-            context: e.context
-          }));
+          return fail(err, 'SEND_FAILED');
         }
       }
 
@@ -315,7 +309,9 @@ module.exports = function registerMavlinkAiPayload(RED) {
  * @param {object} msg
  * @param {function} send
  * @param {function} done
- * @param {object} ctx  { built, action, targetSystem, targetComponent, enums, defaults, payload }
+ * @param {object} ctx  { fail, built, action, targetSystem, targetComponent, enums, defaults, payload } —
+ *   `fail` is the input handler's #285 error exit, so ack failures deliver
+ *   through the same single door
  * @returns {Promise<void>}
  */
 async function runWithAck(node, msg, send, done, ctx) {
@@ -355,15 +351,7 @@ async function runWithAck(node, msg, send, done, ctx) {
       maxRetries: toNum(firstDefined(ctx.payload.max_retries, node.maxRetries), undefined)
     });
   } catch (err) {
-    const e = toMavlinkError(err, 'COMMAND_FAILED');
-    node.status({ fill: 'red', shape: 'ring', text: e.code });
-    return finishError(node, msg, send, done, errorPayload({
-      node: 'mavlink-ai-payload',
-      connection: connection.name,
-      code: e.code,
-      message: e.message,
-      context: e.context
-    }));
+    return ctx.fail(err, 'COMMAND_FAILED');
   }
 
   node._active.add(workflow);
@@ -382,39 +370,9 @@ async function runWithAck(node, msg, send, done, ctx) {
     if (node._closed) {
       return done();
     }
-    const e = toMavlinkError(err, 'COMMAND_FAILED');
-    node.status({ fill: 'red', shape: 'ring', text: e.code });
-    finishError(node, msg, send, done, errorPayload({
-      node: 'mavlink-ai-payload',
-      connection: connection.name,
-      code: e.code,
-      message: e.message,
-      context: e.context
-    }));
+    ctx.fail(err, 'COMMAND_FAILED');
   } finally {
     node._active.delete(workflow);
   }
 }
 
-/**
- * Emit a structured error on the single output and finish. Like the build node,
- * operational failures ride the output as a `mavlink/error` message.
- *
- * @param {object} node
- * @param {function} send
- * @param {function} done
- * @param {object} payload  error payload (§14.5)
- * @returns {void}
- */
-function finishError(node, msg, send, done, payload) {
-  /**
-   * Re-use the inbound msg (Node-RED convention): a fresh object would drop
-   * `_msgid` correlation, `msg.parts` (split/join), and user-attached
-   * properties on exactly the error branch — the success paths already mutate
-   * and forward `msg`, and the command/fanout nodes do the same for errors.
-   */
-  msg.topic = 'mavlink/error';
-  msg.payload = payload;
-  send(msg);
-  done();
-}
