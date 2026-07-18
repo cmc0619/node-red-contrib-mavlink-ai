@@ -126,3 +126,31 @@ test('a malformed id filter drops everything (fails closed) instead of widening 
   const bad = setup({ compid: '1O' });
   assert.strictEqual(await passes(bad.RED, bad.node, msg('HEARTBEAT', { sysid: 5, compid: 5 })), false);
 });
+
+test('changed-only/rate-limit state is bounded against identity sweeps (#281)', async () => {
+  /**
+   * The tracking key embeds wire-derived connection_id/sysid/compid, so a
+   * forged-identity sweep once grew the maps for the life of a deploy. The
+   * maps are closure-private, so the bound is pinned behaviorally: after
+   * MAX_TRACKED_KEYS+ distinct keys, the FIRST key's changed-only signature
+   * must have been evicted — an unchanged repeat for it passes again instead
+   * of being suppressed. (An unbounded map would still hold the signature
+   * and suppress it.)
+   */
+  const { MAX_TRACKED_KEYS } = require('../../lib/util/bounded-map');
+  const { RED, node } = setup({ changedOnly: true });
+
+  const first = msg('SYS_STATUS', { connection_id: 'sweep0', fields: { voltage: 12 } });
+  assert.strictEqual(await passes(RED, node, first), true, 'first delivery of key 0');
+  assert.strictEqual(await passes(RED, node, first), false, 'unchanged repeat suppressed while tracked');
+
+  for (let i = 1; i <= MAX_TRACKED_KEYS + 10; i += 1) {
+    await RED.inject(node, msg('SYS_STATUS', { connection_id: `sweep${i}`, fields: { voltage: 12 } }));
+  }
+
+  assert.strictEqual(
+    await passes(RED, node, first),
+    true,
+    'key 0 was evicted by the sweep, so its unchanged repeat delivers again — the map is bounded'
+  );
+});
