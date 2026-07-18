@@ -126,7 +126,7 @@ test('connection refuses to start on an identity-invalid default identity (#90, 
 
 test('connection refuses to start with no default identity (#228)', async () => {
   const RED = new MockRED().loadNodes();
-  const profile = makeProfile(RED, { id: 'p1' });
+  makeProfile(RED, { id: 'p1' });
   const connection = RED.create('mavlink-ai-connection', {
     id: 'c-noid',
     name: 'C',
