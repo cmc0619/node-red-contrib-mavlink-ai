@@ -1506,13 +1506,18 @@ A subscription should include filters:
 {
   messageNames: ["HEARTBEAT", "GLOBAL_POSITION_INT"],
   messageIds: [0, 33],
-  sysid: 1,
-  compid: "*",
+  sysids: [1],        // empty/absent = accept all systems
+  compids: [],        // empty/absent = accept all components
   profile: "Copter",
   rateLimitHz: 5,
-  raw: false
+  changedOnly: false
 }
 ```
+
+Id filters are plural arrays and fail closed (#280): any supplied entry that
+is not an integer MAVLink id (0-255) throws `BAD_FILTER` at subscribe time
+rather than being dropped — a malformed list must never silently widen into
+an accept-everything wildcard.
 
 The connection should decode once, then distribute normalized messages to matching subscribers.
 
