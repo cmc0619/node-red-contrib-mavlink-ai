@@ -51,17 +51,23 @@ test('malformed id lists fail closed: subscribe throws instead of widening to a 
   const circular = {};
   circular.self = circular;
   const badForms = [['bad'], [1, 'bad'], [1.5], [-1], [256], [true], [[1]], [''], [null], [1n], [circular], 'not-an-array', 5];
+  /**
+   * The whole structured error must survive downstream serialization: an
+   * error payload or logger that stringifies err.context must not throw on
+   * the very input the error describes.
+   */
+  const structuredBadFilter = (e) => e.code === 'BAD_FILTER' && typeof JSON.stringify(e.context) === 'string';
   for (const bad of badForms) {
     /** String(), not JSON.stringify(): the BigInt/circular forms are here
      * precisely because stringify throws on them. */
     assert.throws(
       () => reg.subscribe({ sysids: bad }, () => {}),
-      (e) => e.code === 'BAD_FILTER',
+      structuredBadFilter,
       `sysids ${String(bad)} must be rejected`
     );
     assert.throws(
       () => reg.subscribe({ compids: bad }, () => {}),
-      (e) => e.code === 'BAD_FILTER',
+      structuredBadFilter,
       `compids ${String(bad)} must be rejected`
     );
   }
