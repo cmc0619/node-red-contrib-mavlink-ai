@@ -17,16 +17,7 @@ test('filters by message name', () => {
   assert.deepStrictEqual(got, ['HEARTBEAT']);
 });
 
-test('filters by sysid', () => {
-  const reg = new SubscriptionRegistry();
-  const got = [];
-  reg.subscribe({ sysid: 1 }, (m) => got.push(m.payload.sysid));
-  reg.dispatch(msg('HEARTBEAT', 1));
-  reg.dispatch(msg('HEARTBEAT', 2));
-  assert.deepStrictEqual(got, [1]);
-});
-
-test('filters by a sysids list, and the singular sysid still works (#154)', () => {
+test('filters by a sysids list (#154)', () => {
   const reg = new SubscriptionRegistry();
   const got = [];
   reg.subscribe({ sysids: [1, 2] }, (m) => got.push(m.payload.sysid));
@@ -41,6 +32,53 @@ test('filters by a sysids list, and the singular sysid still works (#154)', () =
   reg2.subscribe({ sysids: [] }, (m) => all.push(m.payload.sysid));
   reg2.dispatch(msg('HEARTBEAT', 7));
   assert.deepStrictEqual(all, [7]);
+});
+
+test('malformed id lists fail closed: subscribe throws instead of widening to a wildcard (#280)', () => {
+  const reg = new SubscriptionRegistry();
+  /**
+   * The old normalizer silently dropped invalid entries, so ['bad'] became []
+   * — and an empty list means accept-all. A filter meant to narrow delivery
+   * must never fail open; every malformed form throws BAD_FILTER instead.
+   */
+  for (const bad of [['bad'], [1, 'bad'], [1.5], [-1], [256], 'not-an-array', 5]) {
+    assert.throws(
+      () => reg.subscribe({ sysids: bad }, () => {}),
+      (e) => e.code === 'BAD_FILTER',
+      `sysids ${JSON.stringify(bad)} must be rejected`
+    );
+    assert.throws(
+      () => reg.subscribe({ compids: bad }, () => {}),
+      (e) => e.code === 'BAD_FILTER',
+      `compids ${JSON.stringify(bad)} must be rejected`
+    );
+  }
+  /** Nothing was registered by the failed subscribes. */
+  let delivered = 0;
+  reg.subscribe({ messageNames: ['HEARTBEAT'] }, () => (delivered += 1));
+  reg.dispatch(msg('HEARTBEAT', 9));
+  assert.strictEqual(delivered, 1, 'only the valid subscription exists');
+});
+
+test('the removed singular sysid/compid fields are rejected loudly, not ignored (#280)', () => {
+  const reg = new SubscriptionRegistry();
+  /**
+   * Silently ignoring the removed spelling would turn an existing narrow
+   * filter into a wildcard — the exact fail-open the strict normalizer
+   * exists to prevent.
+   */
+  assert.throws(() => reg.subscribe({ sysid: 1 }, () => {}), (e) => e.code === 'BAD_FILTER');
+  assert.throws(() => reg.subscribe({ compid: 1 }, () => {}), (e) => e.code === 'BAD_FILTER');
+});
+
+test('wildcard id forms are unchanged: absent, empty array, and "*" accept all (#280)', () => {
+  const reg = new SubscriptionRegistry();
+  const got = [];
+  reg.subscribe({}, (m) => got.push(m.payload.sysid));
+  reg.subscribe({ sysids: [] }, (m) => got.push(m.payload.sysid));
+  reg.subscribe({ sysids: '*' }, (m) => got.push(m.payload.sysid));
+  reg.dispatch(msg('HEARTBEAT', 42));
+  assert.deepStrictEqual(got, [42, 42, 42]);
 });
 
 test('rate limit drops bursts', () => {
