@@ -197,13 +197,33 @@ module.exports = function registerMavlinkAiConnection(RED) {
 
     /**
      * The cached AUTOPILOT_VERSION.capabilities for a wire identity, or
-     * undefined while the vehicle has not reported (yet).
+     * undefined while the vehicle has not reported (yet). Component 0
+     * addresses the whole system, but a report is always cached under the
+     * responder's REAL component id — an exact 0-lookup could never hit
+     * (#294 review) — so compid 0 resolves the autopilot (component 1, the
+     * parameter owner in practice) and falls back to any component of that
+     * system.
      *
      * @param {number} sysid
-     * @param {number} compid
+     * @param {number} compid  0 acts as a system-wide wildcard
      * @returns {bigint|number|undefined}
      */
-    node.getVehicleCapabilities = (sysid, compid) => node._vehicleCaps.get(`${sysid}:${compid}`);
+    node.getVehicleCapabilities = (sysid, compid) => {
+      if (Number(compid) !== 0) {
+        return node._vehicleCaps.get(`${sysid}:${compid}`);
+      }
+      const autopilot = node._vehicleCaps.get(`${sysid}:1`);
+      if (autopilot !== undefined) {
+        return autopilot;
+      }
+      const prefix = `${sysid}:`;
+      for (const [key, capabilities] of node._vehicleCaps) {
+        if (key.startsWith(prefix)) {
+          return capabilities;
+        }
+      }
+      return undefined;
+    };
 
     /**
      * Ask a vehicle to emit AUTOPILOT_VERSION (MAV_CMD_REQUEST_MESSAGE), at
@@ -219,7 +239,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
      */
     node.requestVehicleCapabilities = ({ targetSystem, targetComponent, vehicleProfile, localIdentity }) => {
       const key = `${targetSystem}:${targetComponent}`;
-      if (node._capProbes.has(key) || node._vehicleCaps.has(key)) {
+      if (node._capProbes.has(key) || node.getVehicleCapabilities(targetSystem, targetComponent) !== undefined) {
         return;
       }
       boundedSet(node._capProbes, key, true);
@@ -236,7 +256,15 @@ module.exports = function registerMavlinkAiConnection(RED) {
             param1: 148
           }
         })
-      ).catch(() => {});
+      ).catch(() => {
+        /**
+         * A rejected send never reached the wire (#294 review): forget the
+         * attempt so the next param op retries. A startup blip — UDP_NO_PEER
+         * before the first inbound packet, TRANSPORT_NOT_READY, QUEUE_FULL —
+         * must not disable capability detection for the rest of the deploy.
+         */
+        node._capProbes.delete(key);
+      });
     };
     node.locks = new LockManager();
     node.statusState = 'idle';
