@@ -180,3 +180,10 @@ test('flag-array elements are validated before the OR (no silent bitwise wrap)',
     (err) => err.code === 'BAD_FLAG_VALUE' && err.context.field === 'capabilities'
   );
 });
+
+test('an empty flag array on a uint64 bitmask field returns 0n, not Number 0', () => {
+  /** Keyed off the FIELD type: with no elements to inspect, the BigInt path
+   * must still engage or the uint64 serializer receives the wrong type. */
+  const clazz = getMessageClass(common, 'AUTOPILOT_VERSION');
+  assert.strictEqual(normalizeFields(common, clazz, { capabilities: [] }).capabilities, 0n);
+});

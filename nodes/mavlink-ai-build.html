@@ -130,7 +130,13 @@
         const knownBits = orBits(members.map(function (e) { return e.value; }));
         let initial = parseBitmaskValue(saved);
         if (initial === null && saved !== undefined) {
-          const named = table.find(function (e) { return e.name === String(saved).trim().toUpperCase(); });
+          // Match a saved enum NAME fully qualified or bare (both valid in
+          // the runtime schema via scoped resolution) so reopening the editor
+          // never re-initializes a set flag back to zero.
+          const upper = String(saved).trim().toUpperCase();
+          const named = table.find(function (e) {
+            return e.name === upper || e.name === field.enum + '_' + upper;
+          });
           initial = named ? named.value : null;
         }
         const mask = initial === null ? 0 : initial;
