@@ -108,7 +108,7 @@
   <h3>How it fits together</h3>
   <p>Three distinct pieces, easy to confuse:</p>
   <ul>
-    <li><b>Profile</b> (config node) — identity and protocol defaults (dialect, source system/component, MAVLink version).</li>
+    <li><b>Vehicle Profile</b> (config node) — the target vehicle's dialect, MAVLink version preference, and defaults. Who Node-RED transmits as lives on the Connection's Local Identity, not here.</li>
     <li><b>Connection</b> (config node) — the serial/UDP/TCP link. It owns the socket, decodes the incoming stream <b>once</b>, and distributes decoded messages to all subscribers.</li>
     <li><b>MAVLink In</b> (this node) — a subscriber that receives that decoded stream and applies its own filters. It creates no transport of its own.</li>
   </ul>
