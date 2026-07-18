@@ -8,9 +8,8 @@
 > **v3 architecture reset (issue #228).** The single combined profile was split
 > into three explicit concerns — **Local Identity**, **Vehicle Profile**, and
 > **Connection**. [Section 5.5](#55-architecture-local-identity-vehicle-profile-connection-228)
-> is the authoritative description of the current model; where older sections
-> below still describe the combined profile, section 5.5 and the sections it
-> links supersede them.
+> is the authoritative description of that split; the rest of this document is
+> written to the same model (#279).
 
 ## 1. Purpose
 
@@ -25,18 +24,20 @@ The module should be a MAVLink protocol layer for Node-RED, not merely a serial/
 The core design rule is:
 
 ```text
-Profile    = MAVLink identity, dialect, vehicle defaults, protocol defaults
-Connection = transport/session/resource owner
-Route      = sysid/compid mapping to profile
-Nodes      = visible Node-RED behavior
+Local Identity  = who Node-RED transmits as (source ids, heartbeat identity)
+Vehicle Profile = the target vehicle: dialect, firmware, family, defaults
+Connection      = transport/session/resource owner (incl. signing)
+Route           = sysid/compid mapping to Vehicle Profile
+Nodes           = visible Node-RED behavior
 ```
 
 Or more bluntly:
 
 ```text
-Profile = what this MAVLink thing means.
+Local Identity = who we are on the link.
+Vehicle Profile = what the vehicle we talk to means.
 Connection = how we talk to it.
-Route = which packet belongs to which thing.
+Route = which packet belongs to which vehicle.
 Flow nodes = what we do with it.
 ```
 
@@ -187,8 +188,9 @@ Problems with one big comms node:
 Better model:
 
 ```text
-Profile node: owns protocol identity/defaults.
-Connection node: owns transport/session.
+Local Identity node: owns who Node-RED transmits as.
+Vehicle Profile node: owns the target vehicle's dialect/defaults.
+Connection node: owns transport/session (and signing).
 Regular nodes: build, filter, receive, send, command, mission.
 ```
 
@@ -353,16 +355,13 @@ never transmits with a guessed identity.
 > per-Connection bindings and unambiguous, fail-closed resolution — not from
 > forbidding the capability.
 
-## 6. Profile Config Node
+## 6. Vehicle Profile Config Node
 
-> **v3 (#228):** this section describes the pre-v3 combined profile. In v3 the
-> `mavlink-ai-vehicle` is a **Vehicle Profile** that owns only target-facing
-> metadata (dialect, firmware, version, target ids, vehicle family, mission
-> prefs). Source identity, heartbeat identity, and signing moved to
-> `mavlink-ai-local-identity`; the signing link id moved to the Connection. See
-> [section 5.5](#55-architecture-local-identity-vehicle-profile-connection-228).
-
-The profile config node describes a MAVLink identity and its protocol defaults.
+The Vehicle Profile config node (`mavlink-ai-vehicle`) describes the ADDRESSED
+vehicle: its dialect, firmware, MAVLink version preference, target ids,
+vehicle family, and mission preferences. Source identity and heartbeat
+identity live on `mavlink-ai-local-identity`; signing lives on the Connection
+([section 5.5](#55-architecture-local-identity-vehicle-profile-connection-228)).
 
 It does **not** own sockets, serial ports, TCP listeners, UDP ports, mission locks, timers, or peer state.
 
@@ -376,52 +375,46 @@ Responsibilities:
 
 ```text
 - Profile name.
-- Profile type / vehicle type.
+- Vehicle family (for mode tables / parameter metadata).
 - Dialect selection.
 - MAVLink version preference.
-- Source system ID.
-- Source component ID.
 - Default target system.
 - Default target component.
 - Preferred mission item message type.
-- Heartbeat identity defaults.
 - Protocol/debug preferences.
+
+Source ids and heartbeat identity are NOT here: they belong to the Local
+Identity config node (5.5.1), and signing to the Connection (5.5.8).
 ```
 
 Suggested fields:
 
 ```text
 Name
-Profile type: generic | gcs | companion-computer | copter | plane | rover | boat | sub | antenna-tracker
+Vehicle family: generic | copter | plane | rover | boat | sub | antenna-tracker
 Dialect: ardupilotmega | common | minimal | custom
 Custom dialect path
 MAVLink version: auto | v1 | v2
-Source system ID
-Source component ID
 Default target system
 Default target component
 Preferred mission item type: MISSION_ITEM_INT | MISSION_ITEM
-Heartbeat MAV_TYPE
-Heartbeat autopilot type
 Protocol debug enabled
 ```
 
 Default profile values:
 
 ```text
-Profile type: gcs
+Vehicle family: generic
 Dialect: ardupilotmega
 MAVLink version: auto
-Source system ID: 255
-Source component ID: 190
 Default target system: 1
 Default target component: 1
 Preferred mission item type: MISSION_ITEM_INT
-Heartbeat MAV_TYPE: MAV_TYPE_GCS
-Heartbeat autopilot type: MAV_AUTOPILOT_INVALID
 ```
 
-The defaults should make the module useful as a lightweight GCS/client first. Vehicle profiles can then define the target vehicle defaults.
+The defaults should make the module useful against a single ArduPilot-style
+vehicle first. The GCS-side identity defaults (sysid 255 / compid 190,
+MAV_TYPE_GCS heartbeat) live on the Local Identity node.
 
 ## 7. Vehicle Type Is Not Dialect
 
@@ -439,40 +432,27 @@ But they may have different defaults:
 
 ```text
 Copter Profile
-- profile type: copter
+- vehicle family: copter
 - dialect: ardupilotmega
 - default target system: 1
-- heartbeat type: MAV_TYPE_QUADROTOR or GCS depending on source identity
 - preferred mission item type: MISSION_ITEM_INT
 
 Rover Profile
-- profile type: rover
+- vehicle family: rover
 - dialect: ardupilotmega
 - default target system: 2
-- heartbeat type: MAV_TYPE_GROUND_ROVER or GCS depending on source identity
 - preferred mission item type: MISSION_ITEM_INT
 
 Plane Profile
-- profile type: plane
+- vehicle family: plane
 - dialect: ardupilotmega
 - default target system: 3
-- heartbeat type: MAV_TYPE_FIXED_WING or GCS depending on source identity
 - preferred mission item type: MISSION_ITEM_INT
 ```
 
-The dialect defines the message dictionary. The profile defines how this Node-RED runtime should behave when dealing with a specific MAVLink system or role.
+The dialect defines the message dictionary. The Vehicle Profile defines what the ADDRESSED vehicle means to this runtime: its family (for mode tables and parameter metadata), firmware conventions, and target defaults.
 
-A profile's role is its own MAVLink identity, not the target's vehicle type. A `companion-computer` profile (a Raspberry Pi or other onboard controller) announces itself as `MAV_TYPE_ONBOARD_CONTROLLER` with `MAV_AUTOPILOT_INVALID`, and suggests source component id `191` (`MAV_COMP_ID_ONBOARD_COMPUTER`) while leaving the source system id user-configurable — an onboard companion normally shares its vehicle's system id but keeps its own component id. This role is independent of firmware, dialect, and the target vehicle type, so the same preset works with copters, planes, rovers, boats, and subs on ArduPilot, PX4, or a custom stack.
-
-```text
-Companion Computer Profile
-- profile type: companion-computer
-- heartbeat type: MAV_TYPE_ONBOARD_CONTROLLER
-- heartbeat autopilot: MAV_AUTOPILOT_INVALID
-- source component id: 191 (MAV_COMP_ID_ONBOARD_COMPUTER), user-overridable
-- source system id: vehicle SysID (commonly 1), user-configurable
-- default target system/component: vehicle autopilot (commonly 1 / 1)
-```
+Who Node-RED itself is on the wire is a different question with a different owner: the Local Identity config node (5.5.1) carries the source SysID/CompID and the HEARTBEAT identity, with role presets for GCS (`MAV_TYPE_GCS`, sysid 255 / compid 190) and companion computer (`MAV_TYPE_ONBOARD_CONTROLLER`, compid 191 / `MAV_COMP_ID_ONBOARD_COMPUTER`, sharing the vehicle's system id). The same Vehicle Profile works unchanged whether Node-RED speaks as a GCS or as an onboard companion — identity never leaks into the target description.
 
 ## 8. Connection Config Node
 
@@ -1607,16 +1587,16 @@ Option B: mavlink-ai-heartbeat visible node generates HEARTBEAT messages.
 v2 should start with Option A:
 
 ```text
-Connection can send heartbeat using profile defaults.
+Connection can send heartbeat using the Local Identity's values.
 ```
 
 A visible heartbeat node can be added later if flow-level heartbeat control becomes important.
 
-Heartbeat settings belong partly to profile and partly to connection:
+Heartbeat settings split between the Local Identity and the connection (5.5.7):
 
 ```text
-Profile: heartbeat identity values.
-Connection: whether to send heartbeat and interval.
+Local Identity: heartbeat identity values (MAV_TYPE, autopilot, base defaults).
+Connection: whether to send heartbeat and interval (per attached identity).
 ```
 
 ## 23. Mission Locking
@@ -2112,9 +2092,10 @@ one UDP port -> multiple sysids -> multiple profiles -> separate flows
 The architecture should stay boring:
 
 ```text
-Profile owns protocol identity.
-Connection owns the wire.
-Routing maps packets to profiles.
+Local Identity owns who we are on the wire.
+Vehicle Profile owns what the addressed vehicle means.
+Connection owns the wire (and signing).
+Routing maps packets to Vehicle Profiles.
 Nodes build, filter, send, receive, and run workflows.
 ```
 

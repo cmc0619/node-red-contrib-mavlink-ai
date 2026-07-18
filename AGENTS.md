@@ -32,10 +32,11 @@ Follow `DESIGN.md` first. Do not recreate the old coupled architecture.
 ## Architecture
 
 ```text
-Profile    = MAVLink identity, dialect, defaults
-Connection = transport/session/resource owner
-Route      = sysid/compid to profile mapping
-Nodes      = flow-visible behavior
+Local Identity  = who Node-RED transmits as (source ids, heartbeat identity)
+Vehicle Profile = target vehicle: dialect, firmware, vehicle family, defaults
+Connection      = transport/session/resource owner (incl. signing)
+Route           = sysid/compid to Vehicle Profile mapping
+Nodes           = flow-visible behavior
 ```
 
 ## Preferred implementation order

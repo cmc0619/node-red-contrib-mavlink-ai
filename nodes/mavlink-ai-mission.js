@@ -101,10 +101,14 @@ module.exports = function registerMavlinkAiMission(RED) {
        * the editor config — the pre-1.0 topic aliases are gone. */
       const action = msg.action || payload.action || node.action;
 
-      // Effective profile for the whole workflow: an explicit override (msg or
-      // node config) or the target's routed profile, not blindly the
-      // connection's default. It supplies dialect/enums, source identity,
-      // mission preferences, target defaults, and rides on every send.
+      /**
+       * Effective Vehicle Profile for the whole workflow: an explicit
+       * override (msg or node config) or the target's routed profile, not
+       * blindly the connection's default. It supplies dialect/enums, mission
+       * preferences, and target defaults, and rides on every send. Source
+       * identity is NOT here — the connection resolves the Local Identity
+       * below (#228).
+       */
       let profile, defaults, targetSystem, targetComponent;
       try {
         ({ profile, defaults, targetSystem, targetComponent } = resolveWorkflowContext(node.connection, {
