@@ -144,10 +144,16 @@ module.exports = function registerMavlinkAiParam(RED) {
         send([null, progress, null]);
       };
 
-      // Resolve the Local Identity for this workflow (#228): the explicit
-      // payload request when present, else the connection default. Param
-      // workflows carry it on every send; an unattached/ambiguous request
-      // fails closed here rather than transmitting as the wrong participant.
+      /**
+       * Resolve the Local Identity for this workflow (#228): the explicit
+       * payload request when present, else the connection default. Param
+       * workflows carry it on every send; an unattached/ambiguous request
+       * fails closed here rather than transmitting as the wrong participant.
+       * This block used to hand-roll the error delivery and dropped the `msg`
+       * argument — the arity shift called done() with a truthy value (firing
+       * Catch with garbage) and then crashed calling the payload as a
+       * function; the shared exit takes the arguments it actually needs.
+       */
       let localIdentity;
       try {
         node.connection.resolveOutboundIdentity(payload.localIdentity);
