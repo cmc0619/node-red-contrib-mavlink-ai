@@ -166,6 +166,15 @@ module.exports = function registerMavlinkAiParam(RED) {
        * profile firmware label; a disagreement warns once per vehicle,
        * because a mislabeled profile silently corrupts every integer
        * parameter — the exact failure this probe exists to prevent.
+       *
+       * Deliberate residual window (#294 review, owner decision): a write
+       * racing the FIRST probe answer still encodes via the label — #233
+       * prescribes that the probe never delays or fails the op, because
+       * blocking would tax every integer write to vehicles that never report
+       * AUTOPILOT_VERSION. Against a mislabeled profile this narrows the
+       * exposure from "every write, forever" to "writes in the first seconds
+       * after deploy", and the once-per-vehicle warning surfaces the mislabel
+       * the moment bits arrive.
        */
       node.connection.requestVehicleCapabilities({
         targetSystem,
