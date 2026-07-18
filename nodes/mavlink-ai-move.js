@@ -5,7 +5,7 @@ const { toNum, toBool, firstDefined } = require('../lib/util/validation');
 const { MavlinkError, errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { makeFail } = require('../lib/util/node-errors');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
-const { watchProfileBadge } = require('../lib/util/node-lifecycle');
+const { watchConfigBadge } = require('../lib/util/node-lifecycle');
 const { PRIORITY } = require('../lib/runtime/send-priority');
 
 /**
@@ -30,7 +30,7 @@ module.exports = function registerMavlinkAiMove(RED) {
      * Resolves node.profile and keeps the "invalid profile" badge live across
      * deploys, so a profile fixed after this node was deployed clears the badge.
      */
-    watchProfileBadge(RED, node, config);
+    watchConfigBadge(RED, node, config, { profile: 'required' });
     node.connection = config.connection ? RED.nodes.getNode(config.connection) : null;
     node.coordinate = config.coordinate || 'local';
     node.preset = config.preset || 'position';
@@ -69,7 +69,7 @@ module.exports = function registerMavlinkAiMove(RED) {
     /**
      * Stop-on-redeploy guard for the config-only case (#128): when the referenced
      * Profile/Connection config node is edited or deleted, Node-RED leaves this
-     * node in place and fires `flows:started` (which watchProfileBadge uses to
+     * node in place and fires `flows:started` (which watchConfigBadge uses to
      * re-resolve refs) — but never `close`. A running setpoint stream would
      * otherwise keep commanding the vehicle with the old `_streamState` and a
      * possibly-destroyed connection.

@@ -7,7 +7,7 @@ const { toBool, firstDefined, parseJsonObjectConfig } = require('../lib/util/val
 const { MavlinkError } = require('../lib/util/errors');
 const { makeFail } = require('../lib/util/node-errors');
 const { registerEditorApi } = require('../lib/editor-api');
-const { watchProfileBadge } = require('../lib/util/node-lifecycle');
+const { watchConfigBadge } = require('../lib/util/node-lifecycle');
 
 /**
  * mavlink-ai-build (DESIGN.md §13.3).
@@ -29,7 +29,7 @@ module.exports = function registerMavlinkAiBuild(RED) {
      * Resolves node.profile and keeps the "invalid profile" badge live across
      * deploys, so a profile fixed after this node was deployed clears the badge.
      */
-    watchProfileBadge(RED, node, config);
+    watchConfigBadge(RED, node, config, { profile: 'required' });
     node.messageName = config.messageName || 'HEARTBEAT';
     node.fieldsJson = config.fields || '';
     node.applyDefaults = toBool(config.applyDefaults, true);
