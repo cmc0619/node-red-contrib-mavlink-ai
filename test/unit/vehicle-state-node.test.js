@@ -13,6 +13,7 @@ function stubConnection(RED, id) {
     emitter: new EventEmitter(),
     profile: { getDialect: () => ({ valid: false, enums: null }) },
     getVehicleCapabilities: () => undefined,
+    setAdvertisedHealth: (ref, input) => input,
     _cbs: [],
     subscribe(filter, cb) {
       conn.lastFilter = filter;
@@ -212,6 +213,26 @@ test('a malformed sysid filter fails closed: no emission for any vehicle, config
   node.send = (outs) => seen.push(outs);
   conn.deliver(hb(1));
   assert.strictEqual(seen.length, 0, 'nothing is emitted for any vehicle when the sysid filter is malformed');
+});
+
+test('a health input is forwarded to connection.setAdvertisedHealth', async (t) => {
+  const { RED, conn, node } = setup();
+  t.after(() => RED.close(node));
+  const calls = [];
+  conn.setAdvertisedHealth = (ref, input) => { calls.push({ ref, input }); return input; };
+  await RED.inject(node, { payload: { health: 'degraded', ttl_s: 10, note: 'watchdog' } });
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].input.health, 'degraded');
+  assert.strictEqual(calls[0].input.ttl_s, 10);
+});
+
+test('a rejected health assertion surfaces a structured error on output 2', async (t) => {
+  const { RED, conn, node } = setup();
+  t.after(() => RED.close(node));
+  conn.setAdvertisedHealth = () => { const e = new Error('bad'); e.code = 'INVALID_HEALTH'; throw e; };
+  const { collected } = await RED.inject(node, { payload: { health: 'fine' } });
+  const err = collected.map((o) => o[1]).find(Boolean);
+  assert.strictEqual(err.payload.code, 'INVALID_HEALTH');
 });
 
 test('a silent vehicle emits connection_lost on the re-diff tick (#208 whole-branch review)', async (t) => {
