@@ -190,7 +190,7 @@ other identity sends:
 | `nominal` | `MAV_STATE_ACTIVE` |
 | `degraded` | `MAV_STATE_CRITICAL` |
 | `emergency` | `MAV_STATE_EMERGENCY` |
-| `fatal` | **heartbeat stops** — a faulted component must not keep heartbeating as if present; node status shows the fault; recovery needs a fresh non-fatal assertion |
+| `fatal` | **heartbeat stops** — a faulted component must not keep heartbeating as if present; the connection logs a `node.warn` in the Node-RED runtime log (not a status badge — this is a config node, with no canvas status of its own) when the stop begins and again once a fresh non-fatal assertion resumes the heartbeat |
 | assertion expired past its `ttl_s` | `MAV_STATE_CRITICAL` — an expired lease must never look healthy |
 
 A flow advertises its health by sending to the `mavlink-ai-vehicle-state`

@@ -120,3 +120,83 @@ test('a non-health-driven identity still yields the static MAV_STATE_ACTIVE (reg
   const fields = conn._heartbeatFieldsFor(gcs, Date.now());
   assert.strictEqual(fields.system_status, 'MAV_STATE_ACTIVE');
 });
+
+/**
+ * Review finding (#225 review): a fatal assertion must not permanently wedge
+ * a health-driven identity's heartbeat — a fresh non-fatal assertion after a
+ * fatal one must resume sending with a mapped `system_status`. This is the
+ * highlighted failure mode: `_heartbeatFieldsFor` is pure (no `node.status`
+ * side effect) and must recompute cleanly from the latest stored record on
+ * every call, not latch on the earlier `null`.
+ */
+test('a non-fatal assertion after fatal recovers the heartbeat (no permanent stop)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-default');
+  conn.localIdentity = def;
+  conn.resolveLocalIdentity = (ref) => (ref == null || ref === def.id ? def : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+
+  conn.setAdvertisedHealth(undefined, { health: 'fatal' });
+  assert.strictEqual(conn._heartbeatFieldsFor(def, Date.now()), null);
+
+  conn.setAdvertisedHealth(undefined, { health: 'nominal', ttl_s: 10 });
+  const fields = conn._heartbeatFieldsFor(def, Date.now());
+  assert.notStrictEqual(fields, null);
+  assert.strictEqual(fields.system_status, 'MAV_STATE_ACTIVE');
+});
+
+/**
+ * Expiry through the tick seam (#225 review): a non-fatal assertion whose
+ * `ttl_s` has elapsed by the tick's `now` must fall back to
+ * `MAV_STATE_CRITICAL` — an expired lease must never keep reporting the
+ * asserted (possibly stale) state as if it were still current.
+ */
+test('an expired non-fatal assertion reports MAV_STATE_CRITICAL', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-default');
+  conn.localIdentity = def;
+  conn.resolveLocalIdentity = (ref) => (ref == null || ref === def.id ? def : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+
+  conn.setAdvertisedHealth(undefined, { health: 'nominal', ttl_s: 1 });
+  const past = Date.now() + 5000;
+  const fields = conn._heartbeatFieldsFor(def, past);
+  assert.strictEqual(fields.system_status, 'MAV_STATE_CRITICAL');
+});
+
+/**
+ * Edge-triggered warn (#225 review): the tick surfaces the fatal-stop and its
+ * recovery via `node.warn` — not `node.status(...)`, since this config node
+ * has no canvas badge — exactly once per transition, never once per tick.
+ * Driven directly at the `node._handleHeartbeatHealthEdge(identity, fields)`
+ * seam the tick calls with its `_heartbeatFieldsFor` result, avoiding a flaky
+ * dependency on the live `setInterval` tick.
+ */
+test('_handleHeartbeatHealthEdge warns once entering fatal and once on recovery, not per tick', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-default');
+
+  // Three consecutive fatal ticks -> exactly one "asserted FATAL" warning.
+  conn._handleHeartbeatHealthEdge(def, null);
+  conn._handleHeartbeatHealthEdge(def, null);
+  conn._handleHeartbeatHealthEdge(def, null);
+  assert.strictEqual(conn.warnings.length, 1);
+  assert.match(conn.warnings[0], /FATAL health/);
+
+  // Three consecutive recovered ticks -> exactly one "recovered" warning.
+  const recoveredFields = { system_status: 'MAV_STATE_ACTIVE' };
+  conn._handleHeartbeatHealthEdge(def, recoveredFields);
+  conn._handleHeartbeatHealthEdge(def, recoveredFields);
+  conn._handleHeartbeatHealthEdge(def, recoveredFields);
+  assert.strictEqual(conn.warnings.length, 2);
+  assert.match(conn.warnings[1], /recovered/);
+
+  // A second fatal transition re-warns (the edge fires again on re-entry).
+  conn._handleHeartbeatHealthEdge(def, null);
+  assert.strictEqual(conn.warnings.length, 3);
+  assert.match(conn.warnings[2], /FATAL health/);
+});

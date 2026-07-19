@@ -287,6 +287,14 @@ module.exports = function registerMavlinkAiConnection(RED) {
      */
     node._advertisedHealth = new Map();
     /**
+     * Identity ids whose heartbeat is currently stopped on a `fatal`
+     * advertised-health assertion (#225 review). Tracked so the heartbeat
+     * tick can warn exactly once on entering the fatal-stopped state and
+     * once on recovering from it, instead of every tick. Per-connection
+     * state — a redeploy of this connection node rebuilds it empty.
+     */
+    node._healthFatalIdentities = new Set();
+    /**
      * Stream decoders keyed by stream identity: `SHARED_STREAM_KEY` for
      * single-peer transports, or a tcp server client's `clientId` so two
      * clients' interleaved bytes never corrupt each other's framing (#147).
@@ -2199,6 +2207,13 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * `null` (the tick must skip its send this cycle). Non-health-driven
      * identities are unaffected — their fields pass through verbatim.
      *
+     * Pure (#225 review): this only computes fields, with no UI or logging
+     * side effect. `mavlink-ai-connection` is a config node with no canvas
+     * badge, so `node.status(...)` here would be invisible to operators and
+     * never cleared on recovery; the fatal/recovery transition is instead
+     * surfaced by the tick as an edge-triggered `node.warn(...)` — see
+     * `node._handleHeartbeatHealthEdge` below.
+     *
      * Exposed on `node` (rather than kept as a `tick`-local closure) so
      * tests can drive the decision deterministically without a live timer,
      * mirroring `node.setAdvertisedHealth` above.
@@ -2215,12 +2230,45 @@ module.exports = function registerMavlinkAiConnection(RED) {
       const outcome = resolveHeartbeatStatus(node._advertisedHealth.get(identity.id), now);
       if (outcome.stop) {
         // fatal: a faulted component must not keep heartbeating as if present.
-        // node status shows the declared fault; recovery needs a fresh assertion.
-        node.status({ fill: 'red', shape: 'ring', text: `${identity.describe()}: health fatal — heartbeat stopped` });
         return null;
       }
       fields.system_status = outcome.status;
       return fields;
+    };
+
+    /**
+     * Edge-triggered fatal/recovery notice for a health-driven identity's
+     * heartbeat tick (#225 review). `_heartbeatFieldsFor` is pure, so this is
+     * where the fatal-stop and its recovery become observable: a `node.warn`
+     * fires once when `fields` first comes back `null` for an identity (entering
+     * the fatal-stopped state) and once when a later tick's `fields` is non-null
+     * again for an identity that was stopped (health recovered).
+     * `node._healthFatalIdentities` tracks which identity ids are currently
+     * stopped so a fatal identity that stays fatal for many ticks — or a
+     * healthy identity that never asserted — never re-warns. Deliberately a
+     * `node.warn` (runtime log/debug), not `node.status(...)`: this config
+     * node has no canvas badge to update.
+     *
+     * @param {object} identity  the identity this tick is for
+     * @param {?object} fields   this tick's `_heartbeatFieldsFor(identity, now)` result
+     * @returns {void}
+     */
+    node._handleHeartbeatHealthEdge = (identity, fields) => {
+      if (fields === null) {
+        if (!node._healthFatalIdentities.has(identity.id)) {
+          node.warn(
+            `mavlink-ai-connection '${node.name || node.id}': Local Identity '${identity.describe()}' asserted FATAL health — its heartbeat is stopped until a fresh non-fatal assertion.`
+          );
+          node._healthFatalIdentities.add(identity.id);
+        }
+        return;
+      }
+      if (node._healthFatalIdentities.has(identity.id)) {
+        node.warn(
+          `mavlink-ai-connection '${node.name || node.id}': Local Identity '${identity.describe()}' health recovered — heartbeat resumed.`
+        );
+        node._healthFatalIdentities.delete(identity.id);
+      }
     };
 
     /**
@@ -2252,6 +2300,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
         const identity = spec.identity;
         const tick = () => {
           const fields = node._heartbeatFieldsFor(identity, Date.now());
+          node._handleHeartbeatHealthEdge(identity, fields);
           if (!fields) {
             return;
           }
