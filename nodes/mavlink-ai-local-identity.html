@@ -19,9 +19,9 @@
     // pre-fills a field when it is blank or still equals the previous role's
     // suggestion; an explicitly customized value is never rewritten.
     var ROLE_PRESETS = {
-      gcs: { sysid: 255, compid: 190, heartbeatType: 'MAV_TYPE_GCS' },
-      companion: { sysid: 1, compid: 191, heartbeatType: 'MAV_TYPE_ONBOARD_CONTROLLER' },
-      custom: { sysid: 255, compid: 190, heartbeatType: 'MAV_TYPE_GENERIC' }
+      gcs: { sysid: 255, compid: 190, heartbeatType: 'MAV_TYPE_GCS', healthDriven: false },
+      companion: { sysid: 1, compid: 191, heartbeatType: 'MAV_TYPE_ONBOARD_CONTROLLER', healthDriven: true },
+      custom: { sysid: 255, compid: 190, heartbeatType: 'MAV_TYPE_GENERIC', healthDriven: false }
     };
 
     RED.nodes.registerType('mavlink-ai-local-identity', {
@@ -35,7 +35,11 @@
          * codec enforce (#153). */
         sourceComponentId: { value: 190, required: true, validate: mavUint8Validator(1) },
         heartbeatType: { value: '' },
-        heartbeatAutopilot: { value: 'MAV_AUTOPILOT_INVALID' }
+        heartbeatAutopilot: { value: 'MAV_AUTOPILOT_INVALID' },
+        // Health-driven heartbeat (#225): defaults to the role preset
+        // (companion → on) at runtime; this editor default only covers a
+        // brand-new node before oneditprepare's role-change wiring runs.
+        healthDriven: { value: false }
       },
       label: function () {
         var ids =
@@ -49,6 +53,7 @@
         var $sysid = $('#node-config-input-sourceSystemId');
         var $compid = $('#node-config-input-sourceComponentId');
         var $hbType = $('#node-config-input-heartbeatType');
+        var $healthDriven = $('#node-config-input-healthDriven');
         var prevRole = $role.val() || 'gcs';
 
         function preset(role) {
@@ -74,6 +79,12 @@
             $hbType.val(next.heartbeatType);
           }
           $hbType.attr('placeholder', next.heartbeatType);
+          // Health-driven follows the same "only rewrite an untouched value"
+          // rule: only default it when it still matches the previous role's
+          // suggestion (an explicit user choice is left alone).
+          if ($healthDriven.prop('checked') === !!prev.healthDriven) {
+            $healthDriven.prop('checked', !!next.healthDriven);
+          }
           prevRole = role;
         }
         $role.on('change', applyRole);
@@ -128,6 +139,15 @@
   <div class="form-row">
     <label for="node-config-input-heartbeatAutopilot">HB Autopilot</label>
     <input type="text" id="node-config-input-heartbeatAutopilot" placeholder="MAV_AUTOPILOT_INVALID">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-healthDriven">Health-driven</label>
+    <input type="checkbox" id="node-config-input-healthDriven" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
+  <div class="form-tips" style="margin-top: 8px;">
+    <b>Health-driven</b> heartbeat (#225) maps this identity's advertised health onto the outbound
+    HEARTBEAT's <code>system_status</code> instead of always reporting <code>MAV_STATE_ACTIVE</code>.
+    On by default for the <b>Companion</b> role.
   </div>
   <div class="form-tips" style="margin-top: 8px;">
     MAVLink 2 <b>signing</b> is configured on the <b>Connection</b>, not here — a link has one
