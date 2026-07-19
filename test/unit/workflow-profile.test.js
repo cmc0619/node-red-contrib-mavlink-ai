@@ -245,3 +245,68 @@ test('broadcast and out-of-range targets skip the route check for the node guard
     (err) => err.code === 'ROUTE_REJECTED'
   );
 });
+
+test('a compid-0-only route cannot make a component-broadcast target viable', (t) => {
+  /**
+   * Codex review round 3 on #302: replies to a target_component-0 request
+   * come from REAL (nonzero) component ids. A route matching only compid 0
+   * itself (1:0) accepts no actual responder, so with unmatched 'reject' the
+   * workflow is still hopeless and must fail fast — while with unmatched
+   * 'default' real responders decode under the default profile, so the
+   * target is viable via the fallback.
+   */
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  const make = (unmatchedPolicy, id) => RED.create('mavlink-ai-connection', {
+    id, name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false,
+    routingMode: 'routed', unmatchedPolicy,
+    routeTable: JSON.stringify([{ sysid: 1, compid: 0, profile: 'p1' }])
+  });
+  const rejecting = make('reject', 'c1');
+  const defaulting = make('default', 'c2');
+  t.after(() => { RED.close(rejecting); RED.close(defaulting); });
+
+  const rej = rejecting.getRouteDecision({ sysid: 1, compid: 0 });
+  assert.strictEqual(rej.accepted, false, 'no real responder component can get through');
+
+  const def = defaulting.getRouteDecision({ sysid: 1, compid: 0 });
+  assert.strictEqual(def.accepted, true, 'real responders decode under the default profile');
+  assert.strictEqual(def.profile && def.profile.id, 'p1');
+});
+
+test('a compid-0-only accept filter rejects a component-broadcast target', (t) => {
+  /**
+   * Same round-3 case in single-profile mode: acceptedCompids [0] admits no
+   * real responder component, so (1, 0) must fail fast; adding any nonzero
+   * component to the filter makes it viable again.
+   */
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  const make = (acceptedCompids, id) => RED.create('mavlink-ai-connection', {
+    id, name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false,
+    routingMode: 'single-profile', acceptedSysids: '1', acceptedCompids
+  });
+  const zeroOnly = make('0', 'c1');
+  const zeroAndOne = make('0,1', 'c2');
+  t.after(() => { RED.close(zeroOnly); RED.close(zeroAndOne); });
+
+  const rej = zeroOnly.getRouteDecision({ sysid: 1, compid: 0 });
+  assert.strictEqual(rej.accepted, false);
+  assert.strictEqual(rej.reason, 'compid-rejected');
+
+  assert.strictEqual(zeroAndOne.getRouteDecision({ sysid: 1, compid: 0 }).accepted, true);
+});
