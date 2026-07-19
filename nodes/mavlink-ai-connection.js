@@ -1545,6 +1545,35 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
+     * Throttled warning for a mixed-version broadcast whose version group
+     * failed while its sibling went out (#199 review): the broadcast counts
+     * as sent (best-effort), but an entire wire-version group silently
+     * missing heartbeats/commands is a half-dead fleet link. Same throttle
+     * shape as the transport's sendPartialFailure warning (#148): warn when
+     * the failing set changes or once a minute while it persists —
+     * broadcasts fire at heartbeat rate.
+     *
+     * @param {Array<{version: string, reason: *}>} failed
+     */
+    let lastMixedWarnKey = '';
+    let lastMixedWarnAt = 0;
+    node._warnMixedPartialFailure = (failed) => {
+      const key = failed
+        .map(({ version, reason }) => `${version}:${(reason && (reason.code || reason.message)) || reason}`)
+        .sort()
+        .join('|');
+      const now = Date.now();
+      if (key === lastMixedWarnKey && now - lastMixedWarnAt < 60000) {
+        return;
+      }
+      lastMixedWarnKey = key;
+      lastMixedWarnAt = now;
+      node.warn(
+        `mavlink-ai-connection '${node.name || node.id}': mixed-version broadcast partially failed (${key})`
+      );
+    };
+
+    /**
      * Encode and enqueue a normalized outbound message (§14.2), filling target
      * defaults from the effective Vehicle Profile and stamping the source
      * identity of the resolved Local Identity (#228).
@@ -1633,8 +1662,9 @@ module.exports = function registerMavlinkAiConnection(RED) {
        *     profile default target would frame an untargeted HEARTBEAT as that
        *     peer's version (e.g. v2) and a learned v1-only vehicle would miss
        *     it. With no target the encoder uses the link's detected default.
-       * (A genuinely mixed v1/v2 fleet still can't be reached by a single
-       * broadcast frame — that's inherent to MAVLink versioning, not this path.)
+       * A genuinely mixed v1/v2 fleet can't be reached by a single broadcast
+       * frame (one frame carries one magic byte), so that case branches below
+       * into one encode per detected version group (#199).
        */
       const routingTargetSystem = codec.addressesTarget(message.name) ? targetSystem : undefined;
       const { sysid, compid } = identity.getIdentity();
@@ -1647,21 +1677,120 @@ module.exports = function registerMavlinkAiConnection(RED) {
         signingPolicy && signingPolicy.signOutbound && signingPolicy.key
           ? { key: signingPolicy.key, linkId: node.signingLinkId }
           : null;
+      const encodeOpts = {
+        sysid,
+        compid,
+        link: node._link,
+        signing,
+        targetSystem: routingTargetSystem,
+        targetComponent,
+        /**
+         * Exact IEEE-754 bit patterns for float fields (PX4 byte-union
+         * params, #146) — see MavlinkCodec#encode.
+         */
+        exactFloatBits: message.exactFloatBits
+      };
+      /**
+       * Broadcast to a mixed v1/v2 fleet (#199): one frame per detected wire
+       * version, each routed to exactly that group's sysids, with a
+       * version-suffixed coalesce key so the two heartbeat variants don't
+       * cancel each other in the queue. Applies only when the version can
+       * actually vary AND the split can be delivered — a broadcast
+       * (untargeted, or explicitly addressed to target_system 0, which the
+       * transport also fans to every peer), 'auto' versioning, no signing
+       * (signed frames are v2-only by spec, so a signed fleet is never
+       * version-mixed on the wire), and a transport that can route by sysid
+       * (udp in peer-learning mode). On a shared medium — serial, tcp, udp
+       * with a fixed destination — both encodings would land on the same
+       * stream and MAVLink2 peers (which parse v1 frames too) would see the
+       * broadcast twice, so those keep the single-encode path. Everything
+       * else — the common single-version fleet included — keeps the
+       * original one-encode path byte for byte.
+       */
+      const isBroadcast = routingTargetSystem === undefined || Number(routingTargetSystem) === 0;
+      let mixed =
+        isBroadcast && !signing && codec.version === 'auto' && node._transport && node._transport.canRouteBySysid
+          ? node._link.mixedVersionGroups()
+          : null;
+      /**
+       * Even in peer-learning mode both version groups can sit behind ONE
+       * learned endpoint (a MAVLink router/bridge), and an endpoint must
+       * receive exactly one frame — never both encodings, which would
+       * double-deliver to MAVLink2 peers (they parse v1 frames too). Since
+       * v1 framing is parseable by every peer, v2 sysids whose endpoint is
+       * shared with the v1 group ride the v1 frame; sysids on their own
+       * endpoints keep their own version, so a bridge elsewhere in the
+       * fleet never degrades delivery to disjoint peers (#303 review).
+       */
+      if (mixed && typeof node._transport.endpointKeyForSysid === 'function') {
+        const v1keys = new Set(
+          mixed.v1.map((s) => node._transport.endpointKeyForSysid(s)).filter((k) => k != null)
+        );
+        const bridgedV2 = [];
+        const pureV2 = [];
+        for (const s of mixed.v2) {
+          const key = node._transport.endpointKeyForSysid(s);
+          (key != null && v1keys.has(key) ? bridgedV2 : pureV2).push(s);
+        }
+        if (bridgedV2.length > 0) {
+          mixed = { v1: [...mixed.v1, ...bridgedV2], v2: pureV2 };
+        }
+      }
+      if (mixed) {
+        const buffers = [];
+        try {
+          for (const version of ['v1', 'v2']) {
+            /** A group emptied by the bridge merge above sends nothing. */
+            if (mixed[version].length === 0) {
+              continue;
+            }
+            buffers.push({
+              version,
+              sysids: mixed[version],
+              buffer: codec.encode(message.name, fields, { ...encodeOpts, forceVersion: version })
+            });
+          }
+        } catch (err) {
+          return Promise.reject(toMavlinkError(err, 'ENCODE_FAILED'));
+        }
+        /**
+         * Best-effort, mirroring UdpTransport#send's own fan-out (#148,
+         * CodeRabbit review): one group's frame may already be on the wire
+         * when the other's enqueue fails, so rejecting the whole send would
+         * invite a retry that duplicates delivery to the group that
+         * succeeded. The send resolves while at least one group went out
+         * and rejects only when every group failed. A PARTIAL failure —
+         * an entire wire-version group missing the broadcast — is a
+         * half-dead fleet link and is surfaced as a throttled warning,
+         * like the transport's own partial fan-out failures.
+         */
+        return Promise.allSettled(
+          buffers.map(({ version, sysids: groupSysids, buffer: groupBuffer }) =>
+            node._queue.enqueue(
+              groupBuffer,
+              options.priority,
+              { sysids: groupSysids },
+              {
+                coalesceKey: options.coalesceKey != null ? `${options.coalesceKey}:${version}` : undefined,
+                onWrite: () => logProtocolDebug(profile, 'send', message.name, undefined, undefined)
+              }
+            )
+          )
+        ).then((results) => {
+          const failed = results
+            .map((r, i) => (r.status === 'rejected' ? { version: buffers[i].version, reason: r.reason } : null))
+            .filter(Boolean);
+          if (failed.length === results.length) {
+            throw failed[0].reason;
+          }
+          if (failed.length > 0) {
+            node._warnMixedPartialFailure(failed);
+          }
+        });
+      }
       let buffer;
       try {
-        buffer = codec.encode(message.name, fields, {
-          sysid,
-          compid,
-          link: node._link,
-          signing,
-          targetSystem: routingTargetSystem,
-          targetComponent,
-          /**
-           * Exact IEEE-754 bit patterns for float fields (PX4 byte-union
-           * params, #146) — see MavlinkCodec#encode.
-           */
-          exactFloatBits: message.exactFloatBits
-        });
+        buffer = codec.encode(message.name, fields, encodeOpts);
       } catch (err) {
         return Promise.reject(toMavlinkError(err, 'ENCODE_FAILED'));
       }
