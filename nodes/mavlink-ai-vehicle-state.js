@@ -268,13 +268,16 @@ module.exports = function (RED) {
 
     /** Handle on-demand snapshot requests via 'snapshot' command. */
     node.on('input', (msg, send, done) => {
-      const command = msg.command || (msg.payload && msg.payload.command);
-      const health = msg.health !== undefined ? msg.health : (msg.payload && msg.payload.health);
-      // Gate on `!= null` (not `!== undefined`): a null `msg.payload` makes the
-      // `msg.payload && msg.payload.health` fallback evaluate to `null`, which
-      // would otherwise pass an `!== undefined` gate and mis-route an ordinary
-      // (e.g. snapshot or empty) message into the health path — firing a
-      // spurious INVALID_HEALTH error and discarding the real request.
+      // Only read command/health from an *object* payload. A falsey scalar
+      // payload (false / 0 / '') or a null payload would otherwise make the
+      // `msg.payload && msg.payload.health` fallback evaluate to that scalar
+      // (or null) and slip an ordinary/snapshot request into the health path,
+      // firing a spurious INVALID_HEALTH error and discarding the real request.
+      const payloadObj = msg.payload && typeof msg.payload === 'object' ? msg.payload : null;
+      const command = msg.command || (payloadObj && payloadObj.command);
+      const health = msg.health !== undefined ? msg.health : (payloadObj ? payloadObj.health : undefined);
+      // Gate on `!= null` so an explicit null `msg.health` (or an absent one
+      // with a non-object payload) is treated as "no health assertion".
       if (health != null) {
         if (!node.connection || typeof node.connection.setAdvertisedHealth !== 'function') {
           send([null, { topic: 'mavlink/error', payload: errorPayload({
@@ -284,7 +287,7 @@ module.exports = function (RED) {
           done();
           return;
         }
-        const p = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
+        const p = payloadObj || {};
         try {
           node.connection.setAdvertisedHealth(msg.identity !== undefined ? msg.identity : p.identity, {
             health,

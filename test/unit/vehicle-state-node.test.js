@@ -239,6 +239,21 @@ test('a null-payload message does not spuriously trigger the health path (#307 g
   assert.ok(!err || err.payload.code !== 'INVALID_HEALTH', 'no spurious INVALID_HEALTH error emitted');
 });
 
+test('a falsey scalar payload does not spuriously trigger the health path (#307 codex P2)', async (t) => {
+  const { RED, conn, node } = setup();
+  t.after(() => RED.close(node));
+  const calls = [];
+  conn.setAdvertisedHealth = (ref, input) => { calls.push({ ref, input }); return input; };
+  /** false / 0 / '' payloads must not slip through the `!= null` gate: only an
+   * object payload can carry a health field. */
+  for (const scalar of [false, 0, '']) {
+    const { collected } = await RED.inject(node, { command: 'snapshot', payload: scalar });
+    const err = collected.map((o) => o[1]).find(Boolean);
+    assert.ok(!err || err.payload.code !== 'INVALID_HEALTH', `payload ${JSON.stringify(scalar)}: no spurious INVALID_HEALTH`);
+  }
+  assert.strictEqual(calls.length, 0, 'no health assertion attempted for any falsey scalar payload');
+});
+
 test('a rejected health assertion surfaces a structured error on output 2', async (t) => {
   const { RED, conn, node } = setup();
   t.after(() => RED.close(node));

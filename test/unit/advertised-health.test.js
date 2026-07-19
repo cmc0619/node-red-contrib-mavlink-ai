@@ -19,6 +19,12 @@ test('normalizeAssertion requires a positive ttl_s for a non-fatal assertion (fa
   assert.throws(() => normalizeAssertion({ health: 'nominal', ttl_s: -5 }, 0), (e) => e.code === 'INVALID_HEALTH');
 });
 
+test('normalizeAssertion rejects a ttl_s whose expiry overflows to non-finite (fail-closed, #307 review)', () => {
+  // 1e306 is finite and positive, but 1e306 * 1000 = 1e309 > Number.MAX_VALUE,
+  // so `now + ttl*1000` rounds to Infinity — an expiry that never fails closed.
+  assert.throws(() => normalizeAssertion({ health: 'nominal', ttl_s: 1e306 }, 0), (e) => e.code === 'INVALID_HEALTH');
+});
+
 test('normalizeAssertion allows fatal with no ttl_s (persists until replaced)', () => {
   const r = normalizeAssertion({ health: 'fatal', note: 'planner crash' }, 500);
   assert.deepStrictEqual(r, { state: 'fatal', note: 'planner crash', expires_at: null });
