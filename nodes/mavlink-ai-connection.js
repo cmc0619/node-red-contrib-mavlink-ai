@@ -1633,8 +1633,9 @@ module.exports = function registerMavlinkAiConnection(RED) {
        *     profile default target would frame an untargeted HEARTBEAT as that
        *     peer's version (e.g. v2) and a learned v1-only vehicle would miss
        *     it. With no target the encoder uses the link's detected default.
-       * (A genuinely mixed v1/v2 fleet still can't be reached by a single
-       * broadcast frame — that's inherent to MAVLink versioning, not this path.)
+       * A genuinely mixed v1/v2 fleet can't be reached by a single broadcast
+       * frame (one frame carries one magic byte), so that case branches below
+       * into one encode per detected version group (#199).
        */
       const routingTargetSystem = codec.addressesTarget(message.name) ? targetSystem : undefined;
       const { sysid, compid } = identity.getIdentity();
@@ -1647,21 +1648,64 @@ module.exports = function registerMavlinkAiConnection(RED) {
         signingPolicy && signingPolicy.signOutbound && signingPolicy.key
           ? { key: signingPolicy.key, linkId: node.signingLinkId }
           : null;
+      const encodeOpts = {
+        sysid,
+        compid,
+        link: node._link,
+        signing,
+        targetSystem: routingTargetSystem,
+        targetComponent,
+        /**
+         * Exact IEEE-754 bit patterns for float fields (PX4 byte-union
+         * params, #146) — see MavlinkCodec#encode.
+         */
+        exactFloatBits: message.exactFloatBits
+      };
+      /**
+       * Broadcast to a mixed v1/v2 fleet (#199): one frame per detected wire
+       * version, each routed to exactly that group's sysids, with a
+       * version-suffixed coalesce key so the two heartbeat variants don't
+       * cancel each other in the queue. Applies only when the version can
+       * actually vary — an untargeted send, 'auto' versioning, and no
+       * signing (signed frames are v2-only by spec, so a signed fleet is
+       * never version-mixed on the wire). Everything else — the common
+       * single-version fleet included — keeps the original one-encode path
+       * byte for byte.
+       */
+      const mixed =
+        routingTargetSystem === undefined && !signing && codec.version === 'auto'
+          ? node._link.mixedVersionGroups()
+          : null;
+      if (mixed) {
+        const buffers = [];
+        try {
+          for (const version of ['v1', 'v2']) {
+            buffers.push({
+              version,
+              sysids: mixed[version],
+              buffer: codec.encode(message.name, fields, { ...encodeOpts, forceVersion: version })
+            });
+          }
+        } catch (err) {
+          return Promise.reject(toMavlinkError(err, 'ENCODE_FAILED'));
+        }
+        return Promise.all(
+          buffers.map(({ version, sysids: groupSysids, buffer: groupBuffer }) =>
+            node._queue.enqueue(
+              groupBuffer,
+              options.priority,
+              { sysids: groupSysids },
+              {
+                coalesceKey: options.coalesceKey != null ? `${options.coalesceKey}:${version}` : undefined,
+                onWrite: () => logProtocolDebug(profile, 'send', message.name, undefined, undefined)
+              }
+            )
+          )
+        ).then(() => undefined);
+      }
       let buffer;
       try {
-        buffer = codec.encode(message.name, fields, {
-          sysid,
-          compid,
-          link: node._link,
-          signing,
-          targetSystem: routingTargetSystem,
-          targetComponent,
-          /**
-           * Exact IEEE-754 bit patterns for float fields (PX4 byte-union
-           * params, #146) — see MavlinkCodec#encode.
-           */
-          exactFloatBits: message.exactFloatBits
-        });
+        buffer = codec.encode(message.name, fields, encodeOpts);
       } catch (err) {
         return Promise.reject(toMavlinkError(err, 'ENCODE_FAILED'));
       }

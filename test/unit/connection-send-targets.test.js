@@ -224,14 +224,19 @@ test('under auto version, a broadcast is framed with the connection default, not
   conn._queue = { enqueue(buffer, priority, meta) { sent.push({ buffer, meta }); return Promise.resolve(); }, clear() {} };
   t.after(() => RED.close(conn));
 
-  /** The default target sysid 7 speaks v2, but the connection's last-detected
-   * default is v1. A broadcast must use the connection default, not sysid 7's. */
+  /** The default target sysid 7 speaks v2 and sysid 9 v1. A broadcast must
+   * not be framed for the profile-default target (#148) — with the fleet now
+   * mixed it is encoded once per version group instead (#199), each group
+   * routed to its own sysids. */
   conn._link.noteInboundMagic(0xfd, 7);
   conn._link.noteInboundMagic(0xfe, 9);
 
   await conn.send({ name: 'HEARTBEAT', fields: { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 } });
-  assert.strictEqual(sent[sent.length - 1].meta.targetSystem, undefined);
-  assert.strictEqual(sent[sent.length - 1].buffer[0], 0xfe, 'broadcast framed with the connection default (v1), not sysid 7 (v2)');
+  assert.strictEqual(sent.length, 2, 'mixed fleet: one frame per version group');
+  const v1send = sent.find((s) => s.buffer[0] === 0xfe);
+  const v2send = sent.find((s) => s.buffer[0] === 0xfd);
+  assert.deepStrictEqual(v1send.meta.sysids, [9], 'v1 frame routed to the v1 peer only');
+  assert.deepStrictEqual(v2send.meta.sysids, [7], 'v2 frame routed to the v2 peer only');
 
   /** An addressed message to sysid 7 still uses that peer's detected v2 (0xfd). */
   await conn.send({ name: 'COMMAND_LONG', fields: { command: 512, confirmation: 0, target_system: 7 } });
