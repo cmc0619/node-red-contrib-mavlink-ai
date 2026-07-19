@@ -1499,19 +1499,20 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node.unsubscribe = (id) => node.subscriptions.unsubscribe(id);
 
     /**
-     * Resolve which profile owns a packet identity, or null if rejected.
-     *
-     * Inbound routing maps remote packet identities to Vehicle Profiles for
-     * decode/interpretation only — it never selects the local identity used
-     * for outbound traffic (#228).
+     * The full routing decision for a WORKFLOW target, reject reason
+     * included. Workflow nodes use this to fail fast when a target's inbound
+     * replies would be dropped by routing (#196), and to adopt the routed
+     * profile of an accepted target. Inbound routing maps remote packet
+     * identities to Vehicle Profiles for decode/interpretation only — it
+     * never selects the local identity used for outbound traffic (#228).
+     * Component 0 targets are component broadcasts and use any-responder
+     * semantics (see PacketRouter#routeWorkflowTarget).
      *
      * @param {{sysid: number, compid: number}} packetOrHeader
-     * @returns {?object}
+     * @returns {{accepted: boolean, profile: *, reason?: string}}
      */
-    node.getProfileForPacket = (packetOrHeader) => {
-      const decision = node._router.route(packetOrHeader.sysid, packetOrHeader.compid);
-      return decision.accepted ? decision.profile : null;
-    };
+    node.getRouteDecision = (packetOrHeader) =>
+      node._router.routeWorkflowTarget(packetOrHeader.sysid, packetOrHeader.compid);
 
     /**
      * Acquire a named runtime lock (e.g. mission workflow).
@@ -2673,7 +2674,12 @@ function registerNoop(node) {
   };
   node.getDefaultIdentity = () => node.localIdentity || null;
   node.identityBindingCount = () => 0;
-  node.getProfileForPacket = () => null;
+  /**
+   * Pass-through: an uninitialised connection has no router, and a workflow
+   * against it should surface CONNECTION_INVALID from resolveOutboundIdentity
+   * or send — not a misleading ROUTE_REJECTED.
+   */
+  node.getRouteDecision = () => ({ accepted: true, profile: null });
   node.acquireLock = () => {
     throw new MavlinkError('CONNECTION_INVALID', `Connection '${node.name}' is not initialised.`);
   };

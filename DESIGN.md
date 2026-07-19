@@ -755,7 +755,7 @@ connection.sendRaw(buffer, options)
 connection.subscribe(filter, callback)
 connection.unsubscribe(subscriptionId)
 connection.getStatus()
-connection.getProfileForPacket(packet)
+connection.getRouteDecision(packet) // {accepted, profile, reason?} (#196)
 connection.resolveProfile(id) // throws PROFILE_UNRESOLVED
 connection.acquireLock(lockName, owner, options)
 connection.releaseLock(lockName, owner)

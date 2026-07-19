@@ -36,6 +36,8 @@ function fakeConnection() {
   };
   // v3: the connection resolves the outbound Local Identity (#228).
   conn.resolveOutboundIdentity = () => fakeIdentity();
+  /** #196 routing API (required by the contract): accept everything. */
+  conn.getRouteDecision = () => ({ accepted: true, profile: null });
   /** #233 capability API: tests set conn.capabilities to simulate a report. */
   conn.capabilities = undefined;
   conn.capabilityProbes = [];
@@ -282,7 +284,7 @@ test('param node route-resolves the target to its profile when no override is se
     getDialect: () => ({ enums: loadDialect('ardupilotmega').enums }),
     getDefaults: () => ({ defaultTargetSystem: 1, defaultTargetComponent: 1, firmware: 'generic' })
   };
-  conn.getProfileForPacket = ({ sysid }) => (sysid === 2 ? routed : conn.profile);
+  conn.getRouteDecision = ({ sysid }) => ({ accepted: true, profile: sysid === 2 ? routed : conn.profile });
   await run(node, { payload: { target_system: 2 } }, () => conn.deliver(paramValue({ value: 1100, sysid: 2 })));
   assert.strictEqual(conn.sent[0].vehicleProfile, 'p_routed');
   assert.strictEqual(conn.sent[0].fields.target_system, 2);

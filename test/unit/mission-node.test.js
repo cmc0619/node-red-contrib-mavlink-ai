@@ -27,6 +27,8 @@ function setup() {
     RED.nodes.createNode(this, config);
     this.name = 'conn';
     this.profile = profile;
+    /** #196 routing API (required by the contract): accept everything. */
+    this.getRouteDecision = () => ({ accepted: true, profile: null });
     this.acquireLock = () => {
       throw new Error('acquireLock must not be reached for invalid targets');
     };
@@ -148,6 +150,8 @@ function setupWithSends({ profile, config } = {}) {
     lockNames: [],
     resolveProfile: (ref) => (profile && ref === profile.id ? profile : { name: ref }),
     resolveOutboundIdentity: () => fakeIdentity(),
+    /** #196 routing API (required by the contract): accept everything. */
+    getRouteDecision: () => ({ accepted: true, profile: null }),
     acquireLock(name) {
       conn.lockNames.push(name);
       return { release: () => {} };
@@ -191,7 +195,7 @@ test('mission node rejects an unresolvable profile with PROFILE_UNRESOLVED', asy
 test('mission node route-resolves the target profile when no override is set', async () => {
   const routed = profileStub('p_routed', 'Routed Rally', {});
   const { RED, conn, node } = setupWithSends({ config: { missionType: 'rally' } });
-  conn.getProfileForPacket = ({ sysid }) => (sysid === 2 ? routed : conn.profile);
+  conn.getRouteDecision = ({ sysid }) => ({ accepted: true, profile: sysid === 2 ? routed : conn.profile });
   await RED.inject(node, { payload: { action: 'clear', target_system: 2 } });
   const sent = conn.sent[0];
   assert.strictEqual(sent.vehicleProfile, 'p_routed');
@@ -236,6 +240,8 @@ test('the mission lock is released exactly once when the success-path send throw
     sent: [],
     resolveProfile: (ref) => (ref === 'p1' ? defaultProfile : { name: ref }),
     resolveOutboundIdentity: () => fakeIdentity(),
+    /** #196 routing API (required by the contract): accept everything. */
+    getRouteDecision: () => ({ accepted: true, profile: null }),
     acquireLock(key) {
       const handle = locks.acquire(key, 'm2');
       return {
@@ -294,4 +300,48 @@ test('mission node reports an unresolved Local Identity on its error output', as
   assert.strictEqual(collected[0][2].topic, 'mavlink/error');
   assert.strictEqual(collected[0][2].payload.code, 'LOCAL_IDENTITY_UNRESOLVED');
   assert.strictEqual(conn.sent.length, 0, 'no mission message is sent when identity resolution fails');
+});
+
+test('mission workflow to a route-rejected target fails fast, zero bytes on the wire (#196)', async () => {
+  /**
+   * Routed connection, unmatched policy 'reject': inbound packets from sysid 5
+   * are dropped before decode, so a mission workflow addressed at it can never
+   * see a reply. It must fail with ROUTE_REJECTED before sending anything —
+   * not run the full retry schedule into MISSION_TIMEOUT.
+   */
+  const { RED, conn, node } = setupWithSends({ config: { action: 'download' } });
+  conn.getRouteDecision = ({ sysid }) =>
+    sysid === 5
+      ? { accepted: false, profile: null, reason: 'unmatched-reject' }
+      : { accepted: true, profile: conn.profile };
+  const { collected } = await RED.inject(node, { payload: { action: 'download', target_system: 5 } });
+  const err = collected[0][2];
+  assert.strictEqual(err.topic, 'mavlink/error');
+  assert.strictEqual(err.payload.code, 'ROUTE_REJECTED');
+  assert.strictEqual(conn.sent.length, 0, 'no mission message may reach a route-rejected target');
+  assert.strictEqual(conn.lockNames.length, 0, 'the workflow lock is never taken for a doomed workflow');
+});
+
+test('a broadcast target still reports BROADCAST_NO_ACK on a route-rejecting connection (#302 review)', async () => {
+  /**
+   * The route fail-fast must not shadow the destructive-broadcast guard:
+   * target_system 0 is invalid input, and the safety-specific message wins
+   * over a routing hint even when the connection would reject sysid 0.
+   */
+  const { RED, conn, node } = setupWithSends();
+  conn.getRouteDecision = () => ({ accepted: false, profile: null, reason: 'unmatched-reject' });
+  const { collected } = await RED.inject(node, { payload: { action: 'clear', target_system: 0 } });
+  const err = collected[0][2];
+  assert.strictEqual(err.payload.code, 'BROADCAST_NO_ACK');
+  assert.strictEqual(conn.sent.length, 0);
+});
+
+test('a malformed target_component reports INVALID_FIELD on a route-rejecting connection (#302 review)', async () => {
+  /** Number('') coerces to 0 — the route check must not shadow strict validation. */
+  const { RED, conn, node } = setupWithSends();
+  conn.getRouteDecision = () => ({ accepted: false, profile: null, reason: 'unmatched-reject' });
+  const { collected } = await RED.inject(node, { payload: { action: 'clear', target_component: '' } });
+  const err = collected[0][2];
+  assert.strictEqual(err.payload.code, 'INVALID_FIELD');
+  assert.strictEqual(conn.sent.length, 0);
 });
