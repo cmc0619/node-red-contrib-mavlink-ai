@@ -37,6 +37,7 @@ runtime compiler never fetches remote includes). Each snapshot records its
 provenance (repo, ref, resolved commit, timestamp, per-file SHA-256), and the
 editor can show whether a same-named bundled dialect exists plus a message/enum
 diff against it. See `lib/dialects/xml-catalog.js`.
+
 ### Trusted operator boundary
 
 This package is for a trusted Node-RED operator. The Node-RED editor and its
@@ -53,7 +54,6 @@ downloaded XML as code. Vehicle-control safety remains a separate concern:
 untrusted MAVLink data, stale control, malformed commands, and unsafe target
 selection must still fail closed.
 
-
 Remaining release/readiness items live in the open sections of
 [`ROADMAP.md`](ROADMAP.md) and the issue tracker. (`RELEASE_SCOPE.md` records
 resolved design decisions, not open work.)
@@ -64,8 +64,7 @@ resolved design decisions, not open work.)
   `auto` on the profile).
 - **Multiple connection types**: UDP (in/out/peer), TCP (client/server), and
   optional/lazy-loaded serial.
-- **Three-node architecture (#228)**: **Local Identity** (source ids, heartbeat,
-  signing policy), **Vehicle Profile** (dialect, firmware, vehicle family, target
+- **Three-node architecture (#228)**: **Local Identity** (source ids, heartbeat), **Vehicle Profile** (dialect, firmware, vehicle family, target
   defaults, mission defaults), and **Connection** — so selecting a vehicle can
   never change who Node-RED is on the wire, and one link can deliberately act as
   multiple participants.
