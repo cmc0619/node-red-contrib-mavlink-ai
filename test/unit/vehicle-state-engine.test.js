@@ -77,6 +77,16 @@ test('ingest rejects null/blank/non-numeric sysid and creates no phantom vehicle
   );
 });
 
+test('an autopilot-owned message from a non-autopilot component creates no ghost vehicle', () => {
+  const engine = new VehicleStateEngine();
+  /** A smart battery (compid 180) reports BATTERY_STATUS but never heartbeats. */
+  assert.strictEqual(engine.ingest({ name: 'BATTERY_STATUS', sysid: 7, compid: 180, fields: { id: 0, voltages: [12600] } }), null);
+  assert.deepStrictEqual(engine.sysids(), [], 'no phantom vehicle 7 with autopilot_seen:false');
+  /** But the autopilot on the same sysid is tracked normally. */
+  engine.ingest({ name: 'HEARTBEAT', sysid: 7, compid: 1, fields: { type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 } });
+  assert.deepStrictEqual(engine.sysids(), [7]);
+});
+
 test('position, home, and gps sections decode units and carry independent staleness', () => {
   const c = clock();
   const engine = new VehicleStateEngine({ staleMs: 5000, now: c.now });
@@ -162,6 +172,21 @@ test('an all-zero/zero-padded BATTERY_STATUS voltage array reports null, not 0 V
   engine.ingest({ name: 'BATTERY_STATUS', sysid: 1, compid: 1, fields: { id: 0, voltages: [4200, 4200, 4200, 0, 0, 0, 0, 0, 0, 0], current_battery: -1, battery_remaining: 90 } });
   s = engine.snapshot(1);
   assert.strictEqual(s.battery.batteries[0].voltage_v, 12.6, 'zero padding after real cells contributes nothing');
+});
+
+test('a 12S pack sums voltages_ext cells 11-14 into the pack total', () => {
+  const c = clock();
+  const engine = new VehicleStateEngine({ now: c.now });
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  /** 10 cells at 4.2 V in voltages, 2 more in voltages_ext (0 = unused there). */
+  engine.ingest({ name: 'BATTERY_STATUS', sysid: 1, compid: 1, fields: {
+    id: 0,
+    voltages: [4200, 4200, 4200, 4200, 4200, 4200, 4200, 4200, 4200, 4200],
+    voltages_ext: [4200, 4200, 0, 0],
+    current_battery: -1, battery_remaining: 88
+  } });
+  const s = engine.snapshot(1);
+  assert.strictEqual(s.battery.batteries[0].voltage_v, 50.4, '12 cells * 4.2 V = 50.4 V');
 });
 
 test('a second battery with a different id appends rather than overwriting', () => {
@@ -258,6 +283,23 @@ test('EXTENDED_SYS_STATE sets the landed state', () => {
   assert.strictEqual(engine.snapshot(1).landed.state, 'unknown');
   engine.ingest({ name: 'EXTENDED_SYS_STATE', sysid: 1, compid: 1, fields: { landed_state: 2 } });
   assert.strictEqual(engine.snapshot(1).landed.state, 'in_air');
+});
+
+test('landed carries its own staleness once EXTENDED_SYS_STATE stops', () => {
+  const c = clock();
+  const engine = new VehicleStateEngine({ staleMs: 5000, now: c.now });
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  /** Never-seen landed is 'unknown' and not stale. */
+  assert.strictEqual(engine.snapshot(1).landed.stale, false);
+  engine.ingest({ name: 'EXTENDED_SYS_STATE', sysid: 1, compid: 1, fields: { landed_state: 1 } });
+  assert.strictEqual(engine.snapshot(1).landed.stale, false, 'fresh landed is not stale');
+  /** Heartbeats continue but EXTENDED_SYS_STATE stops. */
+  c.advance(6000);
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  const s = engine.snapshot(1);
+  assert.strictEqual(s.connected, true, 'heartbeat is fresh');
+  assert.strictEqual(s.landed.stale, true, 'but landed has gone stale');
+  assert.strictEqual(s.landed.state, 'on_ground', 'the last value is still reported');
 });
 
 test('statustext keeps a capped newest-last ring with severity names', () => {
