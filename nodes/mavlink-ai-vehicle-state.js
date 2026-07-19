@@ -89,7 +89,11 @@ module.exports = function (RED) {
         // subscription callback and swallow state updates — fall back to no
         // capabilities instead.
         try {
-          caps = node.connection.getVehicleCapabilities(snap.sysid, 1);
+          // compid 0 = "autopilot (compid 1) first, then any component of this
+          // system". Capabilities are a vehicle-level property, so a report
+          // cached under a non-autopilot responder (routed/component-variant
+          // setups) still resolves instead of falling to null.
+          caps = node.connection.getVehicleCapabilities(snap.sysid, 0);
         } catch {
           caps = null;
         }
@@ -257,6 +261,12 @@ module.exports = function (RED) {
     node.on('input', (msg, send, done) => {
       const command = msg.command || (msg.payload && msg.payload.command);
       if (command === 'snapshot') {
+        // Accept the scope sysid from either top-level msg.sysid or the same
+        // payload object that carries the command (msg.payload.sysid), so a
+        // single-object `{ command, sysid }` request scopes correctly.
+        const rawSysid = msg.sysid !== undefined
+          ? msg.sysid
+          : (msg.payload && msg.payload.sysid);
         if (node._configError) {
           send([null, { topic: 'mavlink/error', payload: errorPayload({
             node: 'mavlink-ai-vehicle-state',
@@ -264,7 +274,7 @@ module.exports = function (RED) {
             message: `mavlink-ai-vehicle-state: ${node._configError}`
           }) }, null]);
         } else if (engine) {
-          emitSnapshot(msg.sysid !== undefined ? Number(msg.sysid) : undefined, send);
+          emitSnapshot(rawSysid !== undefined ? Number(rawSysid) : undefined, send);
         } else {
           // Valid config, but the connection node has not resolved yet, so
           // there is no engine to snapshot. Surface it rather than dropping

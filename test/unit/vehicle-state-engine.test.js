@@ -149,6 +149,19 @@ test('per-cell BATTERY_STATUS voltages sum to the pack total', () => {
   assert.strictEqual(s.battery.batteries[0].voltage_v, 12.6, 'three 4.2 V cells sum to 12.6 V, not just cell 0');
 });
 
+test('an all-zero/zero-padded BATTERY_STATUS voltage array reports null, not 0 V', () => {
+  const c = clock();
+  const engine = new VehicleStateEngine({ now: c.now });
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  engine.ingest({ name: 'BATTERY_STATUS', sysid: 1, compid: 1, fields: { id: 0, voltages: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], current_battery: -1, battery_remaining: -1 } });
+  let s = engine.snapshot(1);
+  assert.strictEqual(s.battery.batteries[0].voltage_v, null, 'no live cell → null, not a phantom 0 V critical reading');
+  /** Zero-padding after real cells must not corrupt the sum. */
+  engine.ingest({ name: 'BATTERY_STATUS', sysid: 1, compid: 1, fields: { id: 0, voltages: [4200, 4200, 4200, 0, 0, 0, 0, 0, 0, 0], current_battery: -1, battery_remaining: 90 } });
+  s = engine.snapshot(1);
+  assert.strictEqual(s.battery.batteries[0].voltage_v, 12.6, 'zero padding after real cells contributes nothing');
+});
+
 test('a second battery with a different id appends rather than overwriting', () => {
   const c = clock();
   const engine = new VehicleStateEngine({ now: c.now });

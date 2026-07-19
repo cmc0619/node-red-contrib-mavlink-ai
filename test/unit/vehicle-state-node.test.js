@@ -83,6 +83,28 @@ test('a bigint capability bitmask is rendered JSON-safe before it leaves the nod
   assert.doesNotThrow(() => JSON.stringify(snapMsg.payload), 'snapshot survives JSON serialization');
 });
 
+test('a snapshot command scopes to payload.sysid, not just top-level msg.sysid', async (t) => {
+  const { RED, conn, node } = setup();
+  t.after(() => RED.close(node));
+  conn.deliver(hb(1));
+  conn.deliver(hb(2));
+  const { collected } = await RED.inject(node, { payload: { command: 'snapshot', sysid: 2 } });
+  const snaps = collected.map((o) => o[1]).filter(Boolean);
+  assert.strictEqual(snaps.length, 1, 'exactly one vehicle snapshotted');
+  assert.strictEqual(snaps[0].payload.sysid, 2, 'the requested sysid, not every vehicle');
+});
+
+test('capabilities are looked up with the system-wide component (compid 0)', async (t) => {
+  const { RED, conn, node } = setup();
+  t.after(() => RED.close(node));
+  const compids = [];
+  conn.getVehicleCapabilities = (sysid, compid) => { compids.push(compid); return undefined; };
+  conn.deliver(hb(1));
+  await RED.inject(node, { command: 'snapshot' });
+  assert.ok(compids.length > 0, 'capabilities were queried');
+  assert.ok(compids.every((c) => c === 0), 'always queried with compid 0 (autopilot-first-then-any)');
+});
+
 test('a throwing getVehicleCapabilities does not break snapshot emission', async (t) => {
   const { RED, conn, node } = setup();
   t.after(() => RED.close(node));
