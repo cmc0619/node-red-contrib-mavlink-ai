@@ -21,6 +21,12 @@ const STATE_MESSAGES = [
 const CHANGE_TICK_MS = 1000;
 
 module.exports = function (RED) {
+  /**
+   * Monitors vehicle state (heartbeat, position, status, battery, etc.)
+   * emitting transition edges and snapshots; filters by sysid if configured.
+   *
+   * @param {object} config
+   */
   function VehicleStateNode(config) {
     RED.nodes.createNode(this, config);
     const node = this;
@@ -53,6 +59,7 @@ module.exports = function (RED) {
 
     const wanted = (sysid) => allow.size === 0 || allow.has(sysid);
 
+    /** Repaint the status badge with vehicle count and connection status. */
     function badge() {
       if (!engine) {
         return;
@@ -62,7 +69,12 @@ module.exports = function (RED) {
       node.status({ fill: snaps.length ? 'green' : 'grey', shape: 'dot', text: `${snaps.length} vehicles · ${connected} connected` });
     }
 
-    /** Attach capabilities from the connection's #233 cache (engine never parses it). */
+    /**
+     * Merge capabilities from the connection's #233 cache onto a snapshot.
+     *
+     * @param {object} snap
+     * @returns {object}
+     */
     function withCaps(snap) {
       let caps = null;
       if (node.connection && typeof node.connection.getVehicleCapabilities === 'function') {
@@ -71,6 +83,11 @@ module.exports = function (RED) {
       return Object.assign({}, snap, { capabilities: caps === undefined ? null : caps });
     }
 
+    /**
+     * Diff and emit edge transitions for one vehicle on output 1.
+     *
+     * @param {number} sysid
+     */
     function emitTransitions(sysid) {
       const next = engine.snapshot(sysid);
       if (!next || !wanted(sysid)) {
@@ -85,11 +102,9 @@ module.exports = function (RED) {
     }
 
     /**
-     * Re-diff every known vehicle on a fixed cadence (#208), so a silently
-     * lost link still produces a `connection_lost` transition (and a flap
-     * still produces a re-`connected`) without waiting on a message that
-     * will never arrive. Repaints the badge once per tick rather than once
-     * per message.
+     * Re-diff every known vehicle on a fixed cadence; emits connection_lost/
+     * reconnected transitions when a vehicle goes silent without waiting for
+     * telemetry that will never arrive.
      */
     function reEmitAll() {
       if (!engine) {
@@ -102,9 +117,10 @@ module.exports = function (RED) {
     }
 
     /**
-     * Emit a snapshot on output 2. `emit` defaults to `node.send` for
-     * autonomous callers (the interval ticker); the input handler passes its
-     * own `send` so the reply is attributed to the triggering message.
+     * Emit full snapshot(s) on output 2 (interval/on-demand).
+     *
+     * @param {number} [sysid]
+     * @param {Function} [emit]
      */
     function emitSnapshot(sysid, emit) {
       const doSend = emit || node.send;
@@ -117,6 +133,7 @@ module.exports = function (RED) {
       }
     }
 
+    /** Drop the subscription and status listener from the attached connection. */
     function detach() {
       if (attachedTo) {
         try {
@@ -135,6 +152,10 @@ module.exports = function (RED) {
       onStatus = null;
     }
 
+    /**
+     * (Re-)resolve the connection and (re-)subscribe. Re-run on every
+     * `flows:started` so a redeploy connection node survives attach.
+     */
     function attach() {
       const conn = RED.nodes.getNode(config.connection) || null;
       if (conn === attachedTo && conn === node.connection) {
@@ -202,6 +223,7 @@ module.exports = function (RED) {
       timers.push(tickTimer);
     }
 
+    /** Handle on-demand snapshot requests via 'snapshot' command. */
     node.on('input', (msg, send, done) => {
       const command = msg.command || (msg.payload && msg.payload.command);
       if (command === 'snapshot') {
@@ -218,6 +240,7 @@ module.exports = function (RED) {
       done();
     });
 
+    /** Clean up timers and detach from connection on close. */
     node.on('close', (done) => {
       for (const t of timers) {
         clearInterval(t);
