@@ -158,3 +158,29 @@ test('EXTENDED_SYS_STATE sets the landed state', () => {
   engine.ingest({ name: 'EXTENDED_SYS_STATE', sysid: 1, compid: 1, fields: { landed_state: 2 } });
   assert.strictEqual(engine.snapshot(1).landed.state, 'in_air');
 });
+
+test('statustext keeps a capped newest-last ring with severity names', () => {
+  const c = clock();
+  const engine = new VehicleStateEngine({ statustextBuffer: 2, now: c.now });
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  engine.ingest({ name: 'STATUSTEXT', sysid: 1, compid: 1, fields: { severity: 6, text: 'first' } });
+  engine.ingest({ name: 'STATUSTEXT', sysid: 1, compid: 1, fields: { severity: 4, text: 'second' } });
+  engine.ingest({ name: 'STATUSTEXT', sysid: 1, compid: 1, fields: { severity: 2, text: 'third' } });
+  const s = engine.snapshot(1);
+  assert.strictEqual(s.statustext.length, 2, 'ring capped at 2');
+  assert.strictEqual(s.statustext[0].text, 'second');
+  assert.strictEqual(s.statustext[1].text, 'third');
+  assert.strictEqual(s.statustext[1].severity, 2);
+});
+
+test('a component is marked stale once it stops heartbeating', () => {
+  const c = clock();
+  const engine = new VehicleStateEngine({ staleMs: 5000, now: c.now });
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  engine.ingest({ name: 'HEARTBEAT', sysid: 1, compid: 100, fields: { type: 30, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 3 } });
+  c.advance(6000);
+  /** Refresh only the autopilot; the camera goes stale. */
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  const cam = engine.snapshot(1).components.find((x) => x.compid === 100);
+  assert.strictEqual(cam.stale, true);
+});
