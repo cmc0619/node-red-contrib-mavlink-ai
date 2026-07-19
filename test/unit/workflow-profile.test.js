@@ -128,3 +128,68 @@ test('the connection node exposes the router decision, reject reason included (#
   /** The legacy accessor stays null-collapsing for decode-path callers. */
   assert.strictEqual(conn.getProfileForPacket({ sysid: 99, compid: 1 }), null);
 });
+
+test('component-broadcast targets (compid 0) use any-responder semantics, not a literal compid-0 probe', (t) => {
+  /**
+   * Codex review on #302: a workflow addressed at target_component 0
+   * (MAV_COMP_ID_ALL) accepts replies from ANY component of the target
+   * system. A component-specific route table like 1:1 must therefore not
+   * fail-fast the (1, 0) workflow — replies from component 1 would be
+   * accepted. Only a target no component of which could get through is
+   * rejected.
+   */
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c1', name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false,
+    routingMode: 'routed', unmatchedPolicy: 'reject',
+    routeTable: JSON.stringify([{ sysid: 1, compid: 1, profile: 'p1' }])
+  });
+  t.after(() => RED.close(conn));
+
+  /** compid 0 is viable: the 1:1 route accepts replies from component 1. */
+  const broadcast = conn.getRouteDecision({ sysid: 1, compid: 0 });
+  assert.strictEqual(broadcast.accepted, true);
+  assert.ok(broadcast.profile, 'the sysid-matching route supplies the profile');
+
+  /** A specific unrouted component still fails fast. */
+  assert.strictEqual(conn.getRouteDecision({ sysid: 1, compid: 2 }).accepted, false);
+
+  /** A sysid no route matches is rejected even as a component broadcast. */
+  const off = conn.getRouteDecision({ sysid: 2, compid: 0 });
+  assert.strictEqual(off.accepted, false);
+  assert.strictEqual(off.reason, 'unmatched-reject');
+});
+
+test('single-profile compid accept filters cannot reject a component-broadcast target', (t) => {
+  /**
+   * With acceptedCompids [1], replies from component 1 pass the filter, so a
+   * (1, 0) workflow is viable; only the sysid filter can make it hopeless.
+   */
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c1', name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false,
+    routingMode: 'single-profile', acceptedSysids: '1', acceptedCompids: '1'
+  });
+  t.after(() => RED.close(conn));
+
+  assert.strictEqual(conn.getRouteDecision({ sysid: 1, compid: 0 }).accepted, true);
+  const badSysid = conn.getRouteDecision({ sysid: 9, compid: 0 });
+  assert.strictEqual(badSysid.accepted, false);
+  assert.strictEqual(badSysid.reason, 'sysid-rejected');
+});

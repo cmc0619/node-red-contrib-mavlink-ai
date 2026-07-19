@@ -1514,16 +1514,19 @@ module.exports = function registerMavlinkAiConnection(RED) {
     };
 
     /**
-     * The full routing decision for a packet identity, reject reason included.
-     * Workflow nodes use this to fail fast when a target's inbound replies
-     * would be dropped by routing (#196) — a case {@link getProfileForPacket}
-     * cannot express, since it collapses both "rejected" and "accepted by the
-     * default profile" onto its null/profile return.
+     * The full routing decision for a WORKFLOW target, reject reason
+     * included. Workflow nodes use this to fail fast when a target's inbound
+     * replies would be dropped by routing (#196) — a case
+     * {@link getProfileForPacket} cannot express, since it collapses both
+     * "rejected" and "accepted by the default profile" onto its null/profile
+     * return. Component 0 targets are component broadcasts and use
+     * any-responder semantics (see PacketRouter#routeWorkflowTarget).
      *
      * @param {{sysid: number, compid: number}} packetOrHeader
      * @returns {{accepted: boolean, profile: *, reason?: string}}
      */
-    node.getRouteDecision = (packetOrHeader) => node._router.route(packetOrHeader.sysid, packetOrHeader.compid);
+    node.getRouteDecision = (packetOrHeader) =>
+      node._router.routeWorkflowTarget(packetOrHeader.sysid, packetOrHeader.compid);
 
     /**
      * Acquire a named runtime lock (e.g. mission workflow).
