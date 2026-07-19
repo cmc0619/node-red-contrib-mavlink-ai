@@ -288,13 +288,15 @@ test('the mixed split only runs on transports that can route by sysid', async (t
   assert.strictEqual(sent[0].meta.sysids, undefined);
 });
 
-test('the split is skipped when the version groups share a learned endpoint', async (t) => {
+test('version groups sharing a learned endpoint collapse onto one v1 frame for that endpoint', async (t) => {
   /**
-   * Codex review round 3 on #303: behind a MAVLink router/bridge a v1 sysid
-   * and a v2 sysid can be learned from the SAME address:port. Splitting
-   * would deliver both encodings to that endpoint — and MAVLink2 peers
-   * parse v1 frames too, so a broadcast command could execute twice. With
-   * overlapping group endpoints the send keeps the single-encode path.
+   * Codex review rounds 3-4 on #303: behind a MAVLink router/bridge a v1
+   * sysid and a v2 sysid can be learned from the SAME address:port. That
+   * endpoint must receive exactly ONE frame — and since MAVLink2 peers
+   * parse v1 frames, the v1 encoding reaches everyone behind the bridge.
+   * The v2 sysids on shared endpoints therefore move into the v1 group
+   * (never two frames to one endpoint), while sysids on their own
+   * endpoints keep their own version frame.
    */
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
@@ -321,16 +323,64 @@ test('the split is skipped when the version groups share a learned endpoint', as
   conn._link.noteInboundMagic(0xfe, 3);
   conn._link.noteInboundMagic(0xfd, 4);
 
-  /** Both sysids learned behind one bridge endpoint: no split. */
+  /** Both sysids behind one bridge endpoint: exactly one v1 frame for it. */
   conn._transport.peersBySysid.set(3, { address: '10.0.0.9', port: 14550 });
   conn._transport.peersBySysid.set(4, { address: '10.0.0.9', port: 14550 });
   await conn.send({ name: 'HEARTBEAT', fields: HB });
-  assert.strictEqual(sent.length, 1, 'shared endpoint across groups: single encode');
-  assert.strictEqual(sent[0].meta.sysids, undefined);
+  assert.strictEqual(sent.length, 1, 'fully shared endpoint: a single v1 frame');
+  assert.strictEqual(sent[0].buffer[0], 0xfe, 'v1 reaches every peer behind the bridge');
+  assert.deepStrictEqual([...sent[0].meta.sysids].sort(), [3, 4]);
 
-  /** Distinct endpoints: the split applies. */
+  /** Distinct endpoints: the split applies unchanged. */
   sent.length = 0;
   conn._transport.peersBySysid.set(4, { address: '10.0.0.10', port: 14550 });
   await conn.send({ name: 'HEARTBEAT', fields: HB });
   assert.strictEqual(sent.length, 2, 'disjoint endpoints: one frame per version group');
+});
+
+test('a partial endpoint overlap keeps split delivery for the disjoint peers', async (t) => {
+  /**
+   * Codex review round 4 on #303: v1 sysids 3@A and 5@C, v2 sysid 4@A. The
+   * bridge endpoint A gets exactly one (v1) frame that both 3 and 4 parse;
+   * the isolated v1 peer at C still receives its v1 frame — an
+   * all-or-nothing fallback would have fanned a last-detected-version
+   * buffer that C may not parse. A v2-only endpoint keeps its v2 frame.
+   */
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'P', dialect: 'common', mavlinkVersion: 'auto',
+    defaultTargetSystem: 7, defaultTargetComponent: 3
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c1', name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
+  });
+  t.after(() => RED.close(conn));
+  const sent = [];
+  conn._queue = {
+    enqueue(buffer, priority, meta, opts) {
+      sent.push({ buffer, meta, opts: opts || {} });
+      return Promise.resolve();
+    },
+    clear() {}
+  };
+
+  conn._link.noteInboundMagic(0xfe, 3);
+  conn._link.noteInboundMagic(0xfe, 5);
+  conn._link.noteInboundMagic(0xfd, 4);
+  conn._link.noteInboundMagic(0xfd, 6);
+  conn._transport.peersBySysid.set(3, { address: '10.0.0.1', port: 14550 }); // A (bridge)
+  conn._transport.peersBySysid.set(4, { address: '10.0.0.1', port: 14550 }); // A (bridge)
+  conn._transport.peersBySysid.set(5, { address: '10.0.0.3', port: 14550 }); // C (v1 only)
+  conn._transport.peersBySysid.set(6, { address: '10.0.0.2', port: 14550 }); // B (v2 only)
+
+  await conn.send({ name: 'HEARTBEAT', fields: HB });
+  assert.strictEqual(sent.length, 2);
+  const v1send = sent.find((s) => s.buffer[0] === 0xfe);
+  const v2send = sent.find((s) => s.buffer[0] === 0xfd);
+  assert.deepStrictEqual([...v1send.meta.sysids].sort(), [3, 4, 5], 'bridge v2 sysid rides the v1 frame');
+  assert.deepStrictEqual(v2send.meta.sysids, [6], 'only the v2-only endpoint gets the v2 frame');
 });

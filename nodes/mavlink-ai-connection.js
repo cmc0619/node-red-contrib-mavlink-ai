@@ -1685,21 +1685,36 @@ module.exports = function registerMavlinkAiConnection(RED) {
           : null;
       /**
        * Even in peer-learning mode both version groups can sit behind ONE
-       * learned endpoint (a MAVLink router/bridge): splitting would deliver
-       * both encodings there and double-deliver to the v2 peers. Only
-       * disjoint group endpoints get the split (#303 review).
+       * learned endpoint (a MAVLink router/bridge), and an endpoint must
+       * receive exactly one frame — never both encodings, which would
+       * double-deliver to MAVLink2 peers (they parse v1 frames too). Since
+       * v1 framing is parseable by every peer, v2 sysids whose endpoint is
+       * shared with the v1 group ride the v1 frame; sysids on their own
+       * endpoints keep their own version, so a bridge elsewhere in the
+       * fleet never degrades delivery to disjoint peers (#303 review).
        */
-      if (
-        mixed &&
-        typeof node._transport.sysidEndpointsDisjoint === 'function' &&
-        !node._transport.sysidEndpointsDisjoint(mixed.v1, mixed.v2)
-      ) {
-        mixed = null;
+      if (mixed && typeof node._transport.endpointKeyForSysid === 'function') {
+        const v1keys = new Set(
+          mixed.v1.map((s) => node._transport.endpointKeyForSysid(s)).filter((k) => k != null)
+        );
+        const bridgedV2 = [];
+        const pureV2 = [];
+        for (const s of mixed.v2) {
+          const key = node._transport.endpointKeyForSysid(s);
+          (key != null && v1keys.has(key) ? bridgedV2 : pureV2).push(s);
+        }
+        if (bridgedV2.length > 0) {
+          mixed = { v1: [...mixed.v1, ...bridgedV2], v2: pureV2 };
+        }
       }
       if (mixed) {
         const buffers = [];
         try {
           for (const version of ['v1', 'v2']) {
+            /** A group emptied by the bridge merge above sends nothing. */
+            if (mixed[version].length === 0) {
+              continue;
+            }
             buffers.push({
               version,
               sysids: mixed[version],
