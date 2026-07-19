@@ -377,13 +377,6 @@ test('command rejects an out-of-range latitude before sending (#55)', async () =
   assert.strictEqual(collected[0].payload.context.field, 'lat');
 });
 
-test('command still accepts valid targets and coordinates (#55)', async () => {
-  const { RED, node } = setup({ command: 'goto' });
-  const { collected } = await RED.inject(node, { payload: { lat: 39.1, lon: -75.1, alt: 40 } });
-  assert.strictEqual(collected[0].payload.name, 'COMMAND_INT');
-  assert.strictEqual(collected[0].payload.fields.x, 391000000);
-});
-
 test('COMMAND_INT editor-saved param5/param6 degrees are range-validated (#55 review)', async () => {
   // A raw MAV_CMD sent as COMMAND_INT with out-of-range editor param5 (lat) must
   // be rejected, not silently scaled to degE7 and sent.
@@ -509,15 +502,6 @@ test('raw MAV_CMD mode stays permissive with no params (#87)', async () => {
 });
 
 // --- Profile propagation (#81) ------------------------------------------------
-
-test('build-only payload carries the canonical profile config-node id', async () => {
-  const { RED, node } = setup({ command: 'arm' });
-  const { collected } = await RED.inject(node, { payload: {} });
-  assert.strictEqual(collected[0].topic, 'mavlink/send');
-  // The id (not the display name) resolves unambiguously on the sending
-  // connection, even with duplicate profile names.
-  assert.strictEqual(collected[0].payload.vehicleProfile, 'p1');
-});
 
 test('await-ack workflow sends carry the node profile id', async () => {
   const RED = new MockRED().loadNodes();

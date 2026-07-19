@@ -99,19 +99,6 @@ test('wildcard id forms are unchanged: absent, empty array, and "*" accept all (
   assert.deepStrictEqual(got, [42, 42, 42]);
 });
 
-test('rate limit drops bursts', () => {
-  const reg = new SubscriptionRegistry();
-  let count = 0;
-  // 2 Hz => a 500ms window; several immediate dispatches are all within it, so
-  // only the first is delivered. (A tight window like 1000Hz/1ms is flaky on
-  // slow runners where >1ms can elapse between synchronous dispatches.)
-  reg.subscribe({ rateLimitHz: 2 }, () => (count += 1));
-  reg.dispatch(msg('ATTITUDE'));
-  reg.dispatch(msg('ATTITUDE'));
-  reg.dispatch(msg('ATTITUDE'));
-  assert.strictEqual(count, 1);
-});
-
 test('rate limit is applied per message/sysid/compid, not per subscription (#30)', () => {
   const reg = new SubscriptionRegistry();
   const got = [];

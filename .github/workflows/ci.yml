@@ -22,12 +22,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The supported compatibility matrix (README "Compatibility"): Node 22+
-        # (LTS floor plus current) against the supported Node-RED majors. Every
-        # claimed Node.js/Node-RED combination is exercised here.
+        # Exercise the package suite at the supported Node.js floor and current.
         node-version: ['22.x', '24.x']
-        node-red-version: ['4', '5']
-    name: test (node ${{ matrix.node-version }}, node-red ${{ matrix.node-red-version }})
+    name: test (node ${{ matrix.node-version }})
     steps:
       - uses: actions/checkout@v7
         with:
@@ -44,6 +41,26 @@ jobs:
       # code only — see eslint.config.js for why the rule set stays small.
       - run: npm run lint
       - run: npm test
+
+  node-red-compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every Node.js/Node-RED pairing claimed in README "Compatibility" is
+        # exercised without repeating the Node-RED-independent package suite.
+        node-version: ['22.x', '24.x']
+        node-red-version: ['4', '5']
+    name: node-red (node ${{ matrix.node-version }}, node-red ${{ matrix.node-red-version }})
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm ci --omit=optional
       # Prove the package registers and instantiates in a real Node-RED runtime
       # at the matrix Node-RED version (issue #102). Installed unsaved so the
       # lockfile stays lean and each matrix cell pins its own Node-RED major.

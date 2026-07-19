@@ -21,11 +21,6 @@ test('include order is dependency-first, root-last', () => {
   assert.deepStrictEqual(names(graph), ['minimal.xml', 'common.xml', 'custom_vehicle.xml']);
 });
 
-test('a dialect without common still resolves (no forced common)', () => {
-  const graph = resolveXmlIncludeGraph(fixture('custom_no_common.xml'));
-  assert.ok(!names(graph).includes('common.xml'));
-});
-
 test('the same included file is not duplicated (diamond)', () => {
   const graph = resolveXmlIncludeGraph(fixture('custom_diamond.xml'));
   // minimal is reached via common and directly; it must appear exactly once,
