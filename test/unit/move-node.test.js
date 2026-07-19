@@ -433,3 +433,113 @@ test('build-only output carries the ELEVATED priority stamp (#241)', async () =>
   assert.strictEqual(collected[0].topic, 'mavlink/send');
   assert.strictEqual(collected[0].priority, 1, 'setpoints are ELEVATED on the build-only path too');
 });
+
+test('a streamed setpoint expires after maxStreamSeconds (#216)', async (t) => {
+  /**
+   * A bare setInterval used to retransmit the last setpoint forever — an
+   * abandoned flow kept commanding the vehicle indefinitely. The stream now
+   * carries a TTL: on expiry the timer stops, the status shows the expiry,
+   * and one { stream: 'expired' } message is emitted on the output.
+   */
+  const { RED, node, conn } = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50, maxStreamSeconds: 0.05 },
+    { withConnection: true }
+  );
+  t.after(() => RED.close(node));
+  const emitted = [];
+  const injected = await RED.inject(node, { payload: {} });
+  node.send = (m) => emitted.push(m);
+  assert.ok(node._streamTimer, 'streaming');
+
+  await new Promise((r) => setTimeout(r, 150));
+  assert.strictEqual(node._streamTimer, null, 'the stream stopped at the TTL');
+  const sentCount = conn.sent.length;
+  await new Promise((r) => setTimeout(r, 60));
+  assert.strictEqual(conn.sent.length, sentCount, 'no setpoints after expiry');
+  assert.strictEqual(emitted.length, 1, 'exactly one expiry message');
+  assert.strictEqual(emitted[0].payload.stream, 'expired');
+  assert.strictEqual(injected.collected.length, 0, 'the input itself emitted nothing');
+});
+
+test('maxStreamSeconds 0 opts out of the stream TTL (#216)', async (t) => {
+  const { RED, node } = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50, maxStreamSeconds: 0 },
+    { withConnection: true }
+  );
+  t.after(() => RED.close(node));
+  await RED.inject(node, { payload: {} });
+  assert.strictEqual(node._streamDeadline, null, 'no deadline armed');
+  await new Promise((r) => setTimeout(r, 120));
+  assert.ok(node._streamTimer, 'the stream keeps running');
+});
+
+test('the stream TTL defaults to 300 seconds and refreshes on every input (#216)', async (t) => {
+  const { RED, node } = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
+    { withConnection: true }
+  );
+  t.after(() => RED.close(node));
+  assert.strictEqual(node.maxStreamSeconds, 300, 'default TTL');
+
+  /** Deadman semantics: the TTL counts from the LAST input, not the first. */
+  await RED.inject(node, { payload: {} });
+  const first = node._streamDeadline;
+  assert.ok(first > Date.now(), 'deadline armed');
+  await new Promise((r) => setTimeout(r, 20));
+  await RED.inject(node, { payload: {} });
+  assert.ok(node._streamDeadline > first, 'a fresh input pushes the deadline out');
+});
+
+test('a blank Max stream field keeps the default TTL, only explicit 0 opts out (#216 review)', async () => {
+  /**
+   * Number('') coerces to 0, which would silently disable the deadman for a
+   * cleared/imported-blank editor field. Blank falls to the 300 s default via
+   * blank-aware parsing; only an explicit 0 means unlimited.
+   */
+  const blank = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, maxStreamSeconds: '' },
+    { withConnection: true }
+  );
+  assert.strictEqual(blank.node.maxStreamSeconds, 300, 'blank field falls to the default');
+  const zero = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, maxStreamSeconds: '0' },
+    { withConnection: true }
+  );
+  assert.strictEqual(zero.node.maxStreamSeconds, 0, 'explicit 0 stays the unlimited opt-out');
+});
+
+test('stream expiry fires on time even when the TTL is shorter than a tick interval (#216 review)', async (t) => {
+  /**
+   * Expiry used to be checked only inside streamTick, so at the minimum
+   * 0.2 Hz rate a short TTL waited up to 5 s for the next tick. The
+   * deadline now arms its own timeout, independent of the send interval.
+   */
+  const { RED, node } = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 0.2, maxStreamSeconds: 0.05 },
+    { withConnection: true }
+  );
+  t.after(() => RED.close(node));
+  const emitted = [];
+  await RED.inject(node, { payload: {} });
+  node.send = (m) => emitted.push(m);
+  assert.ok(node._streamTimer, 'streaming');
+
+  /** Well before the 5 s tick interval, the 50 ms TTL must have fired. */
+  await new Promise((r) => setTimeout(r, 150));
+  assert.strictEqual(node._streamTimer, null, 'expired without waiting for a tick');
+  assert.strictEqual(emitted.length, 1);
+  assert.strictEqual(emitted[0].payload.stream, 'expired');
+});
+
+test('a stream TTL beyond the 32-bit timer limit is capped, not instantly expired (#216 review)', () => {
+  /**
+   * setTimeout clamps delays above 2^31-1 ms to 1 ms, so a 30-day deadman
+   * would fire immediately after the stream starts. The TTL is capped at
+   * config time to the timer limit (~24.8 days).
+   */
+  const { node } = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, maxStreamSeconds: 999999999999 },
+    { withConnection: true }
+  );
+  assert.strictEqual(node.maxStreamSeconds, 2147483, 'capped at the setTimeout limit in seconds');
+});

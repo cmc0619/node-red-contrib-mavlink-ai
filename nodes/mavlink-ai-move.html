@@ -72,6 +72,23 @@
       yawRate: { value: '' },
       /** Optional continuous streaming (#128); rate only matters when streaming. */
       stream: { value: false },
+      /** Stream TTL (#216): stop this many seconds after the last input; 0 =
+       * unlimited, blank = default. Non-numeric/negative input is outlined. */
+      maxStreamSeconds: {
+        value: 300,
+        validate: function (v) {
+          /** A hidden field must not block deploy: the TTL only applies while
+           * streaming is enabled, like the stream-rate validator below. */
+          if (!$('#node-input-stream').is(':checked')) {
+            return true;
+          }
+          if (v === '' || v == null) {
+            return true;
+          }
+          const n = Number(v);
+          return Number.isFinite(n) && n >= 0;
+        }
+      },
       streamRateHz: {
         value: 5,
         validate: function (v) {
@@ -176,8 +193,12 @@
     <label for="node-input-streamRateHz">Rate (Hz)</label>
     <input type="number" id="node-input-streamRateHz" min="0.2" max="50" step="any" placeholder="5">
   </div>
+  <div class="form-row mav-move-streamrate">
+    <label for="node-input-maxStreamSeconds">Max stream (s)</label>
+    <input type="number" id="node-input-maxStreamSeconds" min="0" step="any" placeholder="300">
+  </div>
   <div class="form-tips mav-move-streamrate" style="margin: -6px 0 8px 105px; width: 70%;">
-    Resends the setpoint at this rate until stopped. Needs a Connection. PX4 <b>OFFBOARD</b> requires a setpoint stream (≥ ~2 Hz) <i>before</i> the mode switch. Send <code>msg.payload.stream = false</code> to stop; the stream also stops automatically on redeploy.
+    Resends the setpoint at this rate until stopped. Needs a Connection. PX4 <b>OFFBOARD</b> requires a setpoint stream (≥ ~2 Hz) <i>before</i> the mode switch. Send <code>msg.payload.stream = false</code> to stop; the stream also stops automatically on redeploy — and expires <b>Max stream</b> seconds after the last input (default 300, <code>0</code> = unlimited), emitting one <code>{ stream: "expired" }</code> message.
   </div>
   <div class="form-row">
     <label for="node-input-coordinate">Coordinate</label>
@@ -285,7 +306,7 @@
   <h3>Firmware advisories</h3>
   <p>Combinations a firmware won't honor fail <i>silently</i> on the vehicle, so the node raises a Node-RED <b>warning</b> (the setpoint is still sent) when the profile's firmware is ArduPilot or PX4 and the request looks unsupported: <b>Force</b> setpoints (neither firmware honors bit 9), <b>Acceleration</b> on older ArduPilot GUIDED, PX4 with a terrain-altitude target, or PX4 with an OFFSET frame.</p>
   <h3>Streaming</h3>
-  <p>Enable <b>Stream continuously</b> to resend the setpoint at a fixed <b>Rate (Hz)</b> until stopped, instead of once per input. This is required for <b>PX4 OFFBOARD</b>, which won't enter (and drops out of) OFFBOARD unless a setpoint stream of ≥ ~2 Hz is already flowing — so start streaming <i>before</i> the mode switch. Each input refreshes the streamed setpoint; <code>msg.payload.stream = true</code>/<code>false</code> starts/stops it per message. Streaming needs a <b>Connection</b> (there is nowhere to stream a build-only message). The stream is torn down automatically on redeploy/close, so a partial deploy can never leave the vehicle flying an orphaned setpoint. Transient send failures are surfaced once and the stream keeps trying.</p>
+  <p>Enable <b>Stream continuously</b> to resend the setpoint at a fixed <b>Rate (Hz)</b> until stopped, instead of once per input. This is required for <b>PX4 OFFBOARD</b>, which won't enter (and drops out of) OFFBOARD unless a setpoint stream of ≥ ~2 Hz is already flowing — so start streaming <i>before</i> the mode switch. Each input refreshes the streamed setpoint; <code>msg.payload.stream = true</code>/<code>false</code> starts/stops it per message. Streaming needs a <b>Connection</b> (there is nowhere to stream a build-only message). The stream is torn down automatically on redeploy/close, so a partial deploy can never leave the vehicle flying an orphaned setpoint. It also expires <b>Max stream (s)</b> seconds after the last input (default 300; <code>0</code> = unlimited): the deadman stops an abandoned flow from commanding the vehicle forever, sets the status to <i>stream expired</i>, and emits one <code>{ stream: "expired" }</code> message on the output so the flow can react. Every fresh input pushes the deadline out. Transient send failures are surfaced once and the stream keeps trying.</p>
   <h3>Modes</h3>
   <p>The vehicle must already be in a mode that accepts external setpoints (ArduPilot <b>GUIDED</b>, PX4 <b>OFFBOARD</b>) — switch modes with the <b>mavlink-ai-command</b> node's <i>Set Mode</i>.</p>
   <h3>Inputs</h3>

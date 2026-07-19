@@ -160,6 +160,22 @@ function setupWithSends({ profile, config } = {}) {
       conn.sent.push(m);
       conn.sentOptions.push(options);
       return Promise.resolve();
+    },
+    /** Minimal subscription surface so acked workflows (#215) can run. */
+    _subs: new Map(),
+    _nextSub: 1,
+    subscribe(filter, cb) {
+      const id = conn._nextSub++;
+      conn._subs.set(id, cb);
+      return id;
+    },
+    unsubscribe(id) {
+      conn._subs.delete(id);
+    },
+    deliver(name, fields, sysid = 1, compid = 1) {
+      for (const cb of [...conn._subs.values()]) {
+        cb({ topic: `mavlink/${name}`, payload: { name, sysid, compid, fields } });
+      }
     }
   };
   RED._nodes.set('conn1', conn);
@@ -173,7 +189,7 @@ function setupWithSends({ profile, config } = {}) {
 test('mission node explicit profile drives defaults, lock key, and sends', async () => {
   const fence = profileStub('p2', 'Fence GCS', { defaultTargetSystem: 9 });
   const { RED, conn, node } = setupWithSends({ profile: fence, config: { profile: 'p2', missionType: 'fence' } });
-  await RED.inject(node, { payload: { action: 'clear' } });
+  await RED.inject(node, { payload: { action: 'clear', wait_ack: false } });
   const sent = conn.sent[0];
   assert.strictEqual(sent.name, 'MISSION_CLEAR_ALL');
   assert.strictEqual(sent.vehicleProfile, 'p2');
@@ -196,7 +212,7 @@ test('mission node route-resolves the target profile when no override is set', a
   const routed = profileStub('p_routed', 'Routed Rally', {});
   const { RED, conn, node } = setupWithSends({ config: { missionType: 'rally' } });
   conn.getRouteDecision = ({ sysid }) => ({ accepted: true, profile: sysid === 2 ? routed : conn.profile });
-  await RED.inject(node, { payload: { action: 'clear', target_system: 2 } });
+  await RED.inject(node, { payload: { action: 'clear', target_system: 2, wait_ack: false } });
   const sent = conn.sent[0];
   assert.strictEqual(sent.vehicleProfile, 'p_routed');
   assert.strictEqual(sent.fields.target_system, 2);
@@ -213,7 +229,7 @@ test('a numeric payload.mission_type 0 overrides a node configured for another l
    * an explicit 0 must reach the wire as mission (0), not fence.
    */
   const { RED, conn, node } = setupWithSends({ config: { missionType: 'fence' } });
-  await RED.inject(node, { payload: { action: 'clear', mission_type: 0 } });
+  await RED.inject(node, { payload: { action: 'clear', mission_type: 0, wait_ack: false } });
   assert.strictEqual(conn.sent[0].fields.mission_type, 0);
 });
 
@@ -223,7 +239,7 @@ test('the best-effort clear stamps the NORMAL band explicitly (#241)', async () 
    * its own priority — every producer assigns a band per §21.1 (Codex review).
    */
   const { RED, conn, node } = setupWithSends({});
-  await RED.inject(node, { payload: { action: 'clear' } });
+  await RED.inject(node, { payload: { action: 'clear', wait_ack: false } });
   assert.strictEqual(conn.sent[0].name, 'MISSION_CLEAR_ALL');
   assert.strictEqual(conn.sentOptions[0].priority, PRIORITY.NORMAL);
 });
@@ -272,7 +288,7 @@ test('the mission lock is released exactly once when the success-path send throw
         throw new Error('downstream boom');
       }
     };
-    node._ee.emit('input', { payload: { action: 'clear' } }, throwingSend, resolve);
+    node._ee.emit('input', { payload: { action: 'clear', wait_ack: false } }, throwingSend, resolve);
   });
 
   assert.strictEqual(releaseCount, 1, 'lock released exactly once despite the throwing send');
@@ -344,4 +360,47 @@ test('a malformed target_component reports INVALID_FIELD on a route-rejecting co
   const err = collected[0][2];
   assert.strictEqual(err.payload.code, 'INVALID_FIELD');
   assert.strictEqual(conn.sent.length, 0);
+});
+
+test('mission clear waits for MISSION_ACK by default (#215)', async () => {
+  /**
+   * Pre-1.0 clean break: "clear ok" used to mean "bytes were sent". The
+   * default now runs the acked MissionClear workflow, so success means the
+   * vehicle acknowledged the destructive clear; wait_ack: false opts back
+   * into fire-and-forget.
+   */
+  const { RED, conn, node } = setupWithSends();
+  const p = RED.inject(node, { payload: { action: 'clear' } });
+  await new Promise((r) => setTimeout(r, 10));
+  assert.strictEqual(conn.sent[0] && conn.sent[0].name, 'MISSION_CLEAR_ALL', 'clear sent, workflow waiting');
+  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  const { collected } = await p;
+  /** The acked workflow emits progress on output 2 first; the result is the
+   * first output-1 message. */
+  const out = collected.map((outs) => outs[0]).find(Boolean);
+  assert.strictEqual(out.topic, 'mission/cleared');
+  assert.strictEqual(out.payload.acked, true, 'default clear resolves on the vehicle ACK');
+  assert.strictEqual(out.payload.result, 0, 'MAV_MISSION_ACCEPTED');
+});
+
+test('wait_ack false keeps the fire-and-forget clear with acked:false (#215)', async () => {
+  const { RED, conn, node } = setupWithSends();
+  const { collected } = await RED.inject(node, { payload: { action: 'clear', wait_ack: false } });
+  assert.strictEqual(conn.sent[0].name, 'MISSION_CLEAR_ALL');
+  assert.strictEqual(collected[0][0].payload.acked, false, 'explicit opt-out resolves on send');
+});
+
+test('clear-all keeps the fire-and-forget default (#215 review)', async () => {
+  /**
+   * MissionClear exact-matches the MISSION_ACK's mission_type, and a vehicle
+   * acking a clear of ALL (255) with the specific list it cleared (e.g. 0)
+   * would run the workflow into MISSION_TIMEOUT despite a successful clear.
+   * Clear-all therefore stays fire-and-forget by default; explicit
+   * wait_ack: true remains available for stacks known to ack type 255.
+   */
+  const { RED, conn, node } = setupWithSends();
+  const { collected } = await RED.inject(node, { payload: { action: 'clear', mission_type: 'all' } });
+  assert.strictEqual(conn.sent[0].name, 'MISSION_CLEAR_ALL');
+  const out = collected.map((outs) => outs[0]).find(Boolean);
+  assert.strictEqual(out.payload.acked, false, 'clear-all resolves on send by default');
 });

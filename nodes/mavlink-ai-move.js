@@ -52,6 +52,17 @@ module.exports = function registerMavlinkAiMove(RED) {
     /** Optional continuous streaming (#128): resend the setpoint at a fixed rate. */
     node.stream = toBool(config.stream, false);
     node.streamRateHz = clampStreamRate(Number(config.streamRateHz));
+    /**
+     * Stream TTL / deadman (#216): the stream stops this many seconds after
+     * the LAST input unless a fresh input refreshes it, so an abandoned flow
+     * cannot retransmit its final setpoint at the vehicle forever. 0 opts
+     * out (unlimited).
+     */
+    /** Blank-aware (#304 review): a cleared editor field means "default",
+     * never the unlimited opt-out that Number('') === 0 would imply. */
+    node.maxStreamSeconds = clampMaxStreamSeconds(toNum(config.maxStreamSeconds, NaN));
+    node._streamDeadline = null;
+    node._streamExpiryTimer = null;
     node._streamTimer = null;
     node._streamState = null;
     node._streamErrored = false;
@@ -240,6 +251,9 @@ module.exports = function registerMavlinkAiMove(RED) {
           localIdentity: payload.localIdentity,
           fields: built.fields
         };
+        /** Deadman: every input arms/refreshes the TTL from now (#216). */
+        node._streamDeadline = node.maxStreamSeconds > 0 ? Date.now() + node.maxStreamSeconds * 1000 : null;
+        armStreamExpiry(node);
         startStream(node);
         node.status({ fill: 'green', shape: 'dot', text: `streaming ${labelFor(built.name)} @ ${node.streamRateHz} Hz` });
         return done();
@@ -316,6 +330,29 @@ module.exports = function registerMavlinkAiMove(RED) {
 const DEFAULT_STREAM_RATE_HZ = 5;
 const MIN_STREAM_RATE_HZ = 0.2;
 const MAX_STREAM_RATE_HZ = 50;
+/** Stream TTL default (#216): 5 minutes after the LAST input, then stop. */
+const DEFAULT_MAX_STREAM_SECONDS = 300;
+/**
+ * setTimeout clamps delays above 2^31-1 ms to 1 ms, which would make a
+ * longer finite deadman (e.g. 30 days) expire the stream immediately —
+ * cap the TTL at the timer limit (~24.8 days) instead (#304 review).
+ */
+const MAX_STREAM_SECONDS_LIMIT = Math.floor((2 ** 31 - 1) / 1000);
+
+/**
+ * Normalize the stream TTL: a non-finite/negative value falls to the default,
+ * 0 is the explicit unlimited opt-out, any positive number of seconds stands
+ * up to the setTimeout limit.
+ *
+ * @param {number} seconds
+ * @returns {number}
+ */
+function clampMaxStreamSeconds(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return DEFAULT_MAX_STREAM_SECONDS;
+  }
+  return Math.min(seconds, MAX_STREAM_SECONDS_LIMIT);
+}
 
 /**
  * Clamp a configured stream rate into the supported band, defaulting a
@@ -340,6 +377,38 @@ function clampStreamRate(hz) {
  * @param {object} node
  * @returns {void}
  */
+/**
+ * Arm (or re-arm) the stream TTL as its own timeout (#216): expiry must fire
+ * at the deadline, not at the next send tick — at the minimum 0.2 Hz rate a
+ * short TTL would otherwise wait up to 5 s. Past the deadline the stream
+ * stops for good: the status shows why and ONE expiry message goes out on
+ * the output so a flow can react (re-arm, land, alert). Unref'd like the
+ * send timer so it never holds the process open.
+ *
+ * @param {object} node
+ * @returns {void}
+ */
+function armStreamExpiry(node) {
+  if (node._streamExpiryTimer) {
+    clearTimeout(node._streamExpiryTimer);
+    node._streamExpiryTimer = null;
+  }
+  if (node._streamDeadline == null) {
+    return;
+  }
+  node._streamExpiryTimer = setTimeout(() => {
+    stopStream(node);
+    node.status({ fill: 'yellow', shape: 'ring', text: 'stream expired' });
+    node.send({
+      topic: 'move/stream',
+      payload: { stream: 'expired', max_stream_seconds: node.maxStreamSeconds }
+    });
+  }, node._streamDeadline - Date.now());
+  if (typeof node._streamExpiryTimer.unref === 'function') {
+    node._streamExpiryTimer.unref();
+  }
+}
+
 function streamTick(node) {
   const s = node._streamState;
   /**
@@ -434,6 +503,11 @@ function stopStream(node) {
     clearInterval(node._streamTimer);
     node._streamTimer = null;
   }
+  if (node._streamExpiryTimer) {
+    clearTimeout(node._streamExpiryTimer);
+    node._streamExpiryTimer = null;
+  }
+  node._streamDeadline = null;
   node._streamState = null;
   node._streamErrored = false;
   node._streamSending = false;

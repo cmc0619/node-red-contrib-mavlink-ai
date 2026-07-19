@@ -291,8 +291,9 @@ Outputs: **1** final result (`mission/downloaded`, `mission/uploaded`,
 Notes: `lat`/`lon` are float degrees (converted to degE7 automatically for
 `MISSION_ITEM_INT`; raw `x`/`y` accepted for advanced callers); upload answers
 `MISSION_REQUEST` with `MISSION_ITEM` and `MISSION_REQUEST_INT` with
-`MISSION_ITEM_INT` per request; clear supports an optional acknowledged mode;
-operations are locked per connection/profile/mission type.
+`MISSION_ITEM_INT` per request; clear waits for the vehicle's `MISSION_ACK` by
+default (`wait_ack: false` opts into fire-and-forget); operations are locked
+per connection/profile/mission type.
 
 ### `mavlink-ai-param`
 

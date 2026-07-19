@@ -253,9 +253,19 @@ module.exports = function registerMavlinkAiMission(RED) {
           opts.items = uploadItems;
           result = await runTracked(new MissionUpload(opts));
         } else if (action === 'clear') {
-          // Best-effort by default (resolve once sent); opt into waiting for a
-          // MISSION_ACK with wait_ack, optionally overriding the timeout (#59).
-          const waitAck = toBool(firstDefined(msg.wait_ack, payload.wait_ack), false);
+          // Acked by default (#215): "clear ok" means the vehicle sent an
+          // accepted MISSION_ACK, not merely that bytes left the transport —
+          // a destructive command must not report success on send. Set
+          // wait_ack: false for the fire-and-forget clear (some stacks do
+          // not ack clearing an already-empty mission); timeout_ms
+          // optionally overrides the node timeout for the wait (#59).
+          // Clear-all (MAV_MISSION_TYPE_ALL, 255) keeps the fire-and-forget
+          // default: MissionClear exact-matches the ACK's mission_type, and
+          // a vehicle acking with the specific list it cleared would run the
+          // workflow into MISSION_TIMEOUT despite a successful clear —
+          // explicit wait_ack: true remains available for stacks known to
+          // ack type 255 (#304 review).
+          const waitAck = toBool(firstDefined(msg.wait_ack, payload.wait_ack), missionTypeNum !== 255);
           if (waitAck) {
             const clearOpts = Object.assign({}, opts, {
               timeoutMs: toInt(payload.timeout_ms, node.timeoutMs)
@@ -333,8 +343,8 @@ async function clearMission(connection, opts, targetSystem, targetComponent, mis
       target_system: targetSystem,
       target_component: targetComponent,
       mission_type: missionTypeName,
-      // Best-effort clear: resolved on send, not on a vehicle ack. Set wait_ack
-      // to get an acknowledged clear (#59).
+      // Fire-and-forget clear (wait_ack: false): resolved on send, not on a
+      // vehicle ack. The default clear waits for MISSION_ACK (#215).
       acked: false
     }
   };
