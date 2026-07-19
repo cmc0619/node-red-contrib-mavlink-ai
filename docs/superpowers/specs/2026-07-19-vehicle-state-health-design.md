@@ -172,6 +172,29 @@ CRITICAL), recovery (fresh assertion resumes ACTIVE), reconnect/redeploy
 (store survives a profile edit, resets with the connection), event-loop delay
 tolerance (expiry checked at heartbeat tick, not with its own timer).
 
+## #225 coverage boundary
+
+PR B addresses the **heartbeat-health and companion-preset core** of #225
+completely. Three acceptance-criteria items are deliberately delegated rather
+than built here, and are closed by cross-reference when PR B lands:
+
+- **Unified four-signal surface** (adapter-alive / flow-health /
+  transport-ready / vehicle-heartbeat-fresh as one event contract). PR B
+  provides all four as *separate* signals across existing surfaces, but a
+  single canonical health-event stream is flow-facing connection
+  observability — **#205's territory**, which is deferred post-1.0.
+- **Stale-setpoint → control-health coupling.** Heartbeat health is kept
+  independent of Move setpoint freshness by design (#216); the flow asserts
+  `degraded`/`emergency` when its own input goes stale rather than the node
+  auto-deriving it. Automatic control-lease/ownership between competing
+  producers is **#216's deferred control-ownership scope**, not rebuilt here.
+- **Identity-model coordination (#195).** The preset lands on the current
+  identity model; a reworked model is #195's scope.
+
+The PR B description will state "core addressed; #205/#195/#216-ownership
+items tracked in their own issues" so #225 closes without silently implying
+those were built.
+
 ## Out of scope
 
 - Swarm adopting the engine (post-1.0, tracked by #217's direction).
