@@ -151,6 +151,33 @@ test('setAdvertisedHealth surfaces a structured error, not a TypeError, when the
 });
 
 /**
+ * #307 review (Codex P2, follow-on): the same missing-default hazard one branch
+ * deeper. With the default identity absent but `allowMultipleIdentities` on and
+ * an additional binding heartbeating, `heartbeatSpecs()` enters the additional
+ * loop and its duplicate-default check dereferenced `node.localIdentity.id` —
+ * a raw TypeError. A health assertion for that additional identity must instead
+ * be accepted (it *is* scheduled) via a structured path, never crash.
+ */
+test('an additional heartbeat identity is schedulable with the default identity absent (#307 review)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  conn.localIdentity = null;              // default missing → fail-closed inactive
+  conn.allowMultipleIdentities = true;
+  const companion = identity('id-companion');
+  conn._identityBindings = [{ identity: 'id-companion', heartbeat: true, allowOutbound: true, heartbeatIntervalMs: 1000 }];
+  conn.resolveLocalIdentity = (ref) => (ref === 'id-companion'
+    ? companion
+    : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+
+  // Must not throw a TypeError from the duplicate-default check; the additional
+  // identity is health-driven and scheduled, so the assertion is accepted.
+  const rec = conn.setAdvertisedHealth('id-companion', { health: 'degraded', ttl_s: 10 });
+  assert.strictEqual(rec.state, 'degraded');
+  assert.strictEqual(conn._advertisedHealth.get('id-companion').state, 'degraded');
+});
+
+/**
  * The heartbeat tick's health-driven decision (#225), tested via the
  * `_heartbeatFieldsFor` seam rather than driving a live setInterval tick —
  * see the tick refactor in nodes/mavlink-ai-connection.js. Covers the three

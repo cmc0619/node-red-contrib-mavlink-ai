@@ -2228,8 +2228,14 @@ module.exports = function registerMavlinkAiConnection(RED) {
             );
             continue;
           }
-          if (identity.id === node.localIdentity.id) {
-            /** The default identity's schedule is the connection's own. */
+          if (node.localIdentity && identity.id === node.localIdentity.id) {
+            /**
+             * The default identity's schedule is the connection's own. Guard
+             * `node.localIdentity` first: in the fail-closed inactive state the
+             * default is null, and no additional binding can duplicate an absent
+             * default — dereferencing `node.localIdentity.id` here would throw a
+             * raw TypeError for an additional-only heartbeat (#307 review).
+             */
             continue;
           }
           specs.push({ identity, intervalMs: spec.heartbeatIntervalMs });
