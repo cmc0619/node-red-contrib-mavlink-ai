@@ -436,3 +436,48 @@ test('malformed target ids that coerce in-range skip the route check for strict 
     (err) => err.code === 'ROUTE_REJECTED'
   );
 });
+
+test('a shadowed exact route cannot revive a compid-0 target via a less-specific same-component route', (t) => {
+  /**
+   * Codex review round 7 on #302: with 1:5 -> missing and *:5 -> good under
+   * unmatchedPolicy 'reject', inbound replies from (1,5) match the broken
+   * 1:5 route first and are rejected — and no other component can pass,
+   * because *:5 only admits the same shadowed component. The scan must not
+   * count a later exact route for a component already shadowed by a broken
+   * more-specific route. A later exact route for a DIFFERENT component
+   * (*:6) still makes the target viable.
+   */
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Good', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  const make = (routeTable, id) => RED.create('mavlink-ai-connection', {
+    id, name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false,
+    routingMode: 'routed', unmatchedPolicy: 'reject',
+    routeTable: JSON.stringify(routeTable)
+  });
+  const revived = make([
+    { sysid: 1, compid: 5, profile: 'missing' },
+    { sysid: '*', compid: 5, profile: 'p1' }
+  ], 'c1');
+  const otherComponent = make([
+    { sysid: 1, compid: 5, profile: 'missing' },
+    { sysid: '*', compid: 6, profile: 'p1' }
+  ], 'c2');
+  t.after(() => { RED.close(revived); RED.close(otherComponent); });
+
+  /** *:5 only admits the component the broken 1:5 already shadows. */
+  const rej = revived.getRouteDecision({ sysid: 1, compid: 0 });
+  assert.strictEqual(rej.accepted, false);
+  assert.strictEqual(rej.reason, 'profile-unresolved');
+
+  /** *:6 admits component 6, whose first match it is — still viable. */
+  const ok = otherComponent.getRouteDecision({ sysid: 1, compid: 0 });
+  assert.strictEqual(ok.accepted, true);
+  assert.strictEqual(ok.profile && ok.profile.id, 'p1');
+});
