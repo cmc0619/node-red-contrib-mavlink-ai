@@ -1,9 +1,15 @@
-# MAVLink AI v2 Design
+# MAVLink AI Design
 
 > **Read this together with [`RELEASE_SCOPE.md`](RELEASE_SCOPE.md).** `DESIGN.md`
 > describes the core architecture and design principles; `RELEASE_SCOPE.md`
 > captures current 1.0 scope decisions, deferrals, and refinements. Read both
 > before making architectural or release-target changes.
+
+> **v3 architecture reset (issue #228).** The single combined profile was split
+> into three explicit concerns — **Local Identity**, **Vehicle Profile**, and
+> **Connection**. [Section 5.5](#55-architecture-local-identity-vehicle-profile-connection-228)
+> is the authoritative description of that split; the rest of this document is
+> written to the same model (#279).
 
 ## 1. Purpose
 
@@ -18,18 +24,20 @@ The module should be a MAVLink protocol layer for Node-RED, not merely a serial/
 The core design rule is:
 
 ```text
-Profile    = MAVLink identity, dialect, vehicle defaults, protocol defaults
-Connection = transport/session/resource owner
-Route      = sysid/compid mapping to profile
-Nodes      = visible Node-RED behavior
+Local Identity  = who Node-RED transmits as (source ids, heartbeat identity)
+Vehicle Profile = the target vehicle: dialect, firmware, family, defaults
+Connection      = transport/session/resource owner (incl. signing)
+Route           = sysid/compid mapping to Vehicle Profile
+Nodes           = visible Node-RED behavior
 ```
 
 Or more bluntly:
 
 ```text
-Profile = what this MAVLink thing means.
+Local Identity = who we are on the link.
+Vehicle Profile = what the vehicle we talk to means.
 Connection = how we talk to it.
-Route = which packet belongs to which thing.
+Route = which packet belongs to which vehicle.
 Flow nodes = what we do with it.
 ```
 
@@ -75,7 +83,8 @@ node-red-contrib-mavlink-ai
 Internal Node-RED type names:
 
 ```text
-mavlink-ai-profile
+mavlink-ai-local-identity
+mavlink-ai-vehicle
 mavlink-ai-connection
 mavlink-ai-in
 mavlink-ai-out
@@ -88,7 +97,8 @@ mavlink-ai-mission
 Palette display names:
 
 ```text
-MAVLink AI Profile
+MAVLink AI Local Identity
+MAVLink AI Vehicle Profile
 MAVLink AI Connection
 MAVLink AI In
 MAVLink AI Out
@@ -97,6 +107,9 @@ MAVLink AI Filter
 MAVLink AI Command
 MAVLink AI Mission
 ```
+
+(The lists above are the founding set; the shipped palette has since grown —
+`package.json`'s `node-red.nodes` map is the authoritative roster.)
 
 The `mavlink-ai-*` prefix is intentional. The module must coexist with earlier modules such as:
 
@@ -113,14 +126,16 @@ No migration support is required for v2 unless explicitly requested later. v2 sh
 
 Node-RED config nodes are reusable shared configuration objects. Users can create multiple instances of the same config-node type, and regular nodes can reference them.
 
-This module should use two config-node layers:
+This module should use three config-node layers:
 
 ```text
-mavlink-ai-profile
+mavlink-ai-local-identity
+mavlink-ai-vehicle
 mavlink-ai-connection
 ```
 
-A profile can be reused by one or more connections.
+Every connection requires exactly one default Local Identity (5.5.2). A Local
+Identity and a Vehicle Profile can each be reused by one or more connections.
 
 A connection can be reused by nodes on multiple Node-RED flow tabs.
 
@@ -180,76 +195,233 @@ Problems with one big comms node:
 Better model:
 
 ```text
-Profile node: owns protocol identity/defaults.
-Connection node: owns transport/session.
+Local Identity node: owns who Node-RED transmits as.
+Vehicle Profile node: owns the target vehicle's dialect/defaults.
+Connection node: owns transport/session (and signing).
 Regular nodes: build, filter, receive, send, command, mission.
 ```
 
-## 6. Profile Config Node
+## 5.5. Architecture: Local Identity, Vehicle Profile, Connection (#228)
 
-The profile config node describes a MAVLink identity and its protocol defaults.
+The original `mavlink-ai-profile` owned two incompatible questions at once —
+*"who is Node-RED?"* and *"what vehicle is Node-RED talking to?"*. Selecting
+**GCS** gave a truthful local heartbeat but lost Copter/Plane/Rover target
+metadata; selecting **Copter** gave the target metadata but made Node-RED
+falsely advertise itself as another quadrotor. v3 splits the profile into three
+config nodes so each question has one owner.
+
+### 5.5.1 Ownership table
+
+| Concern | Config node | Owns |
+| --- | --- | --- |
+| Who Node-RED **is** on the wire | `mavlink-ai-local-identity` | source SysID/CompID, role preset (GCS / companion / custom), HEARTBEAT identity (`MAV_TYPE`, autopilot, base_mode/status defaults) |
+| What vehicle is **addressed** | `mavlink-ai-vehicle` (Vehicle Profile) | dialect, firmware, MAVLink version preference, default target SysID/CompID, vehicle family (mode tables + parameter metadata), mission preferences |
+| How traffic **moves** and is **secured** | `mavlink-ai-connection` | transport/session, routing, outbound queue, mission locks, heartbeat scheduling, **signing credential + sign/verify/require policy + link id**, and all per-link channel state (sequence numbers, monotonic signing timestamps, inbound replay memory, detected peer wire versions) |
+
+A Vehicle Profile must **never** determine or change the local source identity.
+A Connection must **never** silently choose among multiple identities. Signing —
+the shared key, the sign/verify/require policy, the **link id**, the sequence
+counter, the signing timestamp, and replay state — is all a property of the
+secured link and belongs to the Connection/`LinkState`, not the identity or the
+dialect codec (this satisfies #192).
+
+### 5.5.2 Config-node relationship
+
+```text
+mavlink-ai-local-identity        mavlink-ai-vehicle (Vehicle Profile)
+   (source ids, heartbeat            (dialect, targets, vehicle family,
+    identity)                         firmware, mission prefs)
+          \                                   /
+           \                                 /
+            \                               /
+             v                             v
+             mavlink-ai-connection  (transport + channel state)
+             ├── default Local Identity   (required, exactly one)
+             ├── additional identities    (advanced, opt-in, disabled by default)
+             ├── signing key + policy + link id   (5.5.8)
+             └── LinkState: seq / signing-ts / replay / detected-version
+```
+
+Many Connections may reuse one Local Identity. Multiple Local Identity config
+nodes may coexist without error — merely having more than one is not a problem.
+
+### 5.5.3 Runtime composition
+
+Encoding an outbound frame composes three independently resolved inputs:
+
+```text
+Vehicle Profile  -> dialect, message definitions, target defaults
+Local Identity   -> source ids, role, heartbeat fields
+Connection       -> transport, queue, signing key/policy/link id, channel state
+```
+
+Codecs are cached per Vehicle Profile (dialect) and are otherwise stateless:
+`encode()` receives the sender's `sysid`/`compid`, the connection's `LinkState`,
+and an optional signing context per call. That is what lets several local
+identities transmit through one connection — each with its own correct
+sequence/signing stream — and lets a profile edit rebuild a codec without
+resetting any channel state.
+
+### 5.5.4 Normal single-identity flow
+
+The beginner path has one Local Identity and one default identity per
+Connection:
+
+```text
+Connection editor
+  Vehicle:   [SITL Copter]          (Vehicle Profile)
+  Identity:  [Node-RED GCS]         (Local Identity, required)
+  Heartbeat: [x]  Interval: [1000 ms]
+```
+
+Every node inheriting this connection transmits as `Node-RED GCS`; no node needs
+an identity selector.
+
+### 5.5.5 Advanced dual GCS + companion flow
+
+One runtime — even one physical link — may deliberately act as more than one
+MAVLink participant. This is explicit ("hold my beer"), never stumbled into:
+
+```text
+Connection > Advanced
+  [x] Allow this connection to transmit as multiple local identities
+  Additional identity: Companion 1/191   Outbound: yes  Heartbeat: yes  1000 ms
+```
+
+A message then selects the non-default identity with
+`msg.payload.localIdentity`. GCS `255/190` and companion `1/191` share one UDP
+or serial link, each with its own source identity, sequence stream, and (opt-in)
+heartbeat.
+
+### 5.5.6 Outbound identity-resolution algorithm
+
+Every transmitted message resolves to **exactly one permitted Local Identity**:
+
+1. If the message explicitly requests `localIdentity`, resolve that identity
+   (by config-node id).
+2. Verify the resolved identity is attached to the Connection — its default, or
+   an additional binding with outbound permission while multi-identity is
+   enabled.
+3. Otherwise use the Connection's required default Local Identity.
+4. **Never** derive the local identity from `vehicleProfile`.
+5. **Never** fall back from an invalid explicit identity request to the default.
+
+Editor validation improves the experience, but runtime validation is
+authoritative, so imported/edited flow JSON cannot bypass these rules.
+
+### 5.5.7 Heartbeat ownership
+
+Heartbeat *identity* (the `MAV_TYPE` and autopilot fields) is owned by the Local
+Identity; *whether and how often* to send is owned by the Connection. The
+default identity's heartbeat comes from the connection's Heartbeat toggle; each
+additional identity opts into its own heartbeat per binding (disabled by
+default). Heartbeat queue-coalescing is keyed per identity
+(`heartbeat:<identity id>`) so one identity's heartbeat can never replace
+another's queued heartbeat.
+
+### 5.5.8 Signing and channel-state ownership (#192)
+
+The Connection owns MAVLink 2 signing in full: the shared secret (a passphrase
+credential), the sign/verify/require policy, and the signing **link id**. A
+MAVLink link has exactly one signing key shared by both endpoints, so it is a
+property of the secured link — not of an identity that may transmit on several
+links. Every identity that transmits on a connection signs with the connection's
+key, and one identity can therefore talk signed on one connection and unsigned
+on another (a GCS to a mix of secured and open fleets). The Connection also owns
+the `LinkState`, which keys:
+
+- outbound **sequence** numbers by `(local sysid, local compid)`;
+- monotonic outbound signing **timestamps** by `(local sysid, local compid, link id)`;
+- inbound **replay** memory by verification key (so a profile/identity rebuild
+  under the same key never resets it);
+- detected peer **wire versions** by peer sysid.
+
+`LinkState` lives exactly as long as the transport/session — it survives profile
+and identity edits and is reset only on deactivation.
+
+### 5.5.9 Error codes (fail closed)
+
+| Code | When |
+| --- | --- |
+| `LOCAL_IDENTITY_REQUIRED` | a Connection has no default Local Identity |
+| `LOCAL_IDENTITY_INVALID` | the default identity's configuration is invalid |
+| `LOCAL_IDENTITY_UNRESOLVED` | an explicit identity reference matches no config node |
+| `LOCAL_IDENTITY_NOT_ATTACHED` | the requested identity is not the default and not an allowed additional binding |
+| `LOCAL_IDENTITY_COLLISION` | two attached identities share a source `(sysid, compid)` — indistinguishable on the wire |
+| `MULTI_IDENTITY_DISABLED` | a non-default identity was requested but multi-identity transmission is off |
+
+Missing, unattached, and disabled cases all fail closed — a bad configuration
+never transmits with a guessed identity.
+
+### 5.5.10 ADR: why not a global singleton Local Identity
+
+> One Local Identity is the normal case, but MAVLink permits one runtime/link to
+> host multiple logical participants (a GCS and an onboard companion on one
+> link). Enforcing a single global identity would remove a legitimate power-user
+> capability the runtime already supported. Safety instead comes from explicit
+> per-Connection bindings and unambiguous, fail-closed resolution — not from
+> forbidding the capability.
+
+## 6. Vehicle Profile Config Node
+
+The Vehicle Profile config node (`mavlink-ai-vehicle`) describes the ADDRESSED
+vehicle: its dialect, firmware, MAVLink version preference, target ids,
+vehicle family, and mission preferences. Source identity and heartbeat
+identity live on `mavlink-ai-local-identity`; signing lives on the Connection
+([section 5.5](#55-architecture-local-identity-vehicle-profile-connection-228)).
 
 It does **not** own sockets, serial ports, TCP listeners, UDP ports, mission locks, timers, or peer state.
 
 Type:
 
 ```text
-mavlink-ai-profile
+mavlink-ai-vehicle
 ```
 
 Responsibilities:
 
 ```text
 - Profile name.
-- Profile type / vehicle type.
+- Vehicle family (for mode tables / parameter metadata).
 - Dialect selection.
 - MAVLink version preference.
-- Source system ID.
-- Source component ID.
 - Default target system.
 - Default target component.
 - Preferred mission item message type.
-- Default mission type.
-- Heartbeat identity defaults.
 - Protocol/debug preferences.
+
+Source ids and heartbeat identity are NOT here: they belong to the Local
+Identity config node (5.5.1), and signing to the Connection (5.5.8).
 ```
 
 Suggested fields:
 
 ```text
 Name
-Profile type: generic | gcs | companion-computer | copter | plane | rover | boat | sub | antenna-tracker
+Vehicle family: generic | copter | plane | rover | boat | sub | antenna-tracker
 Dialect: ardupilotmega | common | minimal | custom
 Custom dialect path
 MAVLink version: auto | v1 | v2
-Source system ID
-Source component ID
 Default target system
 Default target component
 Preferred mission item type: MISSION_ITEM_INT | MISSION_ITEM
-Default mission type: mission | fence | rally | all
-Heartbeat MAV_TYPE
-Heartbeat autopilot type
 Protocol debug enabled
 ```
 
 Default profile values:
 
 ```text
-Profile type: gcs
+Vehicle family: generic
 Dialect: ardupilotmega
 MAVLink version: auto
-Source system ID: 255
-Source component ID: 190
 Default target system: 1
 Default target component: 1
 Preferred mission item type: MISSION_ITEM_INT
-Default mission type: mission
-Heartbeat MAV_TYPE: MAV_TYPE_GCS
-Heartbeat autopilot type: MAV_AUTOPILOT_INVALID
 ```
 
-The defaults should make the module useful as a lightweight GCS/client first. Vehicle profiles can then define the target vehicle defaults.
+The defaults should make the module useful against a single ArduPilot-style
+vehicle first. The GCS-side identity defaults (sysid 255 / compid 190,
+MAV_TYPE_GCS heartbeat) live on the Local Identity node.
 
 ## 7. Vehicle Type Is Not Dialect
 
@@ -267,42 +439,36 @@ But they may have different defaults:
 
 ```text
 Copter Profile
-- profile type: copter
+- vehicle family: copter
 - dialect: ardupilotmega
 - default target system: 1
-- heartbeat type: MAV_TYPE_QUADROTOR or GCS depending on source identity
 - preferred mission item type: MISSION_ITEM_INT
 
 Rover Profile
-- profile type: rover
+- vehicle family: rover
 - dialect: ardupilotmega
 - default target system: 2
-- heartbeat type: MAV_TYPE_GROUND_ROVER or GCS depending on source identity
 - preferred mission item type: MISSION_ITEM_INT
 
 Plane Profile
-- profile type: plane
+- vehicle family: plane
 - dialect: ardupilotmega
 - default target system: 3
-- heartbeat type: MAV_TYPE_FIXED_WING or GCS depending on source identity
 - preferred mission item type: MISSION_ITEM_INT
 ```
 
-The dialect defines the message dictionary. The profile defines how this Node-RED runtime should behave when dealing with a specific MAVLink system or role.
+The dialect defines the message dictionary. The Vehicle Profile defines what the ADDRESSED vehicle means to this runtime: its family (for mode tables and parameter metadata), firmware conventions, and target defaults.
 
-A profile's role is its own MAVLink identity, not the target's vehicle type. A `companion-computer` profile (a Raspberry Pi or other onboard controller) announces itself as `MAV_TYPE_ONBOARD_CONTROLLER` with `MAV_AUTOPILOT_INVALID`, and suggests source component id `191` (`MAV_COMP_ID_ONBOARD_COMPUTER`) while leaving the source system id user-configurable — an onboard companion normally shares its vehicle's system id but keeps its own component id. This role is independent of firmware, dialect, and the target vehicle type, so the same preset works with copters, planes, rovers, boats, and subs on ArduPilot, PX4, or a custom stack.
-
-```text
-Companion Computer Profile
-- profile type: companion-computer
-- heartbeat type: MAV_TYPE_ONBOARD_CONTROLLER
-- heartbeat autopilot: MAV_AUTOPILOT_INVALID
-- source component id: 191 (MAV_COMP_ID_ONBOARD_COMPUTER), user-overridable
-- source system id: vehicle SysID (commonly 1), user-configurable
-- default target system/component: vehicle autopilot (commonly 1 / 1)
-```
+Who Node-RED itself is on the wire is a different question with a different owner: the Local Identity config node (5.5.1) carries the source SysID/CompID and the HEARTBEAT identity, with role presets for GCS (`MAV_TYPE_GCS`, sysid 255 / compid 190) and companion computer (`MAV_TYPE_ONBOARD_CONTROLLER`, compid 191 / `MAV_COMP_ID_ONBOARD_COMPUTER`, sharing the vehicle's system id). The same Vehicle Profile works unchanged whether Node-RED speaks as a GCS or as an onboard companion — identity never leaks into the target description.
 
 ## 8. Connection Config Node
+
+> **v3 (#228):** in addition to transport/session state, the connection now
+> requires exactly one **default Local Identity**, owns the signing **link id**,
+> and owns all per-link channel state via `LinkState` (sequence, signing
+> timestamps, replay, detected versions). Additional local identities transmit
+> only through an explicit, disabled-by-default binding list. See
+> [section 5.5](#55-architecture-local-identity-vehicle-profile-connection-228).
 
 The connection config node owns transport and session state.
 
@@ -334,7 +500,7 @@ Suggested fields:
 ```text
 Name
 Default profile
-Transport: serial | udp-peer | udp-in | udp-out | tcp-client | tcp-server
+Transport: udp | serial | tcp  (role derived from field presence, #243)
 Serial path
 Serial baud
 Serial data bits
@@ -402,7 +568,7 @@ Most users start here:
 
 ```text
 Connection: Copter UDP 14550
-Transport: udp-peer
+Transport: udp
 Bind: 0.0.0.0:14550
 Mode: single-profile
 Profile: Copter
@@ -417,7 +583,7 @@ Listen on UDP 14550.
 Decode inbound packets.
 Only accept sysid 1 unless configured otherwise.
 Treat accepted packets as belonging to Copter Profile.
-Send replies to the learned UDP peer if udp-peer mode is used.
+Send replies to the learned UDP peer (or the fixed remote when one is set).
 ```
 
 ### 9.2 Routed UDP Mode
@@ -426,7 +592,7 @@ Advanced users may receive multiple MAVLink systems on one UDP socket:
 
 ```text
 Connection: Swarm UDP 14550
-Transport: udp-peer
+Transport: udp
 Bind: 0.0.0.0:14550
 Mode: routed
 
@@ -495,12 +661,10 @@ canonical reference; the connection editor's route picker stores it for you):
 ]
 ```
 
-A plain profile name is accepted for backward compatibility only while exactly
-one profile config node has that name. A route whose profile reference cannot
-be resolved rejects its packets and reports the misconfiguration loudly (at
-deploy time and once per packet identity) — it must never silently fall back
-to the default profile, which would decode, signature-check, and label the
-packet with the wrong dialect.
+A route whose profile config-node id cannot be resolved rejects its packets and
+reports the misconfiguration loudly (at deploy time and once per packet
+identity) — it must never silently fall back to the default profile, which
+would decode, signature-check, and label the packet with the wrong dialect.
 
 Routing decisions should be deterministic.
 
@@ -534,7 +698,7 @@ routed mode: reject unmatched and emit warning/status event
 Simple architecture:
 
 ```text
-[mavlink-ai-profile: Copter]
+[mavlink-ai-vehicle: Copter]
           ^
           |
 [mavlink-ai-connection: Copter UDP]
@@ -551,9 +715,9 @@ Simple architecture:
 Routed architecture:
 
 ```text
-[mavlink-ai-profile: Copter] <--- route 1:*
-[mavlink-ai-profile: Rover]  <--- route 2:*
-[mavlink-ai-profile: Plane]  <--- route 3:*
+[mavlink-ai-vehicle: Copter] <--- route 1:*
+[mavlink-ai-vehicle: Rover]  <--- route 2:*
+[mavlink-ai-vehicle: Plane]  <--- route 3:*
 
 [mavlink-ai-connection: UDP 14550]
           |
@@ -591,10 +755,12 @@ connection.sendRaw(buffer, options)
 connection.subscribe(filter, callback)
 connection.unsubscribe(subscriptionId)
 connection.getStatus()
-connection.getProfileForPacket(packet)
-connection.resolveProfile(idOrUniqueName) // throws PROFILE_UNRESOLVED/PROFILE_AMBIGUOUS
+connection.getRouteDecision(packet) // {accepted, profile, reason?} (#196)
+connection.resolveProfile(id) // throws PROFILE_UNRESOLVED
 connection.acquireLock(lockName, owner, options)
 connection.releaseLock(lockName, owner)
+connection.getVehicleCapabilities(sysid, compid) // cached AUTOPILOT_VERSION bits (#233)
+connection.requestVehicleCapabilities(opts) // fire-and-forget probe, once per identity
 ```
 
 The profile node should expose:
@@ -876,6 +1042,8 @@ The module needs stable message contracts. Do not let every node invent its own 
     sysid: 1,
     compid: 1,
     profile: "Copter",
+    connection: "Copter UDP",
+    connection_id: "a1b2c3d4e5f6a7b8",
     fields: {
       type: "MAV_TYPE_QUADROTOR",
       autopilot: "MAV_AUTOPILOT_ARDUPILOTMEGA",
@@ -891,7 +1059,7 @@ The module needs stable message contracts. Do not let every node invent its own 
     },
     transport: {
       name: "Copter UDP 14550",
-      type: "udp-peer",
+      type: "udp",
       remoteAddress: "127.0.0.1",
       remotePort: 14550
     },
@@ -899,6 +1067,35 @@ The module needs stable message contracts. Do not let every node invent its own 
   }
 }
 ```
+
+**Connection identity (#240).** `connection_id` is the canonical Connection
+config-node id (with `connection` as its display name). It is the stable
+identity per-link state keys on: a Profile can be reused by several
+Connections, so `profile_id` cannot disambiguate links, and reusing common
+wire identities (vehicle sysid 1/compid 1) across separate links is normal.
+The Filter node and the subscription registry include it in their rate-limit
+and changed-only keys so two links carrying the same identity never suppress
+each other; rejected and decode-error payloads carry the same identity, and a
+message without one (not produced by this package) falls back to a shared
+legacy bucket.
+
+**Per-message endpoint (#239).** `transport.remoteAddress` / `remotePort` name
+the actual source of the transport read that carried *this* packet — the UDP
+datagram's sender, or the tcp server-role client socket (which additionally stamps
+its per-client `clientId`) — not the connection's configured or fallback
+remote, so on a multi-peer link every decoded message says which endpoint sent
+it. The remaining `transport` fields (`name`, `type`, bind/remote config)
+describe the connection-wide link. The same context rides on rejected and
+decode-error diagnostics. Serial has no network endpoint, so these fields are
+absent there. Attribution rule: a packet belongs to the read that *completed*
+its frame — frames concatenated in one read share that read's endpoint, and a
+frame split across reads (abnormal for UDP, routine for TCP) reports the
+completing read's. Framing state is keyed per stream (per tcp server client,
+per UDP source endpoint, one shared stream for serial/tcp client-role), so the
+completing read is by construction from the same endpoint that started the
+frame — one peer's partial or phantom bytes can never buffer onto another
+peer's datagram, and a frame recovered by the splitter's resync always carries
+its own sender's endpoint.
 
 **64-bit integer fields.** MAVLink `int64_t` / `uint64_t` fields (e.g.
 `time_usec`) carry more range than a JavaScript `Number` can hold without loss
@@ -931,7 +1128,8 @@ accepts those strings (case-insensitively, plus the `inf` abbreviation) on
   topic: "mavlink/send",
   payload: {
     name: "COMMAND_LONG",
-    profile: "Copter",
+    vehicleProfile: "copter-profile-id",  // which vehicle/dialect (config-node id)
+    localIdentity: "",                     // optional: transmit as a non-default identity
     target_system: 1,
     target_component: 1,
     fields: {
@@ -943,6 +1141,11 @@ accepts those strings (case-insensitively, plus the `inf` abbreviation) on
 }
 ```
 
+> The target-facing reference is `vehicleProfile` (config-node id).
+> `localIdentity` is an optional override that selects an *attached* Local
+> Identity; omitted, the message transmits as the connection's default identity.
+> The Vehicle Profile never determines the local identity.
+
 ### 14.3 Raw Message
 
 ```js
@@ -952,21 +1155,37 @@ accepts those strings (case-insensitively, plus the `inf` abbreviation) on
 }
 ```
 
-### 14.4 Status Message
+### 14.4 Status
+
+Connection state (`connecting`, `connected`, `listening`, `reconnecting`,
+`error`, `closed`) is surfaced two ways, both driven by the same structured
+payload — never as a MAVLink frame:
+
+- a **Node-RED status badge** under the In/Out/Formation/Swarm nodes attached
+  to the connection (the coloured dot: green connected, yellow waiting, red
+  error);
+- an internal **`status` event** on the connection carrying that payload, which
+  those nodes subscribe to in order to drive their badge.
 
 ```js
 {
-  topic: "mavlink/status",
-  payload: {
-    node: "mavlink-ai-connection",
-    connection: "Copter UDP 14550",
-    state: "connected",
-    transport: "udp-peer",
-    timestamp: 1782849600000,
-    detail: "Listening on 0.0.0.0:14550"
-  }
+  node: "mavlink-ai-connection",
+  connection: "Copter UDP 14550",
+  state: "connected",
+  transport: "udp",
+  timestamp: 1782849600000,
+  detail: "Listening on 0.0.0.0:14550"
 }
 ```
+
+Status is **not** emitted as a `mavlink/status` flow message. Node-RED is a
+GCS or a companion, and in neither role can a ground-side flow usefully react
+to a link change: as a GCS the flight controller owns link-loss behaviour (its
+GCS failsafe flies RTL, and a dropped link can't carry a command anyway); as a
+companion the on-airframe link doesn't meaningfully drop. Link-loss is the
+flight controller's job, so connection state is observed via the badge/event
+above, and a failed send still surfaces as `mavlink/error` (§14.5) — which
+*is* a flow message, because an operational failure is actionable in a flow.
 
 ### 14.5 Error Message
 
@@ -1024,7 +1243,6 @@ Cached or user-provided dialects may live under:
 ```text
 /data/mavlink/dialects/
 ```
-
 ### Trusted operator boundary
 
 The Node-RED editor/admin API is a trusted operator surface: it can configure
@@ -1039,6 +1257,7 @@ data, not executable code. Deployers must keep the Node-RED admin interface
 authenticated and off the public internet. This trust decision does not weaken
 the runtime's separate vehicle-safety obligations: MAVLink/control input must
 remain validated and fail closed when stale, malformed, or unsafe.
+
 
 Bad behavior:
 
@@ -1064,12 +1283,22 @@ Silent fallback is evil because it creates fake success. The node looks alive wh
 
 ## 16. Protocol Layer
 
+> **v3 (#192, #228):** the codec is dialect-scoped only. Source identity,
+> sequence numbers, signing timestamps, replay memory, and detected peer wire
+> versions are **not** codec state — they live in the connection-owned
+> `LinkState` (`lib/protocol/link-state.js`) and are passed to `encode()` per
+> call. Inbound signature verification is the pure module function
+> `verifyInboundPacket(packet, policy)`. This is what keeps one logical
+> `(sysid, compid, link id)` stream correct across routed profiles and codec
+> rebuilds. See [section 5.5.8](#558-signing-and-channel-state-ownership-192).
+
 Protocol code should be isolated behind a wrapper.
 
 Suggested files:
 
 ```text
 lib/protocol/mavlink-codec.js
+lib/protocol/link-state.js
 lib/protocol/message-normalizer.js
 lib/protocol/enum-resolver.js
 lib/protocol/message-validator.js
@@ -1090,49 +1319,65 @@ Responsibilities:
 
 Node files should not need to know the ugly details of `node-mavlink` usage. They should call wrapper methods.
 
+**Field-scoped enum resolution (#153).** The XML declares which enum backs each
+field; the compiled `mavlink-mappings` JS drops that association, but the
+package's shipped `.d.ts` declarations retain it as the property types of each
+message class, and the runtime XML compiler reads the `enum=` attribute
+directly. Encode-time name resolution uses that association: on a field with a
+declared enum, a name resolves against that enum only (a member of an
+unrelated enum fails with the expected enum named — it used to resolve
+globally, so `HEARTBEAT.type: 'MAV_STATE_ACTIVE'` silently encoded MavState 4
+as a MavType), and the command workflow resolves command names against MavCmd
+only. Fields with no declared enum — COMMAND_LONG's generic params
+legitimately receive mode/flag members — keep global resolution, as does any
+dialect whose association metadata is unavailable. Numbers and numeric strings
+always pass through, so raw and dialect-external ids stay usable.
+
+**Splitter resync (#153).** node-mavlink's stock packet splitter skips the
+full header-declared length of a frame whose msgid has no CRC-extra entry —
+trusting a length byte it could not validate, so a false magic byte in line
+noise could claim up to 280 bytes and swallow every real frame in that window.
+The codec's splitter subclass treats unvalidatable data like a CRC failure:
+advance one byte and rescan (the MAVLink C library / pymavlink strategy). A
+genuinely-unknown message costs a bounded byte-wise rescan of its own payload;
+real traffic never pays it, because the connection's merged CRC table covers
+every message id any routed profile can decode.
+
 ## 17. Transport Handling
 
 Transport belongs to the connection layer.
 
-Supported transports:
+Supported transports (#243 — three protocols, role from field presence):
 
 ```text
-serial
-udp-peer
-udp-in
-udp-out
-tcp-client
-tcp-server
+udp     always a peer: binds (explicit port, or ephemeral when blank), learns
+        validated senders, sends to the fixed remote when set, else to
+        learned peers. Blank bind + blank remote is rejected at deploy.
+serial  device path + baud.
+tcp     exactly one role: a filled remote host/port dials out (client); a
+        filled bind port accepts inbound (server). Both or neither is
+        rejected at deploy.
 ```
+
+The pre-#243 mode names (`udp-peer`, `udp-in`, `udp-out`, `tcp-client`,
+`tcp-server`) are rejected everywhere — a deliberate pre-1.0 clean break with
+no legacy remapping.
 
 ### 17.1 UDP
 
-UDP modes:
+Every UDP socket is a peer. `udp` is the default for GCS/SITL style usage.
 
-```text
-udp-in    listen only
-udp-out   send only
-udp-peer  listen, learn peer, and reply
-```
+Peer tracking learns the remote endpoint per sysid, with a manual remote
+host/port override available as the default destination for outbound.
 
-`udp-peer` should be the likely default for GCS/SITL style usage.
-
-UDP peer tracking should remember the most recent valid sender for a route/profile when configured to do so.
-
-Questions to decide during implementation:
-
-```text
-- Should peer tracking be global per connection?
-- Per sysid?
-- Per sysid/compid?
-- Manually pinned remote host/port only?
-```
-
-Likely default:
-
-```text
-udp-peer learns remote endpoint per sysid, with manual remote host/port override available.
-```
+Peer learning trust boundary (#85, #239): receiving a datagram commits
+nothing. The transport commits an endpoint (fallback peer / per-sysid mapping)
+only when the connection confirms it after the packet passes CRC/framing,
+route acceptance, and the signature policy — and the endpoint committed is the
+source of the datagram that carried that validated packet, delivered
+per-read through the decoder rather than looked up from a mutable
+latest-claimant table, so a forged datagram racing a genuine one can never be
+the endpoint promoted.
 
 ### 17.2 Serial
 
@@ -1151,14 +1396,9 @@ Serial is optional. The module must not require `serialport` for UDP/TCP users.
 
 ### 17.3 TCP
 
-TCP modes:
-
-```text
-tcp-client
-tcp-server
-```
-
-TCP is secondary to UDP and serial for initial development.
+One `tcp` transport whose role is derived once at deploy: a filled remote
+host/port dials out (client); a filled bind port accepts inbound (server);
+exactly one must be set. TCP is secondary to UDP and serial.
 
 ## 18. Dependency Rules
 
@@ -1248,13 +1488,18 @@ A subscription should include filters:
 {
   messageNames: ["HEARTBEAT", "GLOBAL_POSITION_INT"],
   messageIds: [0, 33],
-  sysid: 1,
-  compid: "*",
+  sysids: [1],        // empty/absent = accept all systems
+  compids: [],        // empty/absent = accept all components
   profile: "Copter",
   rateLimitHz: 5,
-  raw: false
+  changedOnly: false
 }
 ```
+
+Id filters are plural arrays and fail closed (#280): any supplied entry that
+is not an integer MAVLink id (0-255) throws `BAD_FILTER` at subscribe time
+rather than being dropped — a malformed list must never silently widen into
+an accept-everything wildcard.
 
 The connection should decode once, then distribute normalized messages to matching subscribers.
 
@@ -1300,7 +1545,35 @@ Strict priority alone is unsafe for the background band. Sustained priority ≤2
 - **Age promotion.** A queued item's *effective* priority improves by one band per `agePromotionMs` (default 2000) it has waited; effective-priority ties break in favor of the older item. A parked heartbeat therefore ages up to the flood's band, becomes the oldest item in it, and drains ahead — bounding its worst-case wait instead of allowing indefinite starvation. Promotion is clamped one band above emergency: an item already in band 0 stays there, and a non-emergency item (band ≥1) never ages below band 1 no matter how long it waits. This keeps the emergency band inviolate — an arm/mode/emergency send always cuts through a backlog rather than queueing behind a stale normal/background item that merely aged (the age tie-break means a same-band clamp would not suffice; the floor must sit strictly above band 0).
 - **Drop-superseded coalescing.** Enqueuing with a `coalesceKey` drops any still-queued (not in-flight) item sharing that key, resolving it (the newer send carries the same intent). The heartbeat tick uses `coalesceKey: 'heartbeat'` so at most one heartbeat is ever queued behind a slow transport rather than a growing backlog of stale copies.
 
+### 21.1 Send-priority policy (#241)
+
+Every producer assigns its band explicitly from `lib/runtime/send-priority.js` — the queue default is never relied on implicitly:
+
+```text
+CRITICAL (0)    only the listed MAV_CMDs, matched by resolved numeric id (never
+                guessed from arbitrary messages): COMPONENT_ARM_DISARM (400),
+                DO_SET_MODE (176), DO_FLIGHTTERMINATION (185), DO_PARACHUTE (208).
+                Assigned by the command workflow (command/payload/fan-out
+                await-ack paths, retransmits included), the payload node's
+                direct sends, and stamped as msg.priority on the command node's
+                build-only output for the Out node to forward.
+ELEVATED (1)    Move setpoints (one-shot and streamed): their cadence keeps
+                OFFBOARD/GUIDED alive, so they must not sit behind bulk traffic.
+                Also the age-promotion floor, so nothing non-critical starves.
+NORMAL (2)      mission and param protocol traffic, payload camera/gimbal verbs,
+                non-critical commands.
+BACKGROUND (3)  periodic heartbeats, coalesced per identity.
+```
+
+The Out node honors an advanced explicit override — `msg.priority`, truncated to an integer and clamped to [0, 3]; absent or non-numeric means the queue default — so a flow-authored kill switch can claim the critical band without the policy guessing. Queue priority cannot rescue an already-blocked transport write; the per-write completion deadline (#237, §17) is the guard on that side.
+
 ## 22. Heartbeat Design
+
+> **v3 (#228):** heartbeat *identity* (the `MAV_TYPE`/autopilot fields) is owned
+> by the Local Identity; *whether/how often* to send stays connection-owned. The
+> connection's Heartbeat toggle drives the default identity's heartbeat; each
+> additional identity opts into its own heartbeat per binding. Coalescing is
+> keyed per identity so one identity's heartbeat never replaces another's.
 
 Heartbeat is both simple and surprisingly easy to place badly.
 
@@ -1314,16 +1587,16 @@ Option B: mavlink-ai-heartbeat visible node generates HEARTBEAT messages.
 v2 should start with Option A:
 
 ```text
-Connection can send heartbeat using profile defaults.
+Connection can send heartbeat using the Local Identity's values.
 ```
 
 A visible heartbeat node can be added later if flow-level heartbeat control becomes important.
 
-Heartbeat settings belong partly to profile and partly to connection:
+Heartbeat settings split between the Local Identity and the connection (5.5.7):
 
 ```text
-Profile: heartbeat identity values.
-Connection: whether to send heartbeat and interval.
+Local Identity: heartbeat identity values (MAV_TYPE, autopilot, base defaults).
+Connection: whether to send heartbeat and interval (per attached identity).
 ```
 
 ## 23. Mission Locking
@@ -1426,18 +1699,16 @@ Do not start implementation with mission. Mission depends on profile, protocol, 
 
 Status should be structured, not random strings.
 
-Good status:
+Good status (the structured payload behind the node badge / `status` event —
+see §14.4; not a flow message):
 
 ```js
 {
-  topic: "mavlink/status",
-  payload: {
-    node: "mavlink-ai-connection",
-    connection: "Copter UDP 14550",
-    state: "connected",
-    transport: "udp-peer",
-    detail: "Listening on 0.0.0.0:14550"
-  }
+  node: "mavlink-ai-connection",
+  connection: "Copter UDP 14550",
+  state: "connected",
+  transport: "udp",
+  detail: "Listening on 0.0.0.0:14550"
 }
 ```
 
@@ -1447,7 +1718,7 @@ Good error:
 {
   topic: "mavlink/error",
   payload: {
-    node: "mavlink-ai-profile",
+    node: "mavlink-ai-vehicle",
     code: "DIALECT_LOAD_FAILED",
     message: "Unable to load dialect ardupilotmega",
     context: {
@@ -1502,8 +1773,8 @@ Suggested repo layout:
 
 ```text
 nodes/
-  mavlink-ai-profile.js
-  mavlink-ai-profile.html
+  mavlink-ai-vehicle.js
+  mavlink-ai-vehicle.html
   mavlink-ai-connection.js
   mavlink-ai-connection.html
   mavlink-ai-in.js
@@ -1583,13 +1854,9 @@ Do not keep everything in root-level node files forever. That is how v1 becomes 
 
 ### 27.1 JSDoc and Code Documentation
 
-JSDoc is the project's comment format, used in lieu of any other type of comment. It is part of the code-quality standard expected for CodeRabbit review compliance. Every comment that explains code — whether it documents a declaration or a strictly local implementation detail inside a function body — is written as a JSDoc block (`/** ... */`). Ordinary `//` line comments and plain `/* ... */` block comments are not used for commentary.
+JSDoc (`/** ... */`) is the project's **documentation** format: use it for what a reader needs in order to *use* or safely change code — declarations and behavior worth documenting (see the list below). It should read as a contract, using the applicable tags rather than prose alone.
 
-This standard was adopted mid-project and applies **going forward**: new code and modified code follow it, while pre-existing `//` commentary is grandfathered. Convert old comments opportunistically when editing the code around them; do not run bulk rewrite sweeps whose only change is comment style.
-
-The only non-JSDoc comments permitted are machine-read directives that tooling requires in a specific syntax and that carry no prose explanation of their own — for example `// eslint-disable-next-line ...`, `/* istanbul ignore next */` / coverage pragmas, and a `#!` shebang. If such a directive needs justification, put the justification in a JSDoc block; keep the directive line itself to the bare pragma.
-
-Prefer to capture rationale in the enclosing declaration's JSDoc. When a note is genuinely local to a spot inside a function body, still write it as a `/** ... */` block immediately above the statement it explains, not as a `//` line. Documentation must never be written as `//` on a function, class, method, module, typedef, field, or other declaration.
+Ordinary `//` line comments are fine for short inline notes that explain *why* a specific line is the way it is — the margin notes that don't belong in a declaration's doc block (e.g. `value >>> 0; // JS bitwise is signed 32-bit`). Prefer capturing durable rationale in the enclosing declaration's JSDoc; reach for an inline `//` when the note is genuinely local to one statement. This matches normal JavaScript convention and the greenfield spec §3.1; there is no blanket ban on `//`.
 
 At minimum, add JSDoc to:
 
@@ -1694,7 +1961,7 @@ Build in this order:
 
 ```text
 1. package.json and Node-RED node registration skeleton
-2. mavlink-ai-profile config node
+2. mavlink-ai-vehicle config node
 3. dialect loader and protocol wrapper
 4. mavlink-ai-connection config node
 5. UDP transport
@@ -1746,7 +2013,7 @@ mavlink-ai-connection owns dialect.
 Better:
 
 ```text
-mavlink-ai-profile owns dialect.
+mavlink-ai-vehicle owns dialect.
 mavlink-ai-connection references profile(s).
 ```
 
@@ -1825,9 +2092,10 @@ one UDP port -> multiple sysids -> multiple profiles -> separate flows
 The architecture should stay boring:
 
 ```text
-Profile owns protocol identity.
-Connection owns the wire.
-Routing maps packets to profiles.
+Local Identity owns who we are on the wire.
+Vehicle Profile owns what the addressed vehicle means.
+Connection owns the wire (and signing).
+Routing maps packets to Vehicle Profiles.
 Nodes build, filter, send, receive, and run workflows.
 ```
 
