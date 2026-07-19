@@ -226,6 +226,19 @@ test('a health input is forwarded to connection.setAdvertisedHealth', async (t) 
   assert.strictEqual(calls[0].input.ttl_s, 10);
 });
 
+test('a null-payload message does not spuriously trigger the health path (#307 greptile 4/5)', async (t) => {
+  const { RED, conn, node } = setup();
+  t.after(() => RED.close(node));
+  const calls = [];
+  conn.setAdvertisedHealth = (ref, input) => { calls.push({ ref, input }); return input; };
+  /** A null payload made the `msg.payload && msg.payload.health` fallback null,
+   * which passed the old `!== undefined` gate and mis-fired the health path. */
+  const { collected } = await RED.inject(node, { command: 'snapshot', payload: null });
+  assert.strictEqual(calls.length, 0, 'no health assertion attempted for a null payload');
+  const err = collected.map((o) => o[1]).find(Boolean);
+  assert.ok(!err || err.payload.code !== 'INVALID_HEALTH', 'no spurious INVALID_HEALTH error emitted');
+});
+
 test('a rejected health assertion surfaces a structured error on output 2', async (t) => {
   const { RED, conn, node } = setup();
   t.after(() => RED.close(node));

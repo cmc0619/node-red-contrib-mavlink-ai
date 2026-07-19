@@ -270,7 +270,12 @@ module.exports = function (RED) {
     node.on('input', (msg, send, done) => {
       const command = msg.command || (msg.payload && msg.payload.command);
       const health = msg.health !== undefined ? msg.health : (msg.payload && msg.payload.health);
-      if (health !== undefined) {
+      // Gate on `!= null` (not `!== undefined`): a null `msg.payload` makes the
+      // `msg.payload && msg.payload.health` fallback evaluate to `null`, which
+      // would otherwise pass an `!== undefined` gate and mis-route an ordinary
+      // (e.g. snapshot or empty) message into the health path — firing a
+      // spurious INVALID_HEALTH error and discarding the real request.
+      if (health != null) {
         if (!node.connection || typeof node.connection.setAdvertisedHealth !== 'function') {
           send([null, { topic: 'mavlink/error', payload: errorPayload({
             node: 'mavlink-ai-vehicle-state', code: 'CONNECTION_UNAVAILABLE',
