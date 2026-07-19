@@ -1243,6 +1243,7 @@ Cached or user-provided dialects may live under:
 ```text
 /data/mavlink/dialects/
 ```
+
 ### Trusted operator boundary
 
 The Node-RED editor/admin API is a trusted operator surface: it can configure
@@ -1257,7 +1258,6 @@ data, not executable code. Deployers must keep the Node-RED admin interface
 authenticated and off the public internet. This trust decision does not weaken
 the runtime's separate vehicle-safety obligations: MAVLink/control input must
 remain validated and fail closed when stale, malformed, or unsafe.
-
 
 Bad behavior:
 
