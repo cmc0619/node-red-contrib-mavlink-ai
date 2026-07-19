@@ -106,6 +106,19 @@ test('a sensor that debuts unhealthy emits an edge; a healthy debut stays silent
   assert.strictEqual(changes[0].to.healthy, false);
 });
 
+test('a sensor bit disappearing from all masks emits a loss edge', () => {
+  const prev = snap({ health: { sensors: [
+    { bit: 0, name: 'GYRO', healthy: true },
+    { bit: 2, name: 'MAG', healthy: true }
+  ] } });
+  const next = snap({ health: { sensors: [{ bit: 0, name: 'GYRO', healthy: true }] } });
+  const changes = diffVehicleState(prev, next, 1).filter((e) => e.event === 'sensor_health_change');
+  assert.strictEqual(changes.length, 1, 'the vanished sensor fires exactly once');
+  assert.strictEqual(changes[0].from.name, 'MAG');
+  assert.strictEqual(changes[0].from.healthy, true, 'was healthy');
+  assert.strictEqual(changes[0].to.healthy, null, 'no longer observed');
+});
+
 test('an autopilot appearing on an already-known vehicle emits armed/disarmed (no null-guard suppression)', () => {
   /**
    * prev is non-null (the vehicle was already known from a non-autopilot
