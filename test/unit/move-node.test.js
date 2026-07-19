@@ -507,3 +507,26 @@ test('a blank Max stream field keeps the default TTL, only explicit 0 opts out (
   );
   assert.strictEqual(zero.node.maxStreamSeconds, 0, 'explicit 0 stays the unlimited opt-out');
 });
+
+test('stream expiry fires on time even when the TTL is shorter than a tick interval (#216 review)', async (t) => {
+  /**
+   * Expiry used to be checked only inside streamTick, so at the minimum
+   * 0.2 Hz rate a short TTL waited up to 5 s for the next tick. The
+   * deadline now arms its own timeout, independent of the send interval.
+   */
+  const { RED, node } = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 0.2, maxStreamSeconds: 0.05 },
+    { withConnection: true }
+  );
+  t.after(() => RED.close(node));
+  const emitted = [];
+  await RED.inject(node, { payload: {} });
+  node.send = (m) => emitted.push(m);
+  assert.ok(node._streamTimer, 'streaming');
+
+  /** Well before the 5 s tick interval, the 50 ms TTL must have fired. */
+  await new Promise((r) => setTimeout(r, 150));
+  assert.strictEqual(node._streamTimer, null, 'expired without waiting for a tick');
+  assert.strictEqual(emitted.length, 1);
+  assert.strictEqual(emitted[0].payload.stream, 'expired');
+});

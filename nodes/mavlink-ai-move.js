@@ -62,6 +62,7 @@ module.exports = function registerMavlinkAiMove(RED) {
      * never the unlimited opt-out that Number('') === 0 would imply. */
     node.maxStreamSeconds = clampMaxStreamSeconds(toNum(config.maxStreamSeconds, NaN));
     node._streamDeadline = null;
+    node._streamExpiryTimer = null;
     node._streamTimer = null;
     node._streamState = null;
     node._streamErrored = false;
@@ -252,6 +253,7 @@ module.exports = function registerMavlinkAiMove(RED) {
         };
         /** Deadman: every input arms/refreshes the TTL from now (#216). */
         node._streamDeadline = node.maxStreamSeconds > 0 ? Date.now() + node.maxStreamSeconds * 1000 : null;
+        armStreamExpiry(node);
         startStream(node);
         node.status({ fill: 'green', shape: 'dot', text: `streaming ${labelFor(built.name)} @ ${node.streamRateHz} Hz` });
         return done();
@@ -368,22 +370,39 @@ function clampStreamRate(hz) {
  * @param {object} node
  * @returns {void}
  */
-function streamTick(node) {
-  /**
-   * Stream TTL (#216): past the deadline the stream stops for good — the
-   * status shows why and ONE expiry message goes out on the output, so a
-   * flow can react (re-arm, land, alert). Checked before the in-flight
-   * guard: a slow transport must not be able to starve the expiry.
-   */
-  if (node._streamDeadline != null && Date.now() >= node._streamDeadline) {
+/**
+ * Arm (or re-arm) the stream TTL as its own timeout (#216): expiry must fire
+ * at the deadline, not at the next send tick — at the minimum 0.2 Hz rate a
+ * short TTL would otherwise wait up to 5 s. Past the deadline the stream
+ * stops for good: the status shows why and ONE expiry message goes out on
+ * the output so a flow can react (re-arm, land, alert). Unref'd like the
+ * send timer so it never holds the process open.
+ *
+ * @param {object} node
+ * @returns {void}
+ */
+function armStreamExpiry(node) {
+  if (node._streamExpiryTimer) {
+    clearTimeout(node._streamExpiryTimer);
+    node._streamExpiryTimer = null;
+  }
+  if (node._streamDeadline == null) {
+    return;
+  }
+  node._streamExpiryTimer = setTimeout(() => {
     stopStream(node);
     node.status({ fill: 'yellow', shape: 'ring', text: 'stream expired' });
     node.send({
       topic: 'move/stream',
       payload: { stream: 'expired', max_stream_seconds: node.maxStreamSeconds }
     });
-    return;
+  }, node._streamDeadline - Date.now());
+  if (typeof node._streamExpiryTimer.unref === 'function') {
+    node._streamExpiryTimer.unref();
   }
+}
+
+function streamTick(node) {
   const s = node._streamState;
   /**
    * Skip this tick while a previous send is still in flight. On a transport
@@ -476,6 +495,10 @@ function stopStream(node) {
   if (node._streamTimer) {
     clearInterval(node._streamTimer);
     node._streamTimer = null;
+  }
+  if (node._streamExpiryTimer) {
+    clearTimeout(node._streamExpiryTimer);
+    node._streamExpiryTimer = null;
   }
   node._streamDeadline = null;
   node._streamState = null;
