@@ -14,7 +14,7 @@
 - Pure lib modules use CommonJS, no Node-RED imports, injectable clock via `opts.now` (default `Date.now`) — copy the `lib/swarm/vehicle-registry.js` pattern.
 - Every emitted payload carries `contract: 'vehicle-state/1'`.
 - No back-compat shims / cross-version fallbacks (AGENTS.md rule 7) — this is new code.
-- Absent sections are `null`, never zero-filled; sentinel wire values (`-1`, `UINT16_MAX`=65535, `INT32_MAX`) become `null`, not the raw sentinel.
+- Absent sections are `null`, never zero-filled; sentinel wire values (`-1`, `UINT16_MAX`=65535, `INT32_MAX`) become `null`, not the raw sentinel. **Sole carve-out (`landed`):** `landed` is always present as `{ state, state_name }` with `state: 'unknown'` until `EXTENDED_SYS_STATE` is seen — ArduPilot never sends that message, so a `null` there would be permanent and indistinguishable from "not wired up," whereas the `'unknown'` sentinel reads correctly. This is the deliberate, documented exception to the null rule (spec §sections table).
 - A fresh HEARTBEAT never refreshes another section's `updated_at` or clears its `stale`.
 - Flight state (armed/mode/landed/position/home/gps/battery/health) is taken **only** from the autopilot component `MAV_COMP_ID_AUTOPILOT1` (compid 1); other components are presence-only.
 - Commit messages end with the two trailers used across this repo:

@@ -32,7 +32,7 @@ test('HEARTBEAT from the autopilot fills identity, armed, and mode, keyed per sy
   assert.strictEqual(s.armed, true);
   /** ArduCopter (firmware ardupilot, type copter) custom_mode 0 = STABILIZE. */
   assert.strictEqual(s.mode.custom_mode, 0);
-  assert.strictEqual(typeof s.mode.name, 'string');
+  assert.strictEqual(s.mode.name, 'STABILIZE');
 });
 
 test('a non-autopilot component is presence-only and does not own flight state', () => {
