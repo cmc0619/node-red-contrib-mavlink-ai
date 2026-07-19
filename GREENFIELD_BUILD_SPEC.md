@@ -308,9 +308,8 @@ All build/workflow nodes talk to the Out/Connection layer through a documented,
 unambiguous envelope. Its core fields are message name, vehicleProfile,
 optional localIdentity, target system/component, and semantic fields.
 
-Use vehicleProfile rather than a legacy overloaded profile field. Decoded output
-contains message name, source IDs, matched Vehicle Profile, decoded fields, raw
-packet metadata where useful, and timestamps.
+Decoded output contains message name, source IDs, matched Vehicle Profile,
+decoded fields, raw packet metadata where useful, and timestamps.
 
 Errors use stable codes plus repair instructions. Status, node.error, Catch
 semantics, and dedicated error outputs must be predictable and consistent.
