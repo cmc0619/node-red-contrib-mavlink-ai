@@ -17,9 +17,15 @@ const { MockRED } = require('../helpers/mock-red');
  * depending on identity-binding config.
  */
 
-/** Minimal identity stand-in with the methods the connection calls. */
-function identity(id) {
-  return { id, describe: () => id, getHeartbeatFields: () => ({ type: 'MAV_TYPE_ONBOARD_CONTROLLER', autopilot: 'MAV_AUTOPILOT_INVALID', base_mode: 0, custom_mode: 0, system_status: 'MAV_STATE_ACTIVE', mavlink_version: 3 }), healthDriven: true };
+/**
+ * Minimal identity stand-in with the methods the connection calls.
+ *
+ * @param {string} id
+ * @param {boolean} [healthDriven=true]
+ * @returns {object} identity stub
+ */
+function identity(id, healthDriven = true) {
+  return { id, describe: () => id, getHeartbeatFields: () => ({ type: 'MAV_TYPE_ONBOARD_CONTROLLER', autopilot: 'MAV_AUTOPILOT_INVALID', base_mode: 0, custom_mode: 0, system_status: 'MAV_STATE_ACTIVE', mavlink_version: 3 }), healthDriven };
 }
 
 /**
@@ -74,4 +80,43 @@ test('setAdvertisedHealth propagates the INVALID_HEALTH validation error', async
   conn.localIdentity = def;
   conn.resolveLocalIdentity = () => def;
   assert.throws(() => conn.setAdvertisedHealth(undefined, { health: 'nominal' }), (e) => e.code === 'INVALID_HEALTH');
+});
+
+/**
+ * The heartbeat tick's health-driven decision (#225), tested via the
+ * `_heartbeatFieldsFor` seam rather than driving a live setInterval tick —
+ * see the tick refactor in nodes/mavlink-ai-connection.js. Covers the three
+ * required outcomes for a health-driven identity: no assertion -> STANDBY,
+ * degraded -> CRITICAL, fatal -> no-send (null fields).
+ */
+test('a health-driven identity stamps the mapped system_status and stops on fatal', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-default');
+  conn.localIdentity = def;
+  conn.resolveLocalIdentity = (ref) => (ref == null || ref === def.id ? def : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+
+  // 1. no assertion -> MAV_STATE_STANDBY
+  let fields = conn._heartbeatFieldsFor(def, Date.now());
+  assert.strictEqual(fields.system_status, 'MAV_STATE_STANDBY');
+
+  // 2. degraded assertion -> MAV_STATE_CRITICAL
+  conn.setAdvertisedHealth(undefined, { health: 'degraded', ttl_s: 10 });
+  fields = conn._heartbeatFieldsFor(def, Date.now());
+  assert.strictEqual(fields.system_status, 'MAV_STATE_CRITICAL');
+
+  // 3. fatal assertion -> no frame this tick
+  conn.setAdvertisedHealth(undefined, { health: 'fatal' });
+  fields = conn._heartbeatFieldsFor(def, Date.now());
+  assert.strictEqual(fields, null);
+});
+
+test('a non-health-driven identity still yields the static MAV_STATE_ACTIVE (regression guard)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const gcs = identity('id-gcs', false);
+  const fields = conn._heartbeatFieldsFor(gcs, Date.now());
+  assert.strictEqual(fields.system_status, 'MAV_STATE_ACTIVE');
 });

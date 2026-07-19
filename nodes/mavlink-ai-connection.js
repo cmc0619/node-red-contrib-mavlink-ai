@@ -15,7 +15,7 @@ const { statusPayload } = require('../lib/util/status');
 const { toInt, toBool, parseIdListStrict } = require('../lib/util/validation');
 const { MavlinkError, toMavlinkError, errorPayload, TRANSPORT_NOT_READY_CODES } = require('../lib/util/errors');
 const { boundedSet } = require('../lib/util/bounded-map');
-const { normalizeAssertion } = require('../lib/health/advertised-health');
+const { normalizeAssertion, resolveHeartbeatStatus } = require('../lib/health/advertised-health');
 
 /**
  * Minimum HEARTBEAT interval. HEARTBEAT is a low-rate presence/status message,
@@ -2190,6 +2190,40 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
+     * Compute the HEARTBEAT fields to send for one identity's tick, applying
+     * the health-driven `system_status` override (#225). A `healthDriven`
+     * identity's status is resolved from its advertised-health record
+     * instead of the static `MAV_STATE_ACTIVE` baked into
+     * `getHeartbeatFields()`; a `fatal` assertion means a faulted component
+     * must not keep heartbeating as if present, signalled by returning
+     * `null` (the tick must skip its send this cycle). Non-health-driven
+     * identities are unaffected — their fields pass through verbatim.
+     *
+     * Exposed on `node` (rather than kept as a `tick`-local closure) so
+     * tests can drive the decision deterministically without a live timer,
+     * mirroring `node.setAdvertisedHealth` above.
+     *
+     * @param {object} identity  a resolved identity (Local Identity node or stub)
+     * @param {number} now  wall clock (ms)
+     * @returns {?object} HEARTBEAT fields to send, or null to skip the send
+     */
+    node._heartbeatFieldsFor = (identity, now) => {
+      const fields = identity.getHeartbeatFields();
+      if (!identity.healthDriven) {
+        return fields;
+      }
+      const outcome = resolveHeartbeatStatus(node._advertisedHealth.get(identity.id), now);
+      if (outcome.stop) {
+        // fatal: a faulted component must not keep heartbeating as if present.
+        // node status shows the declared fault; recovery needs a fresh assertion.
+        node.status({ fill: 'red', shape: 'ring', text: `${identity.describe()}: health fatal — heartbeat stopped` });
+        return null;
+      }
+      fields.system_status = outcome.status;
+      return fields;
+    };
+
+    /**
      * Start the periodic HEARTBEAT timers (background priority), one per
      * scheduled identity, each using that identity's own heartbeat fields.
      * No-op for schedules already running.
@@ -2217,13 +2251,13 @@ module.exports = function registerMavlinkAiConnection(RED) {
          */
         const identity = spec.identity;
         const tick = () => {
+          const fields = node._heartbeatFieldsFor(identity, Date.now());
+          if (!fields) {
+            return;
+          }
           node
             .send(
-              {
-                name: 'HEARTBEAT',
-                fields: identity.getHeartbeatFields(),
-                localIdentity: identity.id
-              },
+              { name: 'HEARTBEAT', fields, localIdentity: identity.id },
               { priority: PRIORITY.BACKGROUND, coalesceKey: `heartbeat:${identity.id}` }
             )
             .catch((err) => {
