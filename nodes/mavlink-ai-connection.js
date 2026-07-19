@@ -715,11 +715,24 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * mode. `identityRef` omitted/null targets the connection's default local
      * identity.
      *
+     * The assertion is only accepted for an identity this connection will
+     * actually read it back for: `identity.healthDriven` must be true *and*
+     * the identity must currently appear in `heartbeatSpecs()` (the default
+     * identity when heartbeating is enabled, or an outbound-enabled
+     * additional binding). Without this check `resolveLocalIdentity` would
+     * happily resolve any Local Identity config node in the flow — including
+     * one this connection never heartbeats, or one that is scheduled but not
+     * health-driven — and the caller (e.g. a vehicle-state node) would see a
+     * stored record that no tick ever reads, silently discarding the
+     * assertion (#225 review).
+     *
      * @param {?string} identityRef  a Local Identity config-node id, or null for the default
      * @param {{health: string, ttl_s?: number, note?: string}} input
      * @returns {{state: string, note: ?string, expires_at: ?number}} the stored record
-     * @throws {Error} `.code` 'UNKNOWN_IDENTITY' (unresolvable ref) or
-     *   'INVALID_HEALTH' (bad assertion).
+     * @throws {Error} `.code` 'UNKNOWN_IDENTITY' (unresolvable ref),
+     *   'INVALID_HEALTH' (bad assertion), or 'IDENTITY_NOT_HEALTH_DRIVEN'
+     *   (resolved identity is not a health-driven identity this connection
+     *   heartbeats).
      */
     node.setAdvertisedHealth = (identityRef, input) => {
       const identity = identityRef == null ? node.localIdentity : node.resolveLocalIdentity(identityRef);
@@ -729,6 +742,17 @@ module.exports = function registerMavlinkAiConnection(RED) {
         throw err;
       }
       const record = normalizeAssertion(input, Date.now());
+      const isScheduledAndHealthDriven =
+        identity.healthDriven === true && heartbeatSpecs().some((spec) => spec.identity.id === identity.id);
+      if (!isScheduledAndHealthDriven) {
+        const err = new Error(
+          `Local Identity '${identity.describe ? identity.describe() : identity.id}' cannot accept an advertised-health ` +
+            'assertion: it must be a health-driven identity (healthDriven: true) that this connection actually ' +
+            'heartbeats (the default identity with heartbeating enabled, or an outbound-enabled additional binding).'
+        );
+        err.code = 'IDENTITY_NOT_HEALTH_DRIVEN';
+        throw err;
+      }
       node._advertisedHealth.set(identity.id, record);
       return record;
     };
@@ -2272,6 +2296,61 @@ module.exports = function registerMavlinkAiConnection(RED) {
     };
 
     /**
+     * Run one heartbeat tick for `identity`: compute this cycle's fields,
+     * surface any fatal/recovery edge, then either send (background priority,
+     * coalesced *per identity* (#228) so a prior queued heartbeat for this
+     * identity is superseded rather than stacked) or, on fatal, evict any
+     * heartbeat for this identity already sitting in the queue.
+     *
+     * The eviction matters because the enqueue-time supersede in `send()`
+     * never runs on a fatal tick (it returns before calling `send`): a
+     * heartbeat queued by a *prior*, pre-fatal tick — e.g. backlogged behind
+     * a stalled/slow transport — would otherwise survive fatal and still be
+     * flushed, violating "fatal stops the heartbeat" (#225 review).
+     *
+     * Exposed on `node` (rather than kept as a `setInterval`-local closure)
+     * so tests can drive a single tick deterministically, mirroring
+     * `node._heartbeatFieldsFor` / `node._handleHeartbeatHealthEdge` above.
+     *
+     * @param {object} identity  a resolved, scheduled identity
+     * @returns {void}
+     */
+    node._heartbeatTick = (identity) => {
+      const fields = node._heartbeatFieldsFor(identity, Date.now());
+      node._handleHeartbeatHealthEdge(identity, fields);
+      if (!fields) {
+        if (node._queue) {
+          node._queue.dropCoalesced(`heartbeat:${identity.id}`);
+        }
+        return;
+      }
+      node
+        .send(
+          { name: 'HEARTBEAT', fields, localIdentity: identity.id },
+          { priority: PRIORITY.BACKGROUND, coalesceKey: `heartbeat:${identity.id}` }
+        )
+        .catch((err) => {
+          /**
+           * Expected "no link yet / link down / tearing down" states must
+           * not log an error every tick forever — heartbeats resume
+           * silently once the link is up. UDP_NO_PEER: udp hasn't
+           * learned a peer; TCP_NO_CLIENT / TCP_NOT_CONNECTED /
+           * SERIAL_NOT_OPEN: the same "nothing to send to yet" state for
+           * the other transports (each already surfaced once through
+           * transport status/error events); TRANSPORT_NOT_READY: transport
+           * not started; QUEUE_CLEARED: this node is being deactivated or
+           * closed — re-emitting that on the emitter after close() has
+           * removed its listeners would throw and take the whole process
+           * down as an unhandled rejection.
+           */
+          if (err && HEARTBEAT_EXPECTED_IDLE_CODES.has(err.code)) {
+            return;
+          }
+          node.emitter.emit('error', toMavlinkError(err, 'HEARTBEAT_FAILED'));
+        });
+    };
+
+    /**
      * Start the periodic HEARTBEAT timers (background priority), one per
      * scheduled identity, each using that identity's own heartbeat fields.
      * No-op for schedules already running.
@@ -2287,49 +2366,11 @@ module.exports = function registerMavlinkAiConnection(RED) {
         if (node._heartbeatTimers.has(spec.identity.id)) {
           continue;
         }
-        /**
-         * Send one heartbeat as this identity; surface failures through the
-         * error emitter. Sent at background priority (3) but coalesced *per
-         * identity* (#228): if a prior heartbeat is still queued behind
-         * slower-draining traffic, this tick supersedes it instead of stacking
-         * a second stale copy — and one identity's heartbeat can never replace
-         * another's queued heartbeat, because the coalesce key includes the
-         * identity. Age promotion in the outbound queue keeps the surviving
-         * heartbeat from being starved by that traffic (#150).
-         */
         const identity = spec.identity;
-        const tick = () => {
-          const fields = node._heartbeatFieldsFor(identity, Date.now());
-          node._handleHeartbeatHealthEdge(identity, fields);
-          if (!fields) {
-            return;
-          }
-          node
-            .send(
-              { name: 'HEARTBEAT', fields, localIdentity: identity.id },
-              { priority: PRIORITY.BACKGROUND, coalesceKey: `heartbeat:${identity.id}` }
-            )
-            .catch((err) => {
-              /**
-               * Expected "no link yet / link down / tearing down" states must
-               * not log an error every tick forever — heartbeats resume
-               * silently once the link is up. UDP_NO_PEER: udp hasn't
-               * learned a peer; TCP_NO_CLIENT / TCP_NOT_CONNECTED /
-               * SERIAL_NOT_OPEN: the same "nothing to send to yet" state for
-               * the other transports (each already surfaced once through
-               * transport status/error events); TRANSPORT_NOT_READY: transport
-               * not started; QUEUE_CLEARED: this node is being deactivated or
-               * closed — re-emitting that on the emitter after close() has
-               * removed its listeners would throw and take the whole process
-               * down as an unhandled rejection.
-               */
-              if (err && HEARTBEAT_EXPECTED_IDLE_CODES.has(err.code)) {
-                return;
-              }
-              node.emitter.emit('error', toMavlinkError(err, 'HEARTBEAT_FAILED'));
-            });
-        };
-        const timer = setInterval(tick, Math.max(HEARTBEAT_MIN_INTERVAL_MS, spec.intervalMs));
+        const timer = setInterval(
+          () => node._heartbeatTick(identity),
+          Math.max(HEARTBEAT_MIN_INTERVAL_MS, spec.intervalMs)
+        );
         if (typeof timer.unref === 'function') {
           timer.unref();
         }

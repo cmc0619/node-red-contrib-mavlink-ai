@@ -147,6 +147,40 @@ test('coalesceKey drops a superseded queued item and resolves it', async () => {
   assert.deepStrictEqual(written, [1, 11]);
 });
 
+test('dropCoalesced removes matching queued items and resolves their promises (#225)', async () => {
+  /**
+   * Added for #225: the connection's health-driven heartbeat tick must be
+   * able to evict an already-queued heartbeat for an identity that has just
+   * gone fatal, without enqueuing a replacement (unlike the enqueue-time
+   * `_dropSuperseded` this reuses). Dropped items resolve, not reject — the
+   * caller decided the item should no longer be sent, not that it failed.
+   */
+  let release;
+  const gate = new Promise((r) => (release = r));
+  let calls = 0;
+  const queue = new OutboundQueue(() => {
+    calls += 1;
+    return calls === 1 ? gate : Promise.resolve();
+  });
+
+  /** In-flight (blocked) item, plus two queued items sharing a coalesce key and one unrelated queued item. */
+  const inflight = queue.enqueue(Buffer.from([1]));
+  const hb1 = queue.enqueue(Buffer.from([10]), 3, undefined, { coalesceKey: 'heartbeat:id-a' });
+  const other = queue.enqueue(Buffer.from([2]), 2, undefined, { coalesceKey: 'unrelated' });
+
+  const dropped = queue.dropCoalesced('heartbeat:id-a');
+
+  assert.strictEqual(dropped, 1, 'reports how many items were dropped');
+  assert.strictEqual(queue.length, 1, 'only the matching-key item is removed; the unrelated item stays queued');
+  await hb1; // resolves (not rejects) despite never being written
+
+  /** A second call with no matches is a safe no-op. */
+  assert.strictEqual(queue.dropCoalesced('heartbeat:id-a'), 0);
+
+  release();
+  await Promise.all([inflight, other]);
+});
+
 test('onWrite fires only for actually-written buffers, never for coalesced drops', async () => {
   const onWrote = [];
   let release;
