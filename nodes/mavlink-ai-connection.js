@@ -1545,6 +1545,35 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
+     * Throttled warning for a mixed-version broadcast whose version group
+     * failed while its sibling went out (#199 review): the broadcast counts
+     * as sent (best-effort), but an entire wire-version group silently
+     * missing heartbeats/commands is a half-dead fleet link. Same throttle
+     * shape as the transport's sendPartialFailure warning (#148): warn when
+     * the failing set changes or once a minute while it persists —
+     * broadcasts fire at heartbeat rate.
+     *
+     * @param {Array<{version: string, reason: *}>} failed
+     */
+    let lastMixedWarnKey = '';
+    let lastMixedWarnAt = 0;
+    node._warnMixedPartialFailure = (failed) => {
+      const key = failed
+        .map(({ version, reason }) => `${version}:${(reason && (reason.code || reason.message)) || reason}`)
+        .sort()
+        .join('|');
+      const now = Date.now();
+      if (key === lastMixedWarnKey && now - lastMixedWarnAt < 60000) {
+        return;
+      }
+      lastMixedWarnKey = key;
+      lastMixedWarnAt = now;
+      node.warn(
+        `mavlink-ai-connection '${node.name || node.id}': mixed-version broadcast partially failed (${key})`
+      );
+    };
+
+    /**
      * Encode and enqueue a normalized outbound message (§14.2), filling target
      * defaults from the effective Vehicle Profile and stamping the source
      * identity of the resolved Local Identity (#228).
@@ -1730,7 +1759,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
          * when the other's enqueue fails, so rejecting the whole send would
          * invite a retry that duplicates delivery to the group that
          * succeeded. The send resolves while at least one group went out
-         * and rejects only when every group failed.
+         * and rejects only when every group failed. A PARTIAL failure —
+         * an entire wire-version group missing the broadcast — is a
+         * half-dead fleet link and is surfaced as a throttled warning,
+         * like the transport's own partial fan-out failures.
          */
         return Promise.allSettled(
           buffers.map(({ version, sysids: groupSysids, buffer: groupBuffer }) =>
@@ -1745,9 +1777,14 @@ module.exports = function registerMavlinkAiConnection(RED) {
             )
           )
         ).then((results) => {
-          const rejected = results.filter((r) => r.status === 'rejected');
-          if (rejected.length === results.length) {
-            throw rejected[0].reason;
+          const failed = results
+            .map((r, i) => (r.status === 'rejected' ? { version: buffers[i].version, reason: r.reason } : null))
+            .filter(Boolean);
+          if (failed.length === results.length) {
+            throw failed[0].reason;
+          }
+          if (failed.length > 0) {
+            node._warnMixedPartialFailure(failed);
           }
         });
       }

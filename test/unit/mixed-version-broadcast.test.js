@@ -233,7 +233,7 @@ test('a mixed broadcast is best-effort: one failed group does not fail the send'
   conn._transport.emit('data', enc(v2peer, 'HEARTBEAT', HB, { sysid: 4, compid: 1 }));
   await delay(10);
 
-  /** v1 group enqueue fails, v2 succeeds: the broadcast still counts. */
+  /** v1 group enqueue fails, v2 succeeds: the broadcast still counts... */
   conn._queue = {
     enqueue(buffer) {
       return buffer[0] === 0xfe ? Promise.reject(new Error('QUEUE_FULL')) : Promise.resolve();
@@ -241,6 +241,15 @@ test('a mixed broadcast is best-effort: one failed group does not fail the send'
     clear() {}
   };
   await conn.send({ name: 'HEARTBEAT', fields: HB });
+  /**
+   * ...but not silently (#303 review round 5): an entire wire-version group
+   * missing the broadcast is a half-dead fleet link, surfaced as a warning
+   * like the transport's own partial fan-out failures (#148).
+   */
+  assert.ok(
+    conn.warnings.some((w) => /mixed-version broadcast partially failed/.test(String(w))),
+    'a failed version group must be warned about'
+  );
 
   /** Every group fails: the send fails with the underlying reason. */
   conn._queue = { enqueue: () => Promise.reject(new Error('QUEUE_FULL')), clear() {} };
