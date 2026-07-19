@@ -126,6 +126,17 @@ test('battery decodes voltage/current/remaining and nulls the -1 sentinels', () 
   assert.strictEqual(s.battery.batteries[0].remaining_pct, null);
 });
 
+test('a second battery with a different id appends rather than overwriting', () => {
+  const c = clock();
+  const engine = new VehicleStateEngine({ now: c.now });
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  engine.ingest({ name: 'BATTERY_STATUS', sysid: 1, compid: 1, fields: { id: 0, voltages: [12600], current_battery: -1, battery_remaining: 80 } });
+  engine.ingest({ name: 'BATTERY_STATUS', sysid: 1, compid: 1, fields: { id: 1, voltages: [11800], current_battery: -1, battery_remaining: 60 } });
+  const s = engine.snapshot(1);
+  assert.strictEqual(s.battery.batteries.length, 2);
+  assert.strictEqual(s.battery.batteries.find((b) => b.id === 1).remaining_pct, 60);
+});
+
 test('SYS_STATUS decodes per-sensor present/enabled/healthy flags', () => {
   const c = clock();
   const engine = new VehicleStateEngine({ now: c.now });
