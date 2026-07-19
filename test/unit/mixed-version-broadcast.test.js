@@ -287,3 +287,50 @@ test('the mixed split only runs on transports that can route by sysid', async (t
   assert.strictEqual(sent.length, 1, 'fixed-destination transport: no per-version split');
   assert.strictEqual(sent[0].meta.sysids, undefined);
 });
+
+test('the split is skipped when the version groups share a learned endpoint', async (t) => {
+  /**
+   * Codex review round 3 on #303: behind a MAVLink router/bridge a v1 sysid
+   * and a v2 sysid can be learned from the SAME address:port. Splitting
+   * would deliver both encodings to that endpoint — and MAVLink2 peers
+   * parse v1 frames too, so a broadcast command could execute twice. With
+   * overlapping group endpoints the send keeps the single-encode path.
+   */
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'P', dialect: 'common', mavlinkVersion: 'auto',
+    defaultTargetSystem: 7, defaultTargetComponent: 3
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c1', name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
+  });
+  t.after(() => RED.close(conn));
+  const sent = [];
+  conn._queue = {
+    enqueue(buffer, priority, meta, opts) {
+      sent.push({ buffer, meta, opts: opts || {} });
+      return Promise.resolve();
+    },
+    clear() {}
+  };
+
+  conn._link.noteInboundMagic(0xfe, 3);
+  conn._link.noteInboundMagic(0xfd, 4);
+
+  /** Both sysids learned behind one bridge endpoint: no split. */
+  conn._transport.peersBySysid.set(3, { address: '10.0.0.9', port: 14550 });
+  conn._transport.peersBySysid.set(4, { address: '10.0.0.9', port: 14550 });
+  await conn.send({ name: 'HEARTBEAT', fields: HB });
+  assert.strictEqual(sent.length, 1, 'shared endpoint across groups: single encode');
+  assert.strictEqual(sent[0].meta.sysids, undefined);
+
+  /** Distinct endpoints: the split applies. */
+  sent.length = 0;
+  conn._transport.peersBySysid.set(4, { address: '10.0.0.10', port: 14550 });
+  await conn.send({ name: 'HEARTBEAT', fields: HB });
+  assert.strictEqual(sent.length, 2, 'disjoint endpoints: one frame per version group');
+});

@@ -1679,10 +1679,23 @@ module.exports = function registerMavlinkAiConnection(RED) {
        * original one-encode path byte for byte.
        */
       const isBroadcast = routingTargetSystem === undefined || Number(routingTargetSystem) === 0;
-      const mixed =
+      let mixed =
         isBroadcast && !signing && codec.version === 'auto' && node._transport && node._transport.canRouteBySysid
           ? node._link.mixedVersionGroups()
           : null;
+      /**
+       * Even in peer-learning mode both version groups can sit behind ONE
+       * learned endpoint (a MAVLink router/bridge): splitting would deliver
+       * both encodings there and double-deliver to the v2 peers. Only
+       * disjoint group endpoints get the split (#303 review).
+       */
+      if (
+        mixed &&
+        typeof node._transport.sysidEndpointsDisjoint === 'function' &&
+        !node._transport.sysidEndpointsDisjoint(mixed.v1, mixed.v2)
+      ) {
+        mixed = null;
+      }
       if (mixed) {
         const buffers = [];
         try {
