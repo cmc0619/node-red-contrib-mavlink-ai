@@ -80,7 +80,6 @@
       <option value="mission">mission</option>
       <option value="fence">fence</option>
       <option value="rally">rally</option>
-      <option value="all">all</option>
     </select>
   </div>
   <div class="form-row">
@@ -116,7 +115,7 @@
   <p>Each item's fields are validated against their MAVLink wire type before the transfer starts — a missing or unknown <code>command</code>, an unknown <code>frame</code>, an out-of-range <code>lat</code>/<code>lon</code>, or non-numeric garbage in a param/coordinate/flag fails with a structured error rather than being silently uploaded as a defaulted <code>0</code>. Explicit <code>NaN</code> (or the string <code>"NaN"</code>/<code>null</code>) is preserved only on the float <code>param1</code>–<code>param4</code> fields as the "keep current / use default" sentinel; raw <code>x</code>/<code>y</code> coordinates require a finite value (they are int32 on the <code>MISSION_ITEM_INT</code> path).</p>
   <p><b>Empty upload is not an implicit clear.</b> An upload whose <code>items</code> is missing or not an array fails (a wiring typo must never erase the mission), and an explicitly empty array is refused unless you confirm with <code>msg.allow_empty</code> / <code>msg.payload.allow_empty</code> set to <code>true</code>. To erase the on-vehicle mission, use the dedicated <b>Clear</b> action.</p>
   <h3>Clear</h3>
-  <p>Clear is best-effort by default: it resolves once <code>MISSION_CLEAR_ALL</code> is sent (some stacks do not ack clearing an already-empty mission). Set <code>msg.wait_ack</code> or <code>msg.payload.wait_ack</code> to <code>true</code> to instead wait for a <code>MISSION_ACK</code> — resolving on accepted (with numeric <code>result</code> and readable <code>result_name</code>) or failing on rejection/timeout. An optional <code>timeout_ms</code> overrides the node timeout for the wait. The result's <code>acked</code> flag says whether it was acknowledged.</p>
+  <p>Clear waits for a <code>MISSION_ACK</code> by default: <code>clear ok</code> means the vehicle acknowledged the destructive clear — resolving on accepted (with numeric <code>result</code> and readable <code>result_name</code>) or failing on rejection/timeout. An optional <code>timeout_ms</code> overrides the node timeout for the wait. Set <code>msg.wait_ack</code> or <code>msg.payload.wait_ack</code> to <code>false</code> for a fire-and-forget clear that resolves once <code>MISSION_CLEAR_ALL</code> is sent (some stacks do not ack clearing an already-empty mission). The result's <code>acked</code> flag says whether it was acknowledged.</p>
   <h3>Coordinates</h3>
   <p>For upload items, give <code>lat</code>/<code>lon</code> in plain <b>float degrees</b> (plus <code>z</code> or <code>alt</code> in meters) — they are converted to the wire scaling automatically (degE7 int32 for <code>MISSION_ITEM_INT</code>). Explicit <code>x</code>/<code>y</code> are treated as raw wire values and win over <code>lat</code>/<code>lon</code>.</p>
   <p>Downloaded items keep raw <code>x</code>/<code>y</code> and add <code>lat</code>/<code>lon</code> in float degrees for global frames, plus <code>wire_message</code> naming the message type they arrived as.</p>

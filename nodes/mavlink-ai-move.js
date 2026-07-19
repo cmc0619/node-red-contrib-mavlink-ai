@@ -52,6 +52,14 @@ module.exports = function registerMavlinkAiMove(RED) {
     /** Optional continuous streaming (#128): resend the setpoint at a fixed rate. */
     node.stream = toBool(config.stream, false);
     node.streamRateHz = clampStreamRate(Number(config.streamRateHz));
+    /**
+     * Stream TTL / deadman (#216): the stream stops this many seconds after
+     * the LAST input unless a fresh input refreshes it, so an abandoned flow
+     * cannot retransmit its final setpoint at the vehicle forever. 0 opts
+     * out (unlimited).
+     */
+    node.maxStreamSeconds = clampMaxStreamSeconds(Number(config.maxStreamSeconds));
+    node._streamDeadline = null;
     node._streamTimer = null;
     node._streamState = null;
     node._streamErrored = false;
@@ -240,6 +248,8 @@ module.exports = function registerMavlinkAiMove(RED) {
           localIdentity: payload.localIdentity,
           fields: built.fields
         };
+        /** Deadman: every input arms/refreshes the TTL from now (#216). */
+        node._streamDeadline = node.maxStreamSeconds > 0 ? Date.now() + node.maxStreamSeconds * 1000 : null;
         startStream(node);
         node.status({ fill: 'green', shape: 'dot', text: `streaming ${labelFor(built.name)} @ ${node.streamRateHz} Hz` });
         return done();
@@ -316,6 +326,22 @@ module.exports = function registerMavlinkAiMove(RED) {
 const DEFAULT_STREAM_RATE_HZ = 5;
 const MIN_STREAM_RATE_HZ = 0.2;
 const MAX_STREAM_RATE_HZ = 50;
+/** Stream TTL default (#216): 5 minutes after the LAST input, then stop. */
+const DEFAULT_MAX_STREAM_SECONDS = 300;
+
+/**
+ * Normalize the stream TTL: a non-finite/negative value falls to the default,
+ * 0 is the explicit unlimited opt-out, any positive number of seconds stands.
+ *
+ * @param {number} seconds
+ * @returns {number}
+ */
+function clampMaxStreamSeconds(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return DEFAULT_MAX_STREAM_SECONDS;
+  }
+  return seconds;
+}
 
 /**
  * Clamp a configured stream rate into the supported band, defaulting a
@@ -341,6 +367,21 @@ function clampStreamRate(hz) {
  * @returns {void}
  */
 function streamTick(node) {
+  /**
+   * Stream TTL (#216): past the deadline the stream stops for good — the
+   * status shows why and ONE expiry message goes out on the output, so a
+   * flow can react (re-arm, land, alert). Checked before the in-flight
+   * guard: a slow transport must not be able to starve the expiry.
+   */
+  if (node._streamDeadline != null && Date.now() >= node._streamDeadline) {
+    stopStream(node);
+    node.status({ fill: 'yellow', shape: 'ring', text: 'stream expired' });
+    node.send({
+      topic: 'move/stream',
+      payload: { stream: 'expired', max_stream_seconds: node.maxStreamSeconds }
+    });
+    return;
+  }
   const s = node._streamState;
   /**
    * Skip this tick while a previous send is still in flight. On a transport
@@ -434,6 +475,7 @@ function stopStream(node) {
     clearInterval(node._streamTimer);
     node._streamTimer = null;
   }
+  node._streamDeadline = null;
   node._streamState = null;
   node._streamErrored = false;
   node._streamSending = false;
