@@ -61,3 +61,50 @@ test('ingest returns null for a payload with no numeric sysid', () => {
   const engine = new VehicleStateEngine();
   assert.strictEqual(engine.ingest({ name: 'STATUSTEXT', fields: { text: 'x' } }), null);
 });
+
+test('position, home, and gps sections decode units and carry independent staleness', () => {
+  const c = clock();
+  const engine = new VehicleStateEngine({ staleMs: 5000, now: c.now });
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  engine.ingest({ name: 'GLOBAL_POSITION_INT', sysid: 1, compid: 1, fields: { lat: 371234567, lon: -1221234567, alt: 100000, relative_alt: 30000 } });
+  engine.ingest({ name: 'HOME_POSITION', sysid: 1, compid: 1, fields: { latitude: 371200000, longitude: -1221200000, altitude: 95000 } });
+  engine.ingest({ name: 'GPS_RAW_INT', sysid: 1, compid: 1, fields: { fix_type: 3, satellites_visible: 12, eph: 120, epv: 200 } });
+
+  const s = engine.snapshot(1);
+  assert.ok(Math.abs(s.position.lat - 37.1234567) < 1e-6);
+  assert.ok(Math.abs(s.position.lon - -122.1234567) < 1e-6);
+  assert.strictEqual(s.position.alt_amsl_m, 100);
+  assert.strictEqual(s.position.alt_rel_m, 30);
+  assert.ok(Math.abs(s.home.lat - 37.12) < 1e-6);
+  assert.strictEqual(s.home.alt_amsl_m, 95);
+  assert.strictEqual(s.gps.fix_type, 3);
+  assert.strictEqual(s.gps.satellites, 12);
+  assert.strictEqual(s.gps.eph_m, 1.2);
+  assert.strictEqual(s.gps.epv_m, 2.0);
+
+  /** A fresh heartbeat 6 s later must NOT refresh position — it goes stale. */
+  c.advance(6000);
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  const s2 = engine.snapshot(1);
+  assert.strictEqual(s2.connected, true, 'heartbeat is fresh');
+  assert.strictEqual(s2.position.stale, true, 'but position is stale');
+});
+
+test('gps sentinels (eph/epv 65535, satellites 255) become null', () => {
+  const c = clock();
+  const engine = new VehicleStateEngine({ now: c.now });
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  engine.ingest({ name: 'GPS_RAW_INT', sysid: 1, compid: 1, fields: { fix_type: 0, satellites_visible: 255, eph: 65535, epv: 65535 } });
+  const s = engine.snapshot(1);
+  assert.strictEqual(s.gps.satellites, null);
+  assert.strictEqual(s.gps.eph_m, null);
+  assert.strictEqual(s.gps.epv_m, null);
+});
+
+test('home is absent until HOME_POSITION arrives (no position substitution)', () => {
+  const c = clock();
+  const engine = new VehicleStateEngine({ now: c.now });
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  engine.ingest({ name: 'GLOBAL_POSITION_INT', sysid: 1, compid: 1, fields: { lat: 371234567, lon: -1221234567, alt: 100000, relative_alt: 30000 } });
+  assert.strictEqual(engine.snapshot(1).home, null);
+});
