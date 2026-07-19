@@ -20,6 +20,14 @@ Before 1.0, do not leave migration theatre behind:
 - Do not feel obliged to record every implementation correction in a design
   document, README, help text, or changelog.
 
+When a decision changes, make a clean break in the same change: move every
+consumer, schema, and test to the new shape and delete the old one entirely.
+Do not write migration, upgrade, or conversion code — no schema-version
+shims, dual-read/dual-write paths, back-compat fallbacks, or deprecation
+wrappers — for a shape that has no installed base. Preserving compatible
+saved values within the current schema is not migration; a late menu load
+clobbering a valid saved selection is still a bug (§3.2).
+
 User-visible help should describe the currently shipped control and its safe
 use—not the project's internal evolution. Update this specification when a
 change establishes a durable architectural boundary, product constraint, or
