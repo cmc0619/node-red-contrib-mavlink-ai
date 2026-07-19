@@ -155,6 +155,22 @@ test('the engine is cleared when the connection node disappears on redeploy', as
   assert.strictEqual(errMsg.payload.code, 'CONNECTION_UNAVAILABLE', 'snapshot now reports unavailable, not stale vehicles');
 });
 
+test('the engine is rebuilt when only the connection profile is swapped', (t) => {
+  const { RED, conn, node } = setup();
+  t.after(() => RED.close(node));
+  conn.deliver(hb(1));
+  const firstEngine = node.engine;
+  /** Same connection object, edited Vehicle Profile → new profile on flows:started. */
+  conn.profile = { getDialect: () => ({ valid: false, enums: null }) };
+  RED.events.emit('flows:started');
+  assert.notStrictEqual(node.engine, firstEngine, 'engine rebuilt for the swapped profile');
+  assert.strictEqual(node.engine.sysids().length, 0, 'rebuilt engine has a fresh baseline');
+  /** No further change → no churn. */
+  const second = node.engine;
+  RED.events.emit('flows:started');
+  assert.strictEqual(node.engine, second, 'an unchanged profile does not rebuild');
+});
+
 test('a snapshot command with no resolved connection surfaces an error', async (t) => {
   const { RED, node } = setup({ connection: 'missing-conn' });
   t.after(() => RED.close(node));

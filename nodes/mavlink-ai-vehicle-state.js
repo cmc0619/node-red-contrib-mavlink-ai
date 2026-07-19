@@ -53,6 +53,7 @@ module.exports = function (RED) {
     let engine = null;
     let lastSnapshots = new Map();
     let attachedTo;
+    let attachedProfile;
     let subId = null;
     let onStatus = null;
     const timers = [];
@@ -182,7 +183,12 @@ module.exports = function (RED) {
      */
     function attach() {
       const conn = RED.nodes.getNode(config.connection) || null;
-      if (conn === attachedTo && conn === node.connection) {
+      const profile = conn ? conn.profile : null;
+      // Rebuild on a changed connection OR a changed profile object. Editing
+      // only the Vehicle Profile leaves the connection object intact and swaps
+      // connection.profile on flows:started, so comparing the connection alone
+      // would keep the old dialect enums and diff baseline.
+      if (conn === attachedTo && conn === node.connection && profile === attachedProfile) {
         return;
       }
       detach();
@@ -195,17 +201,16 @@ module.exports = function (RED) {
         engine = null;
         node.engine = null;
         lastSnapshots = new Map();
+        attachedProfile = null;
         node.status({ fill: 'red', shape: 'ring', text: 'missing connection' });
         return;
       }
-      // We only reach here on first attach or a genuinely different connection
-      // (the identity check above short-circuits an unchanged rebind). Rebuild
-      // the engine from the new connection's dialect enums and drop the diff
-      // baseline — otherwise a redeployed connection with a different dialect
-      // would resolve enum names against stale enums and diff fresh telemetry
-      // against the previous connection's state. State is observational and
-      // safe to rebuild (spec §Node lifecycle).
-      const profile = node.connection.profile;
+      // First attach, a genuinely different connection, or a swapped profile
+      // (the guard above short-circuits an unchanged rebind). Rebuild the engine
+      // from the current dialect enums and drop the diff baseline — otherwise
+      // enum names resolve against stale enums and fresh telemetry diffs against
+      // the previous state. State is observational and safe to rebuild
+      // (spec §Node lifecycle).
       const bundle = profile && typeof profile.getDialect === 'function' ? profile.getDialect() : null;
       engine = new VehicleStateEngine({
         staleMs: node.staleMs,
@@ -215,6 +220,7 @@ module.exports = function (RED) {
       node.engine = engine;
       node._reemit = reEmitAll;
       lastSnapshots = new Map();
+      attachedProfile = profile;
       subId = node.connection.subscribe({ messageNames: STATE_MESSAGES }, (message) => {
         const res = engine.ingest(message.payload);
         if (!res) {
