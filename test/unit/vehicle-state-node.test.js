@@ -13,6 +13,7 @@ function stubConnection(RED, id) {
     emitter: new EventEmitter(),
     profile: { getDialect: () => ({ valid: false, enums: null }) },
     getVehicleCapabilities: () => undefined,
+    setAdvertisedHealth: (ref, input) => input,
     _cbs: [],
     subscribe(filter, cb) {
       conn.lastFilter = filter;
@@ -212,6 +213,54 @@ test('a malformed sysid filter fails closed: no emission for any vehicle, config
   node.send = (outs) => seen.push(outs);
   conn.deliver(hb(1));
   assert.strictEqual(seen.length, 0, 'nothing is emitted for any vehicle when the sysid filter is malformed');
+});
+
+test('a health input is forwarded to connection.setAdvertisedHealth', async (t) => {
+  const { RED, conn, node } = setup();
+  t.after(() => RED.close(node));
+  const calls = [];
+  conn.setAdvertisedHealth = (ref, input) => { calls.push({ ref, input }); return input; };
+  await RED.inject(node, { payload: { health: 'degraded', ttl_s: 10, note: 'watchdog' } });
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].input.health, 'degraded');
+  assert.strictEqual(calls[0].input.ttl_s, 10);
+});
+
+test('a null-payload message does not spuriously trigger the health path (#307 greptile 4/5)', async (t) => {
+  const { RED, conn, node } = setup();
+  t.after(() => RED.close(node));
+  const calls = [];
+  conn.setAdvertisedHealth = (ref, input) => { calls.push({ ref, input }); return input; };
+  /** A null payload made the `msg.payload && msg.payload.health` fallback null,
+   * which passed the old `!== undefined` gate and mis-fired the health path. */
+  const { collected } = await RED.inject(node, { command: 'snapshot', payload: null });
+  assert.strictEqual(calls.length, 0, 'no health assertion attempted for a null payload');
+  const err = collected.map((o) => o[1]).find(Boolean);
+  assert.ok(!err || err.payload.code !== 'INVALID_HEALTH', 'no spurious INVALID_HEALTH error emitted');
+});
+
+test('a falsey scalar payload does not spuriously trigger the health path (#307 codex P2)', async (t) => {
+  const { RED, conn, node } = setup();
+  t.after(() => RED.close(node));
+  const calls = [];
+  conn.setAdvertisedHealth = (ref, input) => { calls.push({ ref, input }); return input; };
+  /** false / 0 / '' payloads must not slip through the `!= null` gate: only an
+   * object payload can carry a health field. */
+  for (const scalar of [false, 0, '']) {
+    const { collected } = await RED.inject(node, { command: 'snapshot', payload: scalar });
+    const err = collected.map((o) => o[1]).find(Boolean);
+    assert.ok(!err || err.payload.code !== 'INVALID_HEALTH', `payload ${JSON.stringify(scalar)}: no spurious INVALID_HEALTH`);
+  }
+  assert.strictEqual(calls.length, 0, 'no health assertion attempted for any falsey scalar payload');
+});
+
+test('a rejected health assertion surfaces a structured error on output 2', async (t) => {
+  const { RED, conn, node } = setup();
+  t.after(() => RED.close(node));
+  conn.setAdvertisedHealth = () => { const e = new Error('bad'); e.code = 'INVALID_HEALTH'; throw e; };
+  const { collected } = await RED.inject(node, { payload: { health: 'fine' } });
+  const err = collected.map((o) => o[1]).find(Boolean);
+  assert.strictEqual(err.payload.code, 'INVALID_HEALTH');
 });
 
 test('a silent vehicle emits connection_lost on the re-diff tick (#208 whole-branch review)', async (t) => {

@@ -268,7 +268,41 @@ module.exports = function (RED) {
 
     /** Handle on-demand snapshot requests via 'snapshot' command. */
     node.on('input', (msg, send, done) => {
-      const command = msg.command || (msg.payload && msg.payload.command);
+      // Only read command/health from an *object* payload. A falsey scalar
+      // payload (false / 0 / '') or a null payload would otherwise make the
+      // `msg.payload && msg.payload.health` fallback evaluate to that scalar
+      // (or null) and slip an ordinary/snapshot request into the health path,
+      // firing a spurious INVALID_HEALTH error and discarding the real request.
+      const payloadObj = msg.payload && typeof msg.payload === 'object' ? msg.payload : null;
+      const command = msg.command || (payloadObj && payloadObj.command);
+      const health = msg.health !== undefined ? msg.health : (payloadObj ? payloadObj.health : undefined);
+      // Gate on `!= null` so an explicit null `msg.health` (or an absent one
+      // with a non-object payload) is treated as "no health assertion".
+      if (health != null) {
+        if (!node.connection || typeof node.connection.setAdvertisedHealth !== 'function') {
+          send([null, { topic: 'mavlink/error', payload: errorPayload({
+            node: 'mavlink-ai-vehicle-state', code: 'CONNECTION_UNAVAILABLE',
+            message: 'mavlink-ai-vehicle-state: no connection to advertise health to'
+          }) }, null]);
+          done();
+          return;
+        }
+        const p = payloadObj || {};
+        try {
+          node.connection.setAdvertisedHealth(msg.identity !== undefined ? msg.identity : p.identity, {
+            health,
+            ttl_s: msg.ttl_s !== undefined ? msg.ttl_s : p.ttl_s,
+            note: msg.note !== undefined ? msg.note : p.note
+          });
+        } catch (err) {
+          send([null, { topic: 'mavlink/error', payload: errorPayload({
+            node: 'mavlink-ai-vehicle-state', code: err && err.code ? err.code : 'INVALID_HEALTH',
+            message: `mavlink-ai-vehicle-state: ${err && err.message ? err.message : err}`
+          }) }, null]);
+        }
+        done();
+        return;
+      }
       if (command === 'snapshot') {
         // Accept the scope sysid from either top-level msg.sysid or the same
         // payload object that carries the command (msg.payload.sysid), so a

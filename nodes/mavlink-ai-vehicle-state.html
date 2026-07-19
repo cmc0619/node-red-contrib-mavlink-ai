@@ -57,4 +57,6 @@
     <li><b>statustext</b> — live STATUSTEXT feed with severity names.</li>
   </ol>
   <p>Each section (position, GPS, battery, health, …) carries its own freshness: a fresh HEARTBEAT never refreshes another section, and absent sections are <code>null</code>, never zero-filled. HEARTBEAT is component presence — not command delivery, setpoint freshness, sensor health, or authorization.</p>
+  <h3>Health assertions</h3>
+  <p>Sending <code>{ health: "nominal"|"degraded"|"emergency"|"fatal", ttl_s, note }</code> advertises the flow's own onboard health on the connection's companion heartbeat. A non-<code>fatal</code> assertion requires <code>ttl_s</code>; <code>fatal</code> stops the heartbeat until a fresh assertion is sent. A rejected assertion (unknown identity or invalid health) is reported as a structured error on output 2.</p>
 </script>

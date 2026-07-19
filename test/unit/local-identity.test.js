@@ -147,6 +147,21 @@ test('the Vehicle Profile never determines the outbound identity (#228)', async 
   assert.strictEqual(frame[6], 5, 'source compid comes from the Local Identity');
 });
 
+// --- health-driven heartbeat default-on (#225) ------------------------------
+test('the companion role defaults healthDriven on; gcs stays off (#225)', () => {
+  const RED = new MockRED().loadNodes();
+  const comp = RED.create('mavlink-ai-local-identity', { id: 'i1', role: 'companion' });
+  assert.strictEqual(comp.healthDriven, true);
+  const gcs = RED.create('mavlink-ai-local-identity', { id: 'i2', role: 'gcs' });
+  assert.strictEqual(gcs.healthDriven, false);
+});
+
+test('an explicit healthDriven config overrides the preset default (#225)', () => {
+  const RED = new MockRED().loadNodes();
+  const comp = RED.create('mavlink-ai-local-identity', { id: 'i3', role: 'companion', healthDriven: false });
+  assert.strictEqual(comp.healthDriven, false);
+});
+
 // --- two connections reuse one identity -------------------------------------
 test('two connections can reuse one Local Identity (#228)', async (t) => {
   const RED = new MockRED().loadNodes();

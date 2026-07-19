@@ -1,6 +1,7 @@
 'use strict';
 
 const { MavlinkError } = require('../lib/util/errors');
+const { toBool } = require('../lib/util/validation');
 
 /**
  * mavlink-ai-local-identity (issue #228).
@@ -34,7 +35,10 @@ const ROLE_PRESETS = {
     // its own component id: MAV_COMP_ID_ONBOARD_COMPUTER.
     sysid: 1,
     compid: 191,
-    heartbeatType: 'MAV_TYPE_ONBOARD_CONTROLLER'
+    heartbeatType: 'MAV_TYPE_ONBOARD_CONTROLLER',
+    // A companion is well-placed to advertise its own health via HEARTBEAT
+    // system_status (#225); default that behavior on for this role.
+    healthDriven: true
   },
   custom: {
     sysid: 255,
@@ -89,6 +93,13 @@ module.exports = function registerMavlinkAiLocalIdentity(RED) {
     // the target vehicle's MAV_TYPE.
     node.heartbeatType = config.heartbeatType || preset.heartbeatType;
     node.heartbeatAutopilot = config.heartbeatAutopilot || 'MAV_AUTOPILOT_INVALID';
+
+    /**
+     * Health-driven heartbeat (#225): when on, the connection maps this
+     * identity's advertised health to HEARTBEAT.system_status instead of the
+     * static MAV_STATE_ACTIVE. Defaults to the role preset (companion → on).
+     */
+    node.healthDriven = toBool(config.healthDriven, !!preset.healthDriven);
 
     node._identityError = problems.length
       ? new MavlinkError(
