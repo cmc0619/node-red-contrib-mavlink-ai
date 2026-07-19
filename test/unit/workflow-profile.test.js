@@ -358,3 +358,55 @@ test('an unresolvable compid-wildcard route shadows all responders and rejects c
   assert.strictEqual(viaDefault.accepted, true);
   assert.strictEqual(viaDefault.profile && viaDefault.profile.id, 'p1');
 });
+
+test('a route to an existing but invalid profile rejects the workflow target (profile-invalid)', (t) => {
+  /**
+   * Codex review round 5 on #302: a route can resolve to a Vehicle Profile
+   * node whose dialect failed to load. Inbound replies matching that route
+   * are rejected as profile-invalid before subscribers see them, so the
+   * workflow is exactly as doomed as with an unresolvable route — the
+   * decision must reject, not accept-without-adoption. Same shadowing rules
+   * as unresolvable routes for compid-0 targets: a wildcard-compid invalid
+   * route blocks everything, an exact one only its own component.
+   */
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Good', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-vehicle', {
+    id: 'pBad', name: 'Broken', vehicleFamily: 'generic', dialect: 'no-such-dialect', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  const make = (routeTable, unmatchedPolicy, id) => RED.create('mavlink-ai-connection', {
+    id, name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false,
+    routingMode: 'routed', unmatchedPolicy,
+    routeTable: JSON.stringify(routeTable)
+  });
+  const direct = make([{ sysid: 1, compid: 1, profile: 'pBad' }], 'reject', 'c1');
+  const shadowAll = make([{ sysid: 1, compid: '*', profile: 'pBad' }], 'default', 'c2');
+  const partial = make([
+    { sysid: 1, compid: 5, profile: 'pBad' },
+    { sysid: 1, compid: '*', profile: 'p1' }
+  ], 'reject', 'c3');
+  t.after(() => { RED.close(direct); RED.close(shadowAll); RED.close(partial); });
+
+  /** A literal match on an invalid profile is a rejection, not an adoption skip. */
+  const lit = direct.getRouteDecision({ sysid: 1, compid: 1 });
+  assert.strictEqual(lit.accepted, false);
+  assert.strictEqual(lit.reason, 'profile-invalid');
+
+  /** compid-0: an invalid 1:* route shadows every responder despite unmatched-default. */
+  const rej = shadowAll.getRouteDecision({ sysid: 1, compid: 0 });
+  assert.strictEqual(rej.accepted, false);
+  assert.strictEqual(rej.reason, 'profile-invalid');
+
+  /** compid-0: an invalid exact route only shadows component 5; 1:* -> p1 carries the rest. */
+  const ok = partial.getRouteDecision({ sysid: 1, compid: 0 });
+  assert.strictEqual(ok.accepted, true);
+  assert.strictEqual(ok.profile && ok.profile.id, 'p1');
+});
