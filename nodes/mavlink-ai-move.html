@@ -77,6 +77,11 @@
       maxStreamSeconds: {
         value: 300,
         validate: function (v) {
+          /** A hidden field must not block deploy: the TTL only applies while
+           * streaming is enabled, like the stream-rate validator below. */
+          if (!$('#node-input-stream').is(':checked')) {
+            return true;
+          }
           if (v === '' || v == null) {
             return true;
           }

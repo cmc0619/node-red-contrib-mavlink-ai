@@ -389,3 +389,18 @@ test('wait_ack false keeps the fire-and-forget clear with acked:false (#215)', a
   assert.strictEqual(conn.sent[0].name, 'MISSION_CLEAR_ALL');
   assert.strictEqual(collected[0][0].payload.acked, false, 'explicit opt-out resolves on send');
 });
+
+test('clear-all keeps the fire-and-forget default (#215 review)', async () => {
+  /**
+   * MissionClear exact-matches the MISSION_ACK's mission_type, and a vehicle
+   * acking a clear of ALL (255) with the specific list it cleared (e.g. 0)
+   * would run the workflow into MISSION_TIMEOUT despite a successful clear.
+   * Clear-all therefore stays fire-and-forget by default; explicit
+   * wait_ack: true remains available for stacks known to ack type 255.
+   */
+  const { RED, conn, node } = setupWithSends();
+  const { collected } = await RED.inject(node, { payload: { action: 'clear', mission_type: 'all' } });
+  assert.strictEqual(conn.sent[0].name, 'MISSION_CLEAR_ALL');
+  const out = collected.map((outs) => outs[0]).find(Boolean);
+  assert.strictEqual(out.payload.acked, false, 'clear-all resolves on send by default');
+});

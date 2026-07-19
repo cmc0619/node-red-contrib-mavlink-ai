@@ -259,7 +259,13 @@ module.exports = function registerMavlinkAiMission(RED) {
           // wait_ack: false for the fire-and-forget clear (some stacks do
           // not ack clearing an already-empty mission); timeout_ms
           // optionally overrides the node timeout for the wait (#59).
-          const waitAck = toBool(firstDefined(msg.wait_ack, payload.wait_ack), true);
+          // Clear-all (MAV_MISSION_TYPE_ALL, 255) keeps the fire-and-forget
+          // default: MissionClear exact-matches the ACK's mission_type, and
+          // a vehicle acking with the specific list it cleared would run the
+          // workflow into MISSION_TIMEOUT despite a successful clear —
+          // explicit wait_ack: true remains available for stacks known to
+          // ack type 255 (#304 review).
+          const waitAck = toBool(firstDefined(msg.wait_ack, payload.wait_ack), missionTypeNum !== 255);
           if (waitAck) {
             const clearOpts = Object.assign({}, opts, {
               timeoutMs: toInt(payload.timeout_ms, node.timeoutMs)
