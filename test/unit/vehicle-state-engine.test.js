@@ -108,3 +108,42 @@ test('home is absent until HOME_POSITION arrives (no position substitution)', ()
   engine.ingest({ name: 'GLOBAL_POSITION_INT', sysid: 1, compid: 1, fields: { lat: 371234567, lon: -1221234567, alt: 100000, relative_alt: 30000 } });
   assert.strictEqual(engine.snapshot(1).home, null);
 });
+
+test('battery decodes voltage/current/remaining and nulls the -1 sentinels', () => {
+  const c = clock();
+  const engine = new VehicleStateEngine({ now: c.now });
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  engine.ingest({ name: 'BATTERY_STATUS', sysid: 1, compid: 1, fields: { id: 0, voltages: [12600, 65535], current_battery: 1500, battery_remaining: 87 } });
+  let s = engine.snapshot(1);
+  assert.strictEqual(s.battery.batteries[0].voltage_v, 12.6);
+  assert.strictEqual(s.battery.batteries[0].current_a, 15);
+  assert.strictEqual(s.battery.batteries[0].remaining_pct, 87);
+
+  engine.ingest({ name: 'BATTERY_STATUS', sysid: 1, compid: 1, fields: { id: 0, voltages: [65535], current_battery: -1, battery_remaining: -1 } });
+  s = engine.snapshot(1);
+  assert.strictEqual(s.battery.batteries[0].voltage_v, null);
+  assert.strictEqual(s.battery.batteries[0].current_a, null);
+  assert.strictEqual(s.battery.batteries[0].remaining_pct, null);
+});
+
+test('SYS_STATUS decodes per-sensor present/enabled/healthy flags', () => {
+  const c = clock();
+  const engine = new VehicleStateEngine({ now: c.now });
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  /** bit 0 (0x1) = MAV_SYS_STATUS_SENSOR_3D_GYRO. Present+enabled, unhealthy. */
+  engine.ingest({ name: 'SYS_STATUS', sysid: 1, compid: 1, fields: { onboard_control_sensors_present: 0x1, onboard_control_sensors_enabled: 0x1, onboard_control_sensors_health: 0x0 } });
+  const s = engine.snapshot(1);
+  const gyro = s.health.sensors.find((x) => x.bit === 0);
+  assert.strictEqual(gyro.present, true);
+  assert.strictEqual(gyro.enabled, true);
+  assert.strictEqual(gyro.healthy, false);
+});
+
+test('EXTENDED_SYS_STATE sets the landed state', () => {
+  const c = clock();
+  const engine = new VehicleStateEngine({ now: c.now });
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  assert.strictEqual(engine.snapshot(1).landed.state, 'unknown');
+  engine.ingest({ name: 'EXTENDED_SYS_STATE', sysid: 1, compid: 1, fields: { landed_state: 2 } });
+  assert.strictEqual(engine.snapshot(1).landed.state, 'in_air');
+});
