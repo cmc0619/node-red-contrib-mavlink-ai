@@ -335,3 +335,13 @@ test('a broadcast target still reports BROADCAST_NO_ACK on a route-rejecting con
   assert.strictEqual(err.payload.code, 'BROADCAST_NO_ACK');
   assert.strictEqual(conn.sent.length, 0);
 });
+
+test('a malformed target_component reports INVALID_FIELD on a route-rejecting connection (#302 review)', async () => {
+  /** Number('') coerces to 0 — the route check must not shadow strict validation. */
+  const { RED, conn, node } = setupWithSends();
+  conn.getRouteDecision = () => ({ accepted: false, profile: null, reason: 'unmatched-reject' });
+  const { collected } = await RED.inject(node, { payload: { action: 'clear', target_component: '' } });
+  const err = collected[0][2];
+  assert.strictEqual(err.payload.code, 'INVALID_FIELD');
+  assert.strictEqual(conn.sent.length, 0);
+});

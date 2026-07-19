@@ -410,3 +410,29 @@ test('a route to an existing but invalid profile rejects the workflow target (pr
   assert.strictEqual(ok.accepted, true);
   assert.strictEqual(ok.profile && ok.profile.id, 'p1');
 });
+
+test('malformed target ids that coerce in-range skip the route check for strict validation to reject', () => {
+  /**
+   * Codex review round 6 on #302: Number('') and Number(true) coerce to
+   * in-range 0/1, so a hand-rolled numeric gate would route-check them and a
+   * reject-policy connection would emit ROUTE_REJECTED — shadowing the
+   * nodes' strict INVALID_FIELD validation that runs right after context
+   * resolution. The gate uses the same strict validators as the nodes, so
+   * exactly the values they reject skip the route check.
+   */
+  const rejectAll = {
+    profile: profileStub('p1', 'Default', { defaultTargetSystem: 1, defaultTargetComponent: 1 }),
+    getRouteDecision: () => ({ accepted: false, profile: null, reason: 'unmatched-reject' })
+  };
+  for (const bad of ['', '   ', true, false]) {
+    const ctx = resolveWorkflowContext(rejectAll, { targetSystem: 1, targetComponent: bad });
+    assert.strictEqual(ctx.targetComponent, bad, `targetComponent ${JSON.stringify(bad)} must pass through unrouted`);
+    const ctx2 = resolveWorkflowContext(rejectAll, { targetSystem: bad, targetComponent: 1 });
+    assert.strictEqual(ctx2.targetSystem, bad, `targetSystem ${JSON.stringify(bad)} must pass through unrouted`);
+  }
+  /** Numeric strings are valid ids for the nodes, so they still fail fast. */
+  assert.throws(
+    () => resolveWorkflowContext(rejectAll, { targetSystem: '5', targetComponent: '1' }),
+    (err) => err.code === 'ROUTE_REJECTED'
+  );
+});
