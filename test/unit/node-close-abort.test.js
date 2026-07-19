@@ -30,6 +30,8 @@ function setup() {
     RED.nodes.createNode(this, config);
     this.name = 'conn';
     this.profile = profile;
+    /** #196 routing API (required by the contract): accept everything. */
+    this.getRouteDecision = () => ({ accepted: true, profile: null });
     this.locks = new LockManager();
     this.sent = [];
     this._subs = new Map();

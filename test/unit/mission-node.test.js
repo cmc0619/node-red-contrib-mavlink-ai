@@ -27,6 +27,8 @@ function setup() {
     RED.nodes.createNode(this, config);
     this.name = 'conn';
     this.profile = profile;
+    /** #196 routing API (required by the contract): accept everything. */
+    this.getRouteDecision = () => ({ accepted: true, profile: null });
     this.acquireLock = () => {
       throw new Error('acquireLock must not be reached for invalid targets');
     };
@@ -148,6 +150,8 @@ function setupWithSends({ profile, config } = {}) {
     lockNames: [],
     resolveProfile: (ref) => (profile && ref === profile.id ? profile : { name: ref }),
     resolveOutboundIdentity: () => fakeIdentity(),
+    /** #196 routing API (required by the contract): accept everything. */
+    getRouteDecision: () => ({ accepted: true, profile: null }),
     acquireLock(name) {
       conn.lockNames.push(name);
       return { release: () => {} };
@@ -191,7 +195,7 @@ test('mission node rejects an unresolvable profile with PROFILE_UNRESOLVED', asy
 test('mission node route-resolves the target profile when no override is set', async () => {
   const routed = profileStub('p_routed', 'Routed Rally', {});
   const { RED, conn, node } = setupWithSends({ config: { missionType: 'rally' } });
-  conn.getProfileForPacket = ({ sysid }) => (sysid === 2 ? routed : conn.profile);
+  conn.getRouteDecision = ({ sysid }) => ({ accepted: true, profile: sysid === 2 ? routed : conn.profile });
   await RED.inject(node, { payload: { action: 'clear', target_system: 2 } });
   const sent = conn.sent[0];
   assert.strictEqual(sent.vehicleProfile, 'p_routed');
@@ -236,6 +240,8 @@ test('the mission lock is released exactly once when the success-path send throw
     sent: [],
     resolveProfile: (ref) => (ref === 'p1' ? defaultProfile : { name: ref }),
     resolveOutboundIdentity: () => fakeIdentity(),
+    /** #196 routing API (required by the contract): accept everything. */
+    getRouteDecision: () => ({ accepted: true, profile: null }),
     acquireLock(key) {
       const handle = locks.acquire(key, 'm2');
       return {

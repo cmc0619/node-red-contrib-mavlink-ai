@@ -87,19 +87,6 @@ test('an accepted decision never overrides an explicit profile', () => {
   assert.strictEqual(ctx.profile, explicit, 'explicit override must win over routing');
 });
 
-test('a legacy connection without the decision API keeps the old routed-adoption behavior', () => {
-  const routed = profileStub('p_routed', 'Routed', {});
-  const connection = {
-    profile: profileStub('p1', 'Default', {}),
-    getProfileForPacket: ({ sysid }) => (sysid === 2 ? routed : null)
-  };
-  const ctx = resolveWorkflowContext(connection, { targetSystem: 2 });
-  assert.strictEqual(ctx.profile, routed);
-  /** null (legacy reject/no-match) keeps the default profile — no throw. */
-  const ctx2 = resolveWorkflowContext(connection, { targetSystem: 9 });
-  assert.strictEqual(ctx2.profile.id, 'p1');
-});
-
 test('the connection node exposes the router decision, reject reason included (#196)', (t) => {
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
@@ -124,9 +111,6 @@ test('the connection node exposes the router decision, reject reason included (#
   const miss = conn.getRouteDecision({ sysid: 99, compid: 1 });
   assert.strictEqual(miss.accepted, false);
   assert.strictEqual(miss.reason, 'unmatched-reject');
-
-  /** The legacy accessor stays null-collapsing for decode-path callers. */
-  assert.strictEqual(conn.getProfileForPacket({ sysid: 99, compid: 1 }), null);
 });
 
 test('component-broadcast targets (compid 0) use any-responder semantics, not a literal compid-0 probe', (t) => {

@@ -55,6 +55,8 @@ function setup({ sendError, identityError } = {}) {
     /** #233 capability API (unused by these tests, required by the contract). */
     this.getVehicleCapabilities = () => undefined;
     this.requestVehicleCapabilities = () => {};
+    /** #196 routing API (required by the contract): accept everything. */
+    this.getRouteDecision = () => ({ accepted: true, profile: null });
   });
   RED.create('stub-connection', { id: 'conn1' });
   return { RED };
