@@ -37,7 +37,6 @@ runtime compiler never fetches remote includes). Each snapshot records its
 provenance (repo, ref, resolved commit, timestamp, per-file SHA-256), and the
 editor can show whether a same-named bundled dialect exists plus a message/enum
 diff against it. See `lib/dialects/xml-catalog.js`.
-
 ### Trusted operator boundary
 
 This package is for a trusted Node-RED operator. The Node-RED editor and its
@@ -54,6 +53,7 @@ downloaded XML as code. Vehicle-control safety remains a separate concern:
 untrusted MAVLink data, stale control, malformed commands, and unsafe target
 selection must still fail closed.
 
+
 Remaining release/readiness items live in the open sections of
 [`ROADMAP.md`](ROADMAP.md) and the issue tracker. (`RELEASE_SCOPE.md` records
 resolved design decisions, not open work.)
@@ -64,11 +64,14 @@ resolved design decisions, not open work.)
   `auto` on the profile).
 - **Multiple connection types**: UDP (in/out/peer), TCP (client/server), and
   optional/lazy-loaded serial.
-- **Profile-based architecture**: MAVLink identity, dialect, firmware, vehicle
-  type, signing, target defaults, and mission defaults live in reusable config
-  nodes.
+- **Three-node architecture (#228)**: **Local Identity** (source ids, heartbeat,
+  signing policy), **Vehicle Profile** (dialect, firmware, vehicle family, target
+  defaults, mission defaults), and **Connection** — so selecting a vehicle can
+  never change who Node-RED is on the wire, and one link can deliberately act as
+  multiple participants.
 - **Connection-based runtime**: one connection owns transport, decode, routing,
-  subscriptions, queueing, heartbeat, locks, and peer state.
+  subscriptions, queueing, heartbeat, locks, peer state, and per-link channel
+  state (sequence, signing timestamps, replay, detected versions).
 - **Bundled and custom XML dialects**: use bundled dialects or compile local or
   mounted MAVLink XML dialects at runtime, with a downloadable official XML
   catalog.
@@ -92,7 +95,7 @@ resolved design decisions, not open work.)
   servo, relay, and gripper verbs for any vehicle type.
 - **Multi-vehicle routing**: route inbound packets by sysid/compid to the
   correct profile and decode with that profile's dialect.
-- **UDP peer tracking by sysid**: `udp-peer` learns multiple vehicle endpoints
+- **UDP peer tracking by sysid**: the `udp` transport learns multiple vehicle endpoints
   on one port and sends target-specific traffic back to the right sysid.
 - **Swarm helpers**: discover active systems from HEARTBEAT, maintain named
   groups, fan out commands per vehicle, convert local meter offsets to global
@@ -161,30 +164,45 @@ Node.js × Node-RED combination in the table above.
 
 ## Core idea
 
+Three config nodes, one question each (issue #228):
+
 ```text
-Profile    = what MAVLink identity/protocol defaults mean
-Connection = how Node-RED talks to a MAVLink network or device
-Route      = how sysid/compid packets map to profiles
-Nodes      = what actions or filters happen in a flow
+Local Identity  = who Node-RED IS on the wire  (source ids, heartbeat, signing)
+Vehicle Profile = what vehicle is ADDRESSED     (dialect, targets, vehicle family)
+Connection      = how traffic MOVES + channel state (transport, link id, sequence/replay)
+Route           = how sysid/compid packets map to Vehicle Profiles
+Nodes           = what actions or filters happen in a flow
 ```
+
+A Vehicle Profile never changes the local identity, and a Connection resolves
+every message to exactly one permitted identity — its default, or an explicitly
+bound additional identity.
 
 ## Node reference
 
-### `mavlink-ai-profile` (config)
+### `mavlink-ai-local-identity` (config)
 
-MAVLink identity and protocol defaults. Profiles do not own sockets; they
-describe how messages should be interpreted and built.
+Who this Node-RED runtime is when it transmits. Multiple identities may coexist;
+a Connection uses exactly one as its required default.
+
+- role preset: GCS, companion / onboard controller, or custom
+- source system/component id (GCS suggests `255/190`; companion suggests sharing
+  the vehicle sysid with CompID `191`)
+- HEARTBEAT identity (`MAV_TYPE`, autopilot)
+- MAVLink 2 signing credential + policy (sign / verify / require)
+
+### `mavlink-ai-vehicle` — Vehicle Profile (config)
+
+What vehicle is being addressed and how its protocol metadata is interpreted.
+Target-facing only; it owns no local identity, heartbeat, or signing.
 
 - dialect: bundled, or custom XML (local path or a catalog download)
 - MAVLink version: v1, v2, or auto
-- source system/component id
+- vehicle family: copter, plane, rover, boat, sub, tracker, or generic
+  (drives ArduPilot mode tables and parameter metadata)
+- firmware: generic, ArduPilot, PX4
 - default target system/component id
-- profile type: GCS, companion computer, copter, plane, rover, boat, sub,
-  tracker, generic
-- firmware: generic, ArduPilot, PX4, custom
 - mission defaults (mission type, preferred item format)
-- heartbeat identity
-- MAVLink 2 signing options (see below)
 
 ### `mavlink-ai-connection` (config)
 
@@ -192,13 +210,17 @@ Transport, decode, routing, subscriptions, queueing, heartbeat, and runtime
 state. The connection is the shared wire/runtime object — multiple tabs and
 flow nodes reference the same connection without hidden global state.
 
+- **required default Local Identity**; optional **Additional Local Identities**
+  (advanced, disabled by default) so one link can transmit as several
+  participants
+- signing **link id** (channel-owned; distinct per connection)
 - UDP in / out / peer
 - TCP client / server
 - serial, when `serialport` is installed
-- heartbeat enable/interval
+- heartbeat enable/interval (per identity)
 - single-profile or routed mode
 - accepted sysids/compids
-- route table (sysid/compid pattern → profile)
+- route table (sysid/compid pattern → Vehicle Profile)
 - unmatched packet policy
 - outbound queue settings
 
@@ -285,8 +307,9 @@ Outputs: **1** final result (`mission/downloaded`, `mission/uploaded`,
 Notes: `lat`/`lon` are float degrees (converted to degE7 automatically for
 `MISSION_ITEM_INT`; raw `x`/`y` accepted for advanced callers); upload answers
 `MISSION_REQUEST` with `MISSION_ITEM` and `MISSION_REQUEST_INT` with
-`MISSION_ITEM_INT` per request; clear supports an optional acknowledged mode;
-operations are locked per connection/profile/mission type.
+`MISSION_ITEM_INT` per request; clear waits for the vehicle's `MISSION_ACK` by
+default (`wait_ack: false` opts into fire-and-forget); operations are locked
+per connection/profile/mission type.
 
 ### `mavlink-ai-param`
 
@@ -310,12 +333,15 @@ integer parameter.
 
 Guided/offboard position-target setpoints (`SET_POSITION_TARGET_LOCAL_NED` /
 `SET_POSITION_TARGET_GLOBAL_INT`) with named `type_mask` presets — Position,
-Position + Yaw, Velocity, Velocity + Yaw rate, Position + Velocity, Yaw only,
-Yaw-rate only, or a raw custom mask. Local NED and global frames (relative and
-terrain altitude variants), with up-positive altitude/climb inputs mapped to
-NED `-z`/`-vz`. One message per input; pair with an inject loop for the
-continuous streams offboard control needs (built-in streaming is tracked in
-issue [#128](https://github.com/cmc0619/node-red-contrib-mavlink-ai/issues/128)).
+Position + Yaw, Velocity, Velocity + Yaw rate, Position + Velocity,
+Acceleration, Force, Yaw only, Yaw-rate only, or a raw custom mask. Local NED
+(including Body NED) and global frames (relative and terrain altitude
+variants), with up-positive altitude/climb inputs mapped to NED `-z`/`-vz`.
+Built-in continuous streaming ([#128](https://github.com/cmc0619/node-red-contrib-mavlink-ai/issues/128)):
+enable **Stream** (or send `msg.payload.stream: true`) and the node resends the
+latest setpoint at the configured rate — the keep-alive PX4 OFFBOARD requires
+(≥ 2 Hz) — until `stream: false`, a redeploy, or the flow stops; each new input
+refreshes the streamed setpoint in place.
 
 ### `mavlink-ai-payload`
 
@@ -355,14 +381,32 @@ msg.payload = {
 };
 ```
 
+### `mavlink-ai-formation`
+
+Computes one global position target per vehicle from a **formation shape** (line,
+column, grid, wedge, circle) and emits a fanout-shaped payload, so
+`formation → fanout → out` moves a swarm into formation. Geometric shapes are a
+stateless transform of a vehicle list (`sysids`, a swarm registry's `vehicles`,
+or `targets`) plus an anchor (`msg.payload.origin` or a fixed point); slot 0 sits
+on the anchor and the rest fan out, rotated by the heading. Slot assignment is
+deterministic by sysid order or an explicit `{ "sysid": slot }` map.
+
+**Follow-leader** mode holds a live registry: it tracks a leader sysid's position
+and re-emits follower targets as the leader moves (rate limited by `updateHz` and
+a minimum-move threshold), arranging followers around the leader at its altitude
+and heading. When the leader goes stale it promotes the next present sysid to
+leader (`leader + 1`, wrapping) — or holds/stops, configurable. Supervisory only:
+goal updates at a few Hz via `DO_REPOSITION`, not a control loop.
+
 ## Swarm orchestration
 
 Multi-vehicle use is a first-class concern, not a hand-rolled pattern: the
-**swarm** node maintains the registry, and the **fanout** node expands one
+**swarm** node maintains the registry, the **fanout** node expands one
 logical command into one message per target system — *fan-out* — or, explicitly
-and only when asked, a single `target_system` 0 message — *broadcast*. These
-are different things: formation movement is fan-out, because each vehicle needs
-its own target position.
+and only when asked, a single `target_system` 0 message — *broadcast*, and the
+**formation** node computes per-vehicle positions for a shape or a live
+leader-follow. These are different things: formation movement is fan-out,
+because each vehicle needs its own target position.
 
 Fan-out understands meters: give an `origin` and per-target `north`/`east`/`up`
 offsets and it converts to global lat/lon/alt (and degE7 for `COMMAND_INT`)
@@ -376,24 +420,32 @@ MAVLink orchestration helpers, not a motor-control replacement.
 
 ## MAVLink 2 signing
 
-The profile supports minimal MAVLink 2 packet signing, built on the protocol
-library's signing primitives (no custom crypto layer):
+Signing lives entirely on the **Connection** — a MAVLink link has exactly one
+shared signing key, so it belongs to the secured link, not to an identity that
+may transmit on several links. This lets one identity talk **signed on one
+connection and unsigned on another** (a GCS to a mix of secured and open
+fleets). Built on the protocol library's signing primitives (no custom crypto
+layer):
 
-- **Sign outbound** — appends a valid signature to every encoded packet; this
-  forces MAVLink 2 framing, since signed frames are v2-only.
+- **Sign outbound** — appends a valid signature to every packet sent on this
+  connection; forces MAVLink 2 framing, since signed frames are v2-only. Every
+  identity transmitting on the connection signs with the connection's key.
 - **Verify inbound** — checks signatures on received signed packets; a bad
   signature is rejected and surfaced on the In node's errors output as
   `mavlink/rejected` (`reason: "signature-invalid"`). Verification also enforces
   the signing spec's **anti-replay** rule (below).
-- **Require signature** — with verify on, also rejects *unsigned* inbound
-  packets (`reason: "signature-required"`).
-- **Link ID** — the 0–255 link id written into outbound signatures.
+- **Require signature** — with verify on, also rejects *unsigned* inbound packets
+  (`reason: "signature-required"`).
+- **Link ID** — the 0–255 link id written into outbound signatures; give two
+  connections that share a key a distinct link id each.
 
 The shared **passphrase** is the signing key (SHA-256 derived, matching Mission
-Planner / QGroundControl). It is stored as an encrypted Node-RED credential, so
-it is never written into exported flow JSON. The signature timestamp uses the
-protocol library's default; raw `sendRaw` buffers are sent as-is and are not
-signed.
+Planner / QGroundControl), stored as an encrypted Node-RED credential on the
+Connection, so it is never written into exported flow JSON. Enabling **Sign
+outbound** without a passphrase fails the connection closed rather than sending
+every frame unsigned. Signing timestamps are made strictly monotonic per
+`(sysid, compid, link id)` by the connection's `LinkState`; raw `sendRaw`
+buffers are sent as-is and are not signed.
 
 **Anti-replay.** Verification is not authenticity-only. As the signing spec
 requires, a validly signed frame is discarded when either:
@@ -439,16 +491,16 @@ Two layers, on purpose:
 ## Quick start
 
 1. Drop a **MAVLink AI In** node onto a flow.
-2. Create a **MAVLink AI Profile** (defaults act as a lightweight GCS).
-   - For ArduPilot, start with the `ardupilotmega` dialect; for generic
-     MAVLink-only traffic, `common` is fine.
-   - Leave the source id at the GCS-style default (`255`/`190`) unless you know
-     otherwise.
-3. Create a **MAVLink AI Connection** referencing the profile, transport
-   `udp-peer`, bind `0.0.0.0:14550`. Enable heartbeat if this node should act
-   like a lightweight GCS.
-4. Point SITL or a vehicle at `udp:127.0.0.1:14550` and watch HEARTBEAT decode.
-5. Add a **MAVLink AI Command** node (Arm, Set Mode, Takeoff, Request Message,
+2. Create a **MAVLink AI Local Identity** (pick the **GCS** role — it suggests
+   source id `255/190` and a `MAV_TYPE_GCS` heartbeat).
+3. Create a **MAVLink AI Profile** — the target vehicle (Vehicle Profile).
+   - For ArduPilot, start with the `ardupilotmega` dialect and set the vehicle
+     family (e.g. Copter); for generic MAVLink-only traffic, `common` is fine.
+4. Create a **MAVLink AI Connection** referencing the Vehicle Profile and the
+   Local Identity, transport `udp`, bind `0.0.0.0:14550`. Enable heartbeat
+   if this node should act like a lightweight GCS.
+5. Point SITL or a vehicle at `udp:127.0.0.1:14550` and watch HEARTBEAT decode.
+6. Add a **MAVLink AI Command** node (Arm, Set Mode, Takeoff, Request Message,
    Set Message Interval, …) and wire it to a **MAVLink AI Out** node.
 
 Importable flows live in [`examples/`](examples/).
@@ -473,7 +525,7 @@ Decoded messages and outbound messages use stable shapes (see `DESIGN.md`
 { topic: "mavlink/HEARTBEAT", payload: { name, id, sysid, compid, profile, profile_id, fields, raw, transport, receivedAt } }
 
 // outbound (into mavlink-ai-out)
-{ topic: "mavlink/send", payload: { name: "COMMAND_LONG", profile, profile_name, target_system, target_component, fields: { ... } } }
+{ topic: "mavlink/send", payload: { name: "COMMAND_LONG", vehicleProfile, vehicleProfileName, localIdentity, target_system, target_component, fields: { ... } } }
 ```
 
 Enum names such as `MAV_CMD_COMPONENT_ARM_DISARM` or `MAV_TYPE_GCS` are resolved
@@ -485,16 +537,22 @@ to numbers automatically when building messages.
 fields accept a decimal string, a safe integer, or a `BigInt`. See `DESIGN.md`
 §14.1.
 
-Profile references are canonical **by config-node id**. Outbound
-`payload.profile` (set by the build/command/fan-out nodes) carries the profile
-config-node id the connection resolves a codec by; `profile_name` is the
-display name. Decoded payloads keep the display name in `payload.profile`
-(what filters and subscriptions historically match — they now match the id
-too) and add the canonical `payload.profile_id`. An outbound message that
-explicitly references a profile the connection cannot resolve is rejected with
-`PROFILE_UNRESOLVED` — it is never silently encoded with the default profile.
-A plain profile name is accepted for backward compatibility only while exactly
-one profile config node has that name; an ambiguous name is an error.
+Vehicle Profile references are canonical **by config-node id**. Outbound
+`payload.vehicleProfile` (set by the build/command/fan-out nodes) carries the
+Vehicle Profile config-node id the connection resolves a codec by;
+`vehicleProfileName` is the display name. Decoded payloads keep the matched
+profile's display name in `payload.profile` and add the canonical
+`payload.profile_id`. An outbound message that explicitly references a Vehicle
+Profile the connection cannot resolve is rejected with `PROFILE_UNRESOLVED` — it
+is never silently encoded with the default profile.
+
+The **local identity** an outbound message transmits as is separate from the
+Vehicle Profile (issue #228). Omit it and the message uses the connection's
+required default identity; set `payload.localIdentity` to a config-node id to
+transmit as an *attached* additional identity. A Vehicle Profile never selects
+the local identity, and an unattached/disabled identity request fails closed
+(`LOCAL_IDENTITY_NOT_ATTACHED`, `MULTI_IDENTITY_DISABLED`) rather than
+transmitting as the wrong participant.
 
 The same rule applies to **routes**: in routed mode each route entry maps a
 `sysid`/`compid` pattern to a profile config node, picked in the connection
@@ -541,6 +599,30 @@ Optional:
 - `serialport` — only required for serial connections; lazy-loaded when a
   serial transport is configured. UDP/TCP usage must not require serial
   support.
+
+### Known advisory: xml2js under mavlink-mappings-gen
+
+`mavlink-mappings-gen` (all releases through 0.0.10, tracked at
+[padcom/mavlink-mappings-gen](https://github.com/padcom/mavlink-mappings-gen))
+pins `xml2js@^0.4.23`, which carries a moderate prototype-pollution advisory
+([GHSA-776f-qx25-q3cc](https://github.com/advisories/GHSA-776f-qx25-q3cc)).
+This repository forces the patched `xml2js@^0.5.0` via an npm `overrides`
+entry, which covers development, CI, and running Node-RED from a checkout —
+but npm applies `overrides` only from the root project, so an npm-installed
+copy of this package still resolves the vulnerable version underneath
+`mavlink-mappings-gen`.
+
+Accepted risk for published installs, and why: that copy of xml2js parses
+exactly one thing — the operator's own custom dialect XML file, when one is
+configured on a Vehicle Profile. Bundled dialects never touch it. An operator
+who can supply that file already authors flows (including arbitrary function
+nodes), so a malicious dialect file grants nothing the author does not
+already have. Installations that want the patched parser everywhere can add
+the same override to their own root `package.json`:
+
+```json
+"overrides": { "mavlink-mappings-gen": { "xml2js": "^0.5.0" } }
+```
 
 ## Tests
 
