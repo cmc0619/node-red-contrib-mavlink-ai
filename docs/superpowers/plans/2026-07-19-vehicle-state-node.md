@@ -14,7 +14,7 @@
 - Pure lib modules use CommonJS, no Node-RED imports, injectable clock via `opts.now` (default `Date.now`) — copy the `lib/swarm/vehicle-registry.js` pattern.
 - Every emitted payload carries `contract: 'vehicle-state/1'`.
 - No back-compat shims / cross-version fallbacks (AGENTS.md rule 7) — this is new code.
-- Absent sections are `null`, never zero-filled; sentinel wire values (`-1`, `UINT16_MAX`=65535, `INT32_MAX`) become `null`, not the raw sentinel. **Sole carve-out (`landed`):** `landed` is always present as `{ state, state_name }` with `state: 'unknown'` until `EXTENDED_SYS_STATE` is seen — ArduPilot never sends that message, so a `null` there would be permanent and indistinguishable from "not wired up," whereas the `'unknown'` sentinel reads correctly. This is the deliberate, documented exception to the null rule (spec §sections table).
+- Absent sections are `null`, never zero-filled; sentinel wire values actually used by the 8 ingested messages become `null`, not the raw sentinel: GPS `eph`/`epv`/`satellites_visible` = `UINT16_MAX`/255, and battery `voltage`/`current_battery`/`battery_remaining` = `UINT16_MAX`/`-1`. (GLOBAL_POSITION_INT's `lat`/`lon`/`alt` have no `INT32_MAX` sentinel in the wire spec, so no `INT32_MAX` handling is needed or present.) **Sole carve-out (`landed`):** `landed` is always present as `{ state, state_name }` with `state: 'unknown'` until `EXTENDED_SYS_STATE` is seen — ArduPilot never sends that message, so a `null` there would be permanent and indistinguishable from "not wired up," whereas the `'unknown'` sentinel reads correctly. This is the deliberate, documented exception to the null rule (spec §sections table).
 - A fresh HEARTBEAT never refreshes another section's `updated_at` or clears its `stale`.
 - Flight state (armed/mode/landed/position/home/gps/battery/health) is taken **only** from the autopilot component `MAV_COMP_ID_AUTOPILOT1` (compid 1); other components are presence-only.
 - Commit messages end with the two trailers used across this repo:
@@ -478,6 +478,7 @@ git commit -m "Vehicle state engine: position/home/gps sections with sentinel ha
 - Consumes: Task 1-2 engine.
 - Produces (snapshot sections, autopilot-owned):
   - `battery: { batteries: [{ id, voltage_v, current_a, remaining_pct }], updated_at, stale } | null` from BATTERY_STATUS (sentinels: `current_battery`=-1 → `current_a: null`; `battery_remaining`=-1 → `remaining_pct: null`; `voltages[0]`=65535 → `voltage_v: null`)
+  - **SYS_STATUS battery fallback (review fix):** when no BATTERY_STATUS has been seen yet for a vehicle, `battery` is populated from SYS_STATUS's own `voltage_battery` (mV), `current_battery` (cA), and `battery_remaining` (%) as a single synthetic entry `batteries: [{ id: 0, voltage_v, current_a, remaining_pct }]`, with the same sentinel→`null` mapping (`voltage_battery`=65535 → `voltage_v: null`; `current_battery`=-1 → `current_a: null`; `battery_remaining`=-1 → `remaining_pct: null`). Precedence: once a real BATTERY_STATUS message has been ingested for that vehicle, it always wins — SYS_STATUS must never overwrite the richer BATTERY_STATUS-derived reading again, even if a later SYS_STATUS arrives first. The engine tracks this with an internal `batterySource` flag (`'battery_status'` vs `'sys_status'`). Covered by an engine test asserting the SYS_STATUS-only fallback shape and that a subsequent BATTERY_STATUS takes precedence permanently.
   - `health: { sensors: [{ name, bit, present, enabled, healthy }], updated_at } | null` from SYS_STATUS `onboard_control_sensors_{present,enabled,health}`
   - `landed: { state, state_name }` from EXTENDED_SYS_STATE `landed_state` (`0`→`'unknown'`, `1`→`'on_ground'`, `2`→`'in_air'`, `3`→`'takeoff'`, `4`→`'landing'`)
 
@@ -851,7 +852,13 @@ function diffVehicleState(prev, next, at) {
     push(next.connected ? 'connected' : 'connection_lost', pConn, next.connected);
   }
 
-  const pArmed = prev ? prev.armed : null;
+  // First sight: there is no prior state to diff against, so emit only the
+  // connection edge. Every other edge below requires a real previous snapshot.
+  if (!prev) {
+    return events;
+  }
+
+  const pArmed = prev.armed;
   if (pArmed !== next.armed && next.armed !== null) {
     push(next.armed ? 'armed' : 'disarmed', pArmed, next.armed);
   }
@@ -878,8 +885,13 @@ function diffVehicleState(prev, next, at) {
     push('home_set', null, { lat: next.home.lat, lon: next.home.lon });
   }
 
-  const prevComps = new Set((prev ? prev.components : []).map((c) => c.compid));
-  const nextComps = new Set(next.components.map((c) => c.compid));
+  // Component sets are stale-aware: a component that is present but stale is
+  // treated as "not there" for appearance/loss purposes, so a component that
+  // simply goes quiet (without a fresh heartbeat marking it gone) still edges
+  // to component_lost once its staleness flips, and does not spuriously
+  // re-edge to component_appeared when it later refreshes.
+  const prevComps = new Set((prev ? prev.components : []).filter((c) => !c.stale).map((c) => c.compid));
+  const nextComps = new Set(next.components.filter((c) => !c.stale).map((c) => c.compid));
   for (const compid of nextComps) {
     if (!prevComps.has(compid)) {
       push('component_appeared', null, compid);

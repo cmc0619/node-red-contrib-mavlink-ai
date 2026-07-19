@@ -70,6 +70,23 @@ test('component appearance/loss and sensor health flips are edges', () => {
   assert.strictEqual(h.to.name, 'GYRO');
 });
 
+test('an autopilot appearing on an already-known vehicle emits armed/disarmed (no null-guard suppression)', () => {
+  /**
+   * prev is non-null (the vehicle was already known from a non-autopilot
+   * component), but no autopilot had been seen yet, so armed was null. Once
+   * the autopilot HEARTBEAT arrives, armed flips null -> false and must
+   * still edge-trigger a 'disarmed' event — the pArmed !== null guard used
+   * to wrongly suppress this legitimate transition.
+   */
+  const prev = snap({ armed: null });
+  const next = snap({ armed: false });
+  const events = diffVehicleState(prev, next, 1);
+  assert.ok(
+    events.some((e) => e.event === 'disarmed' && e.from === null && e.to === false),
+    'null -> false armed transition on an already-known vehicle fires disarmed'
+  );
+});
+
 test('a component going stale fires component_lost, and reappearing fires component_appeared', () => {
   const prev = snap({ components: [{ compid: 1 }, { compid: 100 }] });
   const next = snap({ components: [{ compid: 1 }, { compid: 100, stale: true }] });

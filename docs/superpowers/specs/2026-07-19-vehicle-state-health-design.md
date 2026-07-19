@@ -31,7 +31,12 @@ MAVLink guidance explicitly warns against.
 `messageNames` filter:
 
 `HEARTBEAT, EXTENDED_SYS_STATE, SYS_STATUS, BATTERY_STATUS, GPS_RAW_INT,
-GLOBAL_POSITION_INT, HOME_POSITION, AUTOPILOT_VERSION, STATUSTEXT`
+GLOBAL_POSITION_INT, HOME_POSITION, STATUSTEXT`
+
+AUTOPILOT_VERSION is deliberately **not** in this subscription filter and the
+engine never ingests it — capabilities are read from the connection's
+existing #233 capability cache and merged in by the node (see the
+`capabilities` row below).
 
 **Keying and aggregation (#208).** State is keyed per **sysid** (a vehicle).
 Within a vehicle, the **autopilot component owns flight state**: armed, mode,
@@ -55,9 +60,9 @@ seen — **never zero-filled**.
 | `position` | GLOBAL_POSITION_INT | degE7 → degrees, mm → m; relative + AMSL alt |
 | `home` | HOME_POSITION **only** | absent until the vehicle reports home. No first-observed-position substitution. (A later `estimated` marker is allowed by #208 but out of scope here.) |
 | `gps` | GPS_RAW_INT | `fix_type` name + numeric, satellites, eph/epv with UINT16_MAX → `null` |
-| `battery` | BATTERY_STATUS, SYS_STATUS | per-battery entries; `-1` / sentinel values (current, remaining, mAh) → `null` with the field marked `unavailable`; SYS_STATUS voltage kept as fallback when BATTERY_STATUS is absent |
+| `battery` | BATTERY_STATUS (primary), SYS_STATUS (fallback) | BATTERY_STATUS is primary: per-battery entries; `-1` / `UINT16_MAX` sentinel values (voltage, current, remaining) → `null`. Until a vehicle's first BATTERY_STATUS arrives, `voltage_battery`/`current_battery`/`battery_remaining` from SYS_STATUS populate a single synthetic `{ id: 0, voltage_v, current_a, remaining_pct }` entry, with the same sentinel → `null` mapping. Once a real BATTERY_STATUS is seen, it wins permanently — SYS_STATUS never overwrites it again |
 | `health` | SYS_STATUS | `onboard_control_sensors_{present,enabled,health}` decoded to named per-sensor flags: `{ name, present, enabled, healthy }`; unknown bits surfaced by bit index |
-| `capabilities` | AUTOPILOT_VERSION | read through the connection's existing #233 capability cache (`getVehicleCapabilities`); the engine does not re-parse |
+| `capabilities` | AUTOPILOT_VERSION (read from the connection's #233 capability cache — not ingested by the engine) | read through the connection's existing #233 capability cache (`getVehicleCapabilities`); the engine does not re-parse, and AUTOPILOT_VERSION is not in the engine's subscription filter above |
 | `statustext` | STATUSTEXT | ring buffer (configurable N, default 20) of `{ severity, severity_name, text, at }` |
 
 **Freshness.** `connected` means HEARTBEAT within the staleness window —

@@ -62,6 +62,19 @@ test('ingest returns null for a payload with no numeric sysid', () => {
   assert.strictEqual(engine.ingest({ name: 'STATUSTEXT', fields: { text: 'x' } }), null);
 });
 
+test('ingest rejects null/blank/non-numeric sysid and creates no phantom vehicle', () => {
+  const engine = new VehicleStateEngine();
+  assert.strictEqual(engine.ingest({ name: 'HEARTBEAT', sysid: '', compid: 1, fields: {} }), null);
+  assert.strictEqual(engine.ingest({ name: 'HEARTBEAT', sysid: null, compid: 1, fields: {} }), null);
+  assert.strictEqual(engine.ingest({ name: 'HEARTBEAT', sysid: 'x', compid: 1, fields: {} }), null);
+  assert.strictEqual(engine.ingest({ name: 'HEARTBEAT', compid: 1, fields: {} }), null);
+  assert.deepStrictEqual(
+    engine.sysids(),
+    [],
+    'Number(null)/Number("") coerce to 0, which used to create a phantom sysid-0 vehicle'
+  );
+});
+
 test('position, home, and gps sections decode units and carry independent staleness', () => {
   const c = clock();
   const engine = new VehicleStateEngine({ staleMs: 5000, now: c.now });
