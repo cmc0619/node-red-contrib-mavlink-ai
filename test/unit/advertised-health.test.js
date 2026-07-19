@@ -32,6 +32,8 @@ test('resolveHeartbeatStatus maps each state and honors expiry', () => {
   assert.deepStrictEqual(resolveHeartbeatStatus({ state: 'fatal', expires_at: null }, 50), { stop: true });
   /** An expired non-fatal lease must never look healthy → CRITICAL. */
   assert.deepStrictEqual(resolveHeartbeatStatus({ state: 'nominal', expires_at: 100 }, 101), { status: 'MAV_STATE_CRITICAL' });
+  /** Fail-closed at the exact boundary: now === expires_at is already expired. */
+  assert.deepStrictEqual(resolveHeartbeatStatus({ state: 'nominal', expires_at: 100 }, 100), { status: 'MAV_STATE_CRITICAL' });
 });
 
 test('HEALTH_STATES lists the four contract states', () => {

@@ -2256,8 +2256,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
         // fatal: a faulted component must not keep heartbeating as if present.
         return null;
       }
-      fields.system_status = outcome.status;
-      return fields;
+      // Return a fresh object rather than mutating the identity's fields, so a
+      // future getHeartbeatFields() that caches/shares its result can't be
+      // corrupted by this per-tick override.
+      return Object.assign({}, fields, { system_status: outcome.status });
     };
 
     /**

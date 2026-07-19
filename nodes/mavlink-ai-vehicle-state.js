@@ -269,7 +269,7 @@ module.exports = function (RED) {
     /** Handle on-demand snapshot requests via 'snapshot' command. */
     node.on('input', (msg, send, done) => {
       const command = msg.command || (msg.payload && msg.payload.command);
-      const health = msg.health || (msg.payload && msg.payload.health);
+      const health = msg.health !== undefined ? msg.health : (msg.payload && msg.payload.health);
       if (health !== undefined) {
         if (!node.connection || typeof node.connection.setAdvertisedHealth !== 'function') {
           send([null, { topic: 'mavlink/error', payload: errorPayload({
