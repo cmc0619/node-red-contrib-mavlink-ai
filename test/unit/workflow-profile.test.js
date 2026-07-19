@@ -177,3 +177,71 @@ test('single-profile compid accept filters cannot reject a component-broadcast t
   assert.strictEqual(badSysid.accepted, false);
   assert.strictEqual(badSysid.reason, 'sysid-rejected');
 });
+
+test('unmatched-default does not shadow a sysid-matching responder route for compid-0 targets', (t) => {
+  /**
+   * Codex review round 2 on #302: with unmatchedPolicy 'default', the literal
+   * (1, 0) probe is accepted by the unmatched-default fallback — but replies
+   * from component 1 will be decoded under the 1:1 route's profile, so the
+   * workflow must adopt THAT profile, not the connection default. Only a
+   * literal route match short-circuits; unmatched-default keeps looking for a
+   * sysid-matching responder route first.
+   */
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Default', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p2', name: 'Routed', vehicleFamily: 'generic', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c1', name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false,
+    routingMode: 'routed', unmatchedPolicy: 'default',
+    routeTable: JSON.stringify([{ sysid: 1, compid: 1, profile: 'p2' }])
+  });
+  t.after(() => RED.close(conn));
+
+  /** The 1:1 responder route wins over the unmatched-default fallback. */
+  const broadcast = conn.getRouteDecision({ sysid: 1, compid: 0 });
+  assert.strictEqual(broadcast.accepted, true);
+  assert.strictEqual(broadcast.profile && broadcast.profile.id, 'p2');
+
+  /** No responder route for sysid 2: the unmatched-default fallback stands. */
+  const off = conn.getRouteDecision({ sysid: 2, compid: 0 });
+  assert.strictEqual(off.accepted, true);
+  assert.strictEqual(off.profile && off.profile.id, 'p1');
+
+  /** A literal component route match still short-circuits untouched. */
+  const literal = conn.getRouteDecision({ sysid: 1, compid: 1 });
+  assert.strictEqual(literal.profile && literal.profile.id, 'p2');
+});
+
+test('broadcast and out-of-range targets skip the route check for the node guards to reject', () => {
+  /**
+   * Codex review round 2 on #302: target_system 0 and out-of-range ids are
+   * invalid INPUT, not routing problems. The route fail-fast must not
+   * preempt the nodes' BROADCAST_NO_ACK / INVALID_FIELD guards — those carry
+   * the safety-specific messaging for destructive broadcast workflows (#197).
+   */
+  const rejectAll = {
+    profile: profileStub('p1', 'Default', { defaultTargetSystem: 1, defaultTargetComponent: 1 }),
+    getRouteDecision: () => ({ accepted: false, profile: null, reason: 'unmatched-reject' })
+  };
+  /** Broadcast sysid: resolves without throwing; the node guard fires next. */
+  const ctx = resolveWorkflowContext(rejectAll, { targetSystem: 0 });
+  assert.strictEqual(ctx.targetSystem, 0);
+  /** Out-of-range / non-integer ids: same — INVALID_FIELD is the right error. */
+  assert.strictEqual(resolveWorkflowContext(rejectAll, { targetSystem: 999 }).targetSystem, 999);
+  assert.strictEqual(resolveWorkflowContext(rejectAll, { targetSystem: 1, targetComponent: 400 }).targetComponent, 400);
+  /** A valid unicast target still fails fast. */
+  assert.throws(
+    () => resolveWorkflowContext(rejectAll, { targetSystem: 5, targetComponent: 1 }),
+    (err) => err.code === 'ROUTE_REJECTED'
+  );
+});

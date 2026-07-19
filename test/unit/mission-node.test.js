@@ -321,3 +321,17 @@ test('mission workflow to a route-rejected target fails fast, zero bytes on the 
   assert.strictEqual(conn.sent.length, 0, 'no mission message may reach a route-rejected target');
   assert.strictEqual(conn.lockNames.length, 0, 'the workflow lock is never taken for a doomed workflow');
 });
+
+test('a broadcast target still reports BROADCAST_NO_ACK on a route-rejecting connection (#302 review)', async () => {
+  /**
+   * The route fail-fast must not shadow the destructive-broadcast guard:
+   * target_system 0 is invalid input, and the safety-specific message wins
+   * over a routing hint even when the connection would reject sysid 0.
+   */
+  const { RED, conn, node } = setupWithSends();
+  conn.getRouteDecision = () => ({ accepted: false, profile: null, reason: 'unmatched-reject' });
+  const { collected } = await RED.inject(node, { payload: { action: 'clear', target_system: 0 } });
+  const err = collected[0][2];
+  assert.strictEqual(err.payload.code, 'BROADCAST_NO_ACK');
+  assert.strictEqual(conn.sent.length, 0);
+});
