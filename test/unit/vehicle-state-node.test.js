@@ -142,9 +142,9 @@ test('the engine is rebuilt when the connection node is redeployed', (t) => {
 });
 
 test('the engine is cleared when the connection node disappears on redeploy', async (t) => {
-  const { RED, node } = setup();
+  const { RED, conn, node } = setup();
   t.after(() => RED.close(node));
-  RED._nodes.get('c1').deliver ? RED._nodes.get('c1').deliver(hb(1)) : null;
+  conn.deliver(hb(1));
   assert.ok(node.engine, 'engine present while connected');
   /** Connection node removed on redeploy, then flows:started re-runs attach. */
   RED.remove('c1');

@@ -305,6 +305,8 @@ module.exports = function (RED) {
       }
       detach();
       engine = null;
+      node.engine = null;
+      attachedProfile = null;
       lastSnapshots = new Map();
       done();
     });
