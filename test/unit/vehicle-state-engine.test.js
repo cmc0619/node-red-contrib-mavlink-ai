@@ -137,6 +137,55 @@ test('a second battery with a different id appends rather than overwriting', () 
   assert.strictEqual(s.battery.batteries.find((b) => b.id === 1).remaining_pct, 60);
 });
 
+test('SYS_STATUS voltage is a fallback battery reading when BATTERY_STATUS is absent', () => {
+  const c = clock();
+  const engine = new VehicleStateEngine({ now: c.now });
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  engine.ingest({
+    name: 'SYS_STATUS',
+    sysid: 1,
+    compid: 1,
+    fields: {
+      onboard_control_sensors_present: 0x1,
+      onboard_control_sensors_enabled: 0x1,
+      onboard_control_sensors_health: 0x1,
+      voltage_battery: 12300,
+      current_battery: 800,
+      battery_remaining: 77
+    }
+  });
+  const s = engine.snapshot(1);
+  assert.strictEqual(s.battery.batteries.length, 1);
+  assert.strictEqual(s.battery.batteries[0].id, 0);
+  assert.strictEqual(s.battery.batteries[0].voltage_v, 12.3);
+  assert.strictEqual(s.battery.batteries[0].current_a, 8);
+  assert.strictEqual(s.battery.batteries[0].remaining_pct, 77);
+});
+
+test('once BATTERY_STATUS has been seen, it takes precedence over the SYS_STATUS fallback', () => {
+  const c = clock();
+  const engine = new VehicleStateEngine({ now: c.now });
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  engine.ingest({ name: 'BATTERY_STATUS', sysid: 1, compid: 1, fields: { id: 0, voltages: [12600], current_battery: 1500, battery_remaining: 87 } });
+  engine.ingest({
+    name: 'SYS_STATUS',
+    sysid: 1,
+    compid: 1,
+    fields: {
+      onboard_control_sensors_present: 0x1,
+      onboard_control_sensors_enabled: 0x1,
+      onboard_control_sensors_health: 0x1,
+      voltage_battery: 9900,
+      current_battery: 100,
+      battery_remaining: 10
+    }
+  });
+  const s = engine.snapshot(1);
+  assert.strictEqual(s.battery.batteries.length, 1, 'SYS_STATUS does not append a second entry');
+  assert.strictEqual(s.battery.batteries[0].voltage_v, 12.6, 'BATTERY_STATUS reading is untouched by SYS_STATUS');
+  assert.strictEqual(s.battery.batteries[0].remaining_pct, 87);
+});
+
 test('SYS_STATUS decodes per-sensor present/enabled/healthy flags', () => {
   const c = clock();
   const engine = new VehicleStateEngine({ now: c.now });

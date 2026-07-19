@@ -69,3 +69,20 @@ test('component appearance/loss and sensor health flips are edges', () => {
   assert.strictEqual(h.to.healthy, false);
   assert.strictEqual(h.to.name, 'GYRO');
 });
+
+test('a component going stale fires component_lost, and reappearing fires component_appeared', () => {
+  const prev = snap({ components: [{ compid: 1 }, { compid: 100 }] });
+  const next = snap({ components: [{ compid: 1 }, { compid: 100, stale: true }] });
+  const events = diffVehicleState(prev, next, 1);
+  assert.ok(
+    events.some((e) => e.event === 'component_lost' && e.from === 100),
+    'a component marked stale (not removed) still fires component_lost'
+  );
+
+  const reappeared = snap({ components: [{ compid: 1 }, { compid: 100 }] });
+  const events2 = diffVehicleState(next, reappeared, 1);
+  assert.ok(
+    events2.some((e) => e.event === 'component_appeared' && e.to === 100),
+    'a component going non-stale again fires component_appeared'
+  );
+});

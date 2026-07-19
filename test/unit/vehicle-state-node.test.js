@@ -95,6 +95,16 @@ test('the sysid filter restricts which vehicles the node reports', (t) => {
   assert.ok(seen.map((o) => o[0]).find(Boolean), 'sysid 2 passes');
 });
 
+test('a malformed sysid filter fails closed: no emission for any vehicle, config error set (#208 whole-branch review)', (t) => {
+  const { RED, conn, node } = setup({ sysids: '1O' });
+  t.after(() => RED.close(node));
+  assert.ok(node._configError, 'node has a config error');
+  const seen = [];
+  node.send = (outs) => seen.push(outs);
+  conn.deliver(hb(1));
+  assert.strictEqual(seen.length, 0, 'nothing is emitted for any vehicle when the sysid filter is malformed');
+});
+
 test('a silent vehicle emits connection_lost on the re-diff tick (#208 whole-branch review)', async (t) => {
   const { RED, conn, node } = setup({ staleMs: 20 });
   t.after(() => RED.close(node));

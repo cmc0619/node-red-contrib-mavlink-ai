@@ -1,6 +1,8 @@
 'use strict';
 
 const { VehicleStateEngine, diffVehicleState } = require('../lib/state/vehicle-state');
+const { parseIdListStrict } = require('../lib/util/validation');
+const { errorPayload } = require('../lib/util/errors');
 
 /** Messages the engine ingests (capabilities come from the #233 cache, not here). */
 const STATE_MESSAGES = [
@@ -18,23 +20,26 @@ const STATE_MESSAGES = [
  */
 const CHANGE_TICK_MS = 1000;
 
-/** Parse a comma/space id list to a Set of numbers; blank = empty (all). */
-function parseSysids(raw) {
-  return new Set(
-    String(raw || '')
-      .split(/[,\s]+/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0)
-      .map((s) => Number(s))
-      .filter((n) => Number.isInteger(n))
-  );
-}
-
 module.exports = function (RED) {
   function VehicleStateNode(config) {
     RED.nodes.createNode(this, config);
     const node = this;
-    const allow = parseSysids(config.sysids);
+    /**
+     * A malformed sysid filter (e.g. "1O", "1,2x") must fail closed rather
+     * than silently widening to "all vehicles" (the old fail-open parser's
+     * behaviour when every token was dropped) — the same fail-open class the
+     * RouteTable and #204 config gates closed elsewhere. Blank stays the
+     * documented wildcard default; any invalid token makes the node invalid
+     * and it emits nothing, mirroring mavlink-ai-swarm's `groups` gate.
+     */
+    const parsedSysids = parseIdListStrict(config.sysids, 255);
+    node._configError = parsedSysids.invalid.length
+      ? `invalid Sysids: ${parsedSysids.invalid.join(', ')}`
+      : null;
+    if (node._configError) {
+      node.status({ fill: 'red', shape: 'ring', text: 'invalid config' });
+    }
+    const allow = new Set(parsedSysids.ids);
     node.staleMs = Number(config.staleMs) > 0 ? Number(config.staleMs) : 5000;
     const statustextBuffer = Number(config.statustextBuffer) > 0 ? Number(config.statustextBuffer) : 20;
     const intervalMs = Number(config.intervalSeconds) > 0 ? Number(config.intervalSeconds) * 1000 : 0;
@@ -170,28 +175,43 @@ module.exports = function (RED) {
       attachedTo = node.connection;
     }
 
-    attach();
-    if (RED.events && typeof RED.events.on === 'function') {
-      RED.events.on('flows:started', attach);
-      node.on('close', () => RED.events.removeListener('flows:started', attach));
-    }
-    if (intervalMs > 0) {
-      const t = setInterval(() => engine && emitSnapshot(), intervalMs);
-      if (typeof t.unref === 'function') {
-        t.unref();
+    /**
+     * With a malformed sysid filter the node fails closed entirely: it does
+     * not attach/subscribe and does not start the interval/re-diff timers,
+     * so it can never auto-emit a transition or snapshot for any vehicle
+     * (mirroring mavlink-ai-swarm's `groups` gate, #204-style). The input
+     * handler still answers a snapshot request with INVALID_CONFIG.
+     */
+    if (!node._configError) {
+      attach();
+      if (RED.events && typeof RED.events.on === 'function') {
+        RED.events.on('flows:started', attach);
+        node.on('close', () => RED.events.removeListener('flows:started', attach));
       }
-      timers.push(t);
+      if (intervalMs > 0) {
+        const t = setInterval(() => engine && emitSnapshot(), intervalMs);
+        if (typeof t.unref === 'function') {
+          t.unref();
+        }
+        timers.push(t);
+      }
+      const tickTimer = setInterval(reEmitAll, CHANGE_TICK_MS);
+      if (typeof tickTimer.unref === 'function') {
+        tickTimer.unref();
+      }
+      timers.push(tickTimer);
     }
-    const tickTimer = setInterval(reEmitAll, CHANGE_TICK_MS);
-    if (typeof tickTimer.unref === 'function') {
-      tickTimer.unref();
-    }
-    timers.push(tickTimer);
 
     node.on('input', (msg, send, done) => {
       const command = msg.command || (msg.payload && msg.payload.command);
       if (command === 'snapshot') {
-        if (engine) {
+        if (node._configError) {
+          send([null, { topic: 'mavlink/error', payload: errorPayload({
+            node: 'mavlink-ai-vehicle-state',
+            code: 'INVALID_CONFIG',
+            message: `mavlink-ai-vehicle-state: ${node._configError}`
+          }) }, null]);
+        } else if (engine) {
           emitSnapshot(msg.sysid !== undefined ? Number(msg.sysid) : undefined, send);
         }
       }
