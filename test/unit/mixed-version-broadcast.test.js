@@ -246,3 +246,44 @@ test('a mixed broadcast is best-effort: one failed group does not fail the send'
   conn._queue = { enqueue: () => Promise.reject(new Error('QUEUE_FULL')), clear() {} };
   await assert.rejects(() => conn.send({ name: 'HEARTBEAT', fields: HB }), /QUEUE_FULL/);
 });
+
+test('the mixed split only runs on transports that can route by sysid', async (t) => {
+  /**
+   * Codex review round 2 on #303: MAVLink2 peers parse v1 frames too, so a
+   * transport that ignores { sysids } (serial, tcp, udp with a fixed
+   * destination) would deliver BOTH encodings to the same stream and a v2
+   * peer would observe a broadcast command twice. On such transports the
+   * send keeps the single-encode path (the pre-existing one-version
+   * limitation), never the duplicating split.
+   */
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'P', dialect: 'common', mavlinkVersion: 'auto',
+    defaultTargetSystem: 7, defaultTargetComponent: 3
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  /** udp with a fixed remote destination: single endpoint, no sysid routing. */
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c1', name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp',
+    remoteHost: '127.0.0.1', remotePort: 34567, reconnect: false, heartbeat: false
+  });
+  t.after(() => RED.close(conn));
+  const sent = [];
+  conn._queue = {
+    enqueue(buffer, priority, meta, opts) {
+      sent.push({ buffer, meta, opts: opts || {} });
+      return Promise.resolve();
+    },
+    clear() {}
+  };
+
+  /** Teach a mixed fleet by magic directly (no inbound path needed here). */
+  conn._link.noteInboundMagic(0xfe, 3);
+  conn._link.noteInboundMagic(0xfd, 4);
+
+  await conn.send({ name: 'HEARTBEAT', fields: HB });
+  assert.strictEqual(sent.length, 1, 'fixed-destination transport: no per-version split');
+  assert.strictEqual(sent[0].meta.sysids, undefined);
+});
