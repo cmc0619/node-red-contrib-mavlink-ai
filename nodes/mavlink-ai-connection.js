@@ -754,6 +754,17 @@ module.exports = function registerMavlinkAiConnection(RED) {
         throw err;
       }
       node._advertisedHealth.set(identity.id, record);
+      /**
+       * Evict synchronously, not on the next tick (#225 review): a `fatal`
+       * assertion must stop the identity's heartbeat immediately, not up to
+       * one heartbeat interval later. Without this, a frame enqueued by a
+       * tick just before this call could still drain from the outbound
+       * queue during the inter-tick window, flushing a stale pre-fatal
+       * HEARTBEAT after the caller was told the identity is now fatal.
+       */
+      if (record.state === 'fatal') {
+        node._evictQueuedHeartbeats(identity.id);
+      }
       return record;
     };
 
@@ -2263,6 +2274,36 @@ module.exports = function registerMavlinkAiConnection(RED) {
     };
 
     /**
+     * Drop every heartbeat frame currently queued for `identityId` — the
+     * bare `heartbeat:<id>` coalesce key `send()` normally uses, *and* any
+     * `:`-suffixed variant. The variant matters because the mixed v1/v2
+     * broadcast path (#199) re-keys a coalesced frame per wire version
+     * (`options.coalesceKey` becomes `<key>:v1` / `<key>:v2`) when a UDP
+     * peer-learning `auto`-mode connection has learned mixed-version peers,
+     * so a heartbeat can end up queued under `heartbeat:<id>:v1` /
+     * `heartbeat:<id>:v2` rather than the bare key an exact-match eviction
+     * would look for (#225 review).
+     *
+     * The `=== base || startsWith(base + ':')` predicate is anchored on the
+     * literal `:` separator so a shared numeric prefix can never false-match
+     * a different identity's key — base `heartbeat:1` matches `heartbeat:1`
+     * and `heartbeat:1:v1` but not `heartbeat:10` or `heartbeat:12`.
+     *
+     * Called both synchronously from `setAdvertisedHealth` when a `fatal`
+     * assertion is stored, and from the heartbeat tick's own fatal path, so
+     * both eviction points share one correct, tested predicate (#225).
+     *
+     * @param {string} identityId
+     * @returns {void}
+     */
+    node._evictQueuedHeartbeats = (identityId) => {
+      const base = `heartbeat:${identityId}`;
+      if (node._queue) {
+        node._queue.dropCoalescedMatching((k) => typeof k === 'string' && (k === base || k.startsWith(`${base}:`)));
+      }
+    };
+
+    /**
      * Edge-triggered fatal/recovery notice for a health-driven identity's
      * heartbeat tick (#225 review). `_heartbeatFieldsFor` is pure, so this is
      * where the fatal-stop and its recovery become observable: a `node.warn`
@@ -2302,7 +2343,9 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * surface any fatal/recovery edge, then either send (background priority,
      * coalesced *per identity* (#228) so a prior queued heartbeat for this
      * identity is superseded rather than stacked) or, on fatal, evict any
-     * heartbeat for this identity already sitting in the queue.
+     * heartbeat for this identity already sitting in the queue via
+     * `node._evictQueuedHeartbeats` (covers the bare coalesce key and any
+     * mixed v1/v2 `:`-suffixed variant, #225 review).
      *
      * The eviction matters because the enqueue-time supersede in `send()`
      * never runs on a fatal tick (it returns before calling `send`): a
@@ -2321,9 +2364,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       const fields = node._heartbeatFieldsFor(identity, Date.now());
       node._handleHeartbeatHealthEdge(identity, fields);
       if (!fields) {
-        if (node._queue) {
-          node._queue.dropCoalesced(`heartbeat:${identity.id}`);
-        }
+        node._evictQueuedHeartbeats(identity.id);
         return;
       }
       node

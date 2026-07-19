@@ -246,17 +246,21 @@ test('_handleHeartbeatHealthEdge warns once entering fatal and once on recovery,
 });
 
 /**
- * Queued-heartbeat eviction on fatal (#225 review): the tick's `send()` call
- * (and the enqueue-time coalesce-drop inside it) is skipped entirely once
- * `_heartbeatFieldsFor` returns null for a fatal identity — so a heartbeat
- * from a *prior*, pre-fatal tick that is still sitting in the outbound queue
- * (e.g. backlogged behind a stalled transport) would otherwise survive fatal
- * and still be flushed. `node._heartbeatTick` must explicitly drop it via
- * `node._queue.dropCoalesced('heartbeat:<identity.id>')` before returning.
- * Driven at the `node._heartbeatTick(identity)` seam (mirroring
+ * Queued-heartbeat eviction on fatal (#225 review, refined): the tick's
+ * `send()` call (and the enqueue-time coalesce-drop inside it) is skipped
+ * entirely once `_heartbeatFieldsFor` returns null for a fatal identity — so
+ * a heartbeat from a *prior*, pre-fatal tick that is still sitting in the
+ * outbound queue (e.g. backlogged behind a stalled transport) would
+ * otherwise survive fatal and still be flushed. `node._heartbeatTick` must
+ * evict it via the shared `node._evictQueuedHeartbeats` helper before
+ * returning. The helper now drops via `dropCoalescedMatching` (not the
+ * exact-key `dropCoalesced`) so it also catches the mixed v1/v2 broadcast
+ * path's version-suffixed coalesce keys (#199) — see the two eviction tests
+ * below. Driven at the `node._heartbeatTick(identity)` seam (mirroring
  * `_heartbeatFieldsFor` / `_handleHeartbeatHealthEdge` above) rather than a
- * live `setInterval`, and spying on `dropCoalesced` rather than exercising a
- * real `send()` keeps this deterministic and avoids a real transport write.
+ * live `setInterval`, and spying on `_evictQueuedHeartbeats` rather than
+ * exercising a real `send()` keeps this deterministic and avoids a real
+ * transport write.
  */
 test('a fatal tick evicts any already-queued heartbeat for that identity (#225 review)', async (t) => {
   const RED = new MockRED().loadNodes();
@@ -267,18 +271,106 @@ test('a fatal tick evicts any already-queued heartbeat for that identity (#225 r
   conn.heartbeatEnabled = true;
   conn.resolveLocalIdentity = (ref) => (ref == null || ref === def.id ? def : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
 
-  const dropCalls = [];
-  conn._queue.dropCoalesced = (key) => {
-    dropCalls.push(key);
-    return 0;
+  const evictCalls = [];
+  conn._evictQueuedHeartbeats = (identityId) => {
+    evictCalls.push(identityId);
   };
 
   conn.setAdvertisedHealth(undefined, { health: 'fatal' });
+  // setAdvertisedHealth itself evicts synchronously on fatal (Finding 1) —
+  // clear that call so the assertion below isolates the tick's own eviction.
+  evictCalls.length = 0;
+
   conn._heartbeatTick(def);
 
   assert.deepStrictEqual(
-    dropCalls,
-    [`heartbeat:${def.id}`],
-    'a fatal tick must evict any queued heartbeat carrying this identity\'s coalesce key'
+    evictCalls,
+    [def.id],
+    'a fatal tick must evict any queued heartbeat for this identity via the shared eviction helper'
   );
+});
+
+/**
+ * Finding 1 (#225 review): storing a `fatal` assertion must evict queued
+ * heartbeats for that identity *synchronously*, inside `setAdvertisedHealth`
+ * itself — not only on the next tick (up to one heartbeat interval later).
+ * Otherwise a frame enqueued by a tick just before the fatal assertion could
+ * still drain from the outbound queue during the inter-tick window.
+ */
+test('setAdvertisedHealth synchronously evicts queued heartbeats when the assertion is fatal (#225 review)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-default');
+  conn.localIdentity = def;
+  conn.heartbeatEnabled = true;
+  conn.resolveLocalIdentity = (ref) => (ref == null || ref === def.id ? def : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+
+  const evictCalls = [];
+  conn._evictQueuedHeartbeats = (identityId) => {
+    evictCalls.push(identityId);
+  };
+
+  // Non-fatal assertions must not trigger eviction.
+  conn.setAdvertisedHealth(undefined, { health: 'degraded', ttl_s: 10 });
+  assert.deepStrictEqual(evictCalls, [], 'a non-fatal assertion must not evict queued heartbeats');
+
+  conn.setAdvertisedHealth(undefined, { health: 'fatal' });
+  assert.deepStrictEqual(evictCalls, [def.id], 'a fatal assertion must synchronously evict queued heartbeats');
+});
+
+/**
+ * Finding 1 + 2 combined, exercised against the real `OutboundQueue` (no
+ * spying): storing a `fatal` assertion evicts every heartbeat coalesce key
+ * variant for that identity — the bare `heartbeat:<id>` key and any
+ * `:`-suffixed mixed-version variant (`heartbeat:<id>:v1` /
+ * `heartbeat:<id>:v2`, from the #199 mixed-broadcast re-key) — while leaving
+ * a different identity's queued heartbeat, and an unrelated coalesce key,
+ * untouched. Also guards against a false-match on a longer shared-prefix
+ * sysid (id-1 vs id-10).
+ */
+test('a fatal assertion evicts base and mixed-version heartbeat coalesce keys, sparing other identities (#225 review)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-1');
+  conn.localIdentity = def;
+  conn.heartbeatEnabled = true;
+  conn.resolveLocalIdentity = (ref) => (ref == null || ref === def.id ? def : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+
+  // Stall the queue's writer so enqueued items stay queued, not drained.
+  conn._queue._writer = () => new Promise(() => {});
+
+  const settled = [];
+  const track = (label) => (p) => p.then(() => settled.push({ label, outcome: 'resolved' })).catch(() => settled.push({ label, outcome: 'rejected' }));
+
+  // Filler occupies the in-flight slot (the drain loop shifts it out and
+  // blocks on the stalled writer) so the heartbeat items below stay in
+  // `_queue` — eviction only touches still-queued items, never an in-flight
+  // write, mirroring dropCoalesced/_dropSuperseded's own contract.
+  const filler = conn._queue.enqueue(Buffer.from([0]), 2);
+  track('filler')(filler);
+
+  const base = conn._queue.enqueue(Buffer.from([1]), 3, undefined, { coalesceKey: `heartbeat:${def.id}` });
+  const v1 = conn._queue.enqueue(Buffer.from([2]), 3, undefined, { coalesceKey: `heartbeat:${def.id}:v1` });
+  const v2 = conn._queue.enqueue(Buffer.from([3]), 3, undefined, { coalesceKey: `heartbeat:${def.id}:v2` });
+  // A different identity sharing a numeric prefix (id-1 vs id-10) must survive.
+  const otherIdentityHb = conn._queue.enqueue(Buffer.from([4]), 3, undefined, { coalesceKey: 'heartbeat:id-10' });
+  const unrelated = conn._queue.enqueue(Buffer.from([5]), 2, undefined, { coalesceKey: 'unrelated' });
+
+  track('base')(base);
+  track('v1')(v1);
+  track('v2')(v2);
+  track('other')(otherIdentityHb);
+  track('unrelated')(unrelated);
+
+  conn.setAdvertisedHealth(undefined, { health: 'fatal' });
+
+  await new Promise((r) => setImmediate(r));
+
+  const resolvedLabels = settled.filter((s) => s.outcome === 'resolved').map((s) => s.label).sort();
+  assert.deepStrictEqual(resolvedLabels, ['base', 'v1', 'v2'], 'exactly the base and version-suffixed keys for this identity are evicted (resolved)');
+  assert.strictEqual(conn._queue.length, 2, 'the other identity\'s heartbeat and the unrelated item stay queued (filler is in-flight, not counted)');
+
+  conn._queue.clear();
 });
