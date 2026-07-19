@@ -109,6 +109,29 @@ description, units, valid range, and enum choices wherever metadata supports it.
 Do the same for bitmasks, coordinate frames, mission types, target components,
 and message fields.
 
+Treat a command's documented params as the complete set. Dialect XML often
+declares only the used command params and omits the `<param reserved="true"/>`
+rows for the rest (for example, MAV_CMD_SET_CAMERA_MODE declares params 1-4
+and 7, leaving 5-6 undeclared; MAV_CMD_COMPONENT_ARM_DISARM declares only
+1-2). A MAV_CMD entry that documents ANY param uses exactly the documented
+ones, so every undeclared index 1-7 on such an entry is reserved:
+
+- Hidden in every editor surface — never rendered as a generic paramN row.
+- Sent as the param default at runtime: 0 when nothing is declared, NaN only
+  when the XML explicitly declares `default="NaN"`. UI metadata never carries
+  NaN; it serializes as null.
+- A stale or imported configured value for an undeclared index must be
+  ignored, never sent. The runtime enforces this independently of the editor
+  because imported flows bypass it (§3.5).
+- A MAV_CMD entry with NO documented params at all keeps the full generic
+  param1..param7 set, editable — the raw escape hatch for commands the
+  dialect does not document.
+- The XML compiler stays faithful to the document and does not synthesize
+  param entries; the convention is applied by its consumers: the shared
+  command-metadata shaping, the command editor, and the command runtime.
+- COMMAND_INT x/y/z stand in for PARAM5/6/7, so the convention applies by
+  param index and the field mapping is unaffected.
+
 ### 3.3 State has one visible owner
 
 No global parser, global active dialect, global current vehicle, or hidden
