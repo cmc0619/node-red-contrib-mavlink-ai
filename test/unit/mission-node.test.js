@@ -295,3 +295,23 @@ test('mission node reports an unresolved Local Identity on its error output', as
   assert.strictEqual(collected[0][2].payload.code, 'LOCAL_IDENTITY_UNRESOLVED');
   assert.strictEqual(conn.sent.length, 0, 'no mission message is sent when identity resolution fails');
 });
+
+test('mission workflow to a route-rejected target fails fast, zero bytes on the wire (#196)', async () => {
+  /**
+   * Routed connection, unmatched policy 'reject': inbound packets from sysid 5
+   * are dropped before decode, so a mission workflow addressed at it can never
+   * see a reply. It must fail with ROUTE_REJECTED before sending anything —
+   * not run the full retry schedule into MISSION_TIMEOUT.
+   */
+  const { RED, conn, node } = setupWithSends({ config: { action: 'download' } });
+  conn.getRouteDecision = ({ sysid }) =>
+    sysid === 5
+      ? { accepted: false, profile: null, reason: 'unmatched-reject' }
+      : { accepted: true, profile: conn.profile };
+  const { collected } = await RED.inject(node, { payload: { action: 'download', target_system: 5 } });
+  const err = collected[0][2];
+  assert.strictEqual(err.topic, 'mavlink/error');
+  assert.strictEqual(err.payload.code, 'ROUTE_REJECTED');
+  assert.strictEqual(conn.sent.length, 0, 'no mission message may reach a route-rejected target');
+  assert.strictEqual(conn.lockNames.length, 0, 'the workflow lock is never taken for a doomed workflow');
+});

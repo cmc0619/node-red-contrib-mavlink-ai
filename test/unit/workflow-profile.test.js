@@ -1,0 +1,130 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert');
+const { resolveWorkflowContext } = require('../../lib/util/workflow-profile');
+const { MockRED } = require('../helpers/mock-red');
+
+/**
+ * Workflow context resolution vs the connection's inbound routing (#196).
+ *
+ * A workflow (mission, param, command await-ack) addressed at a target whose
+ * inbound packets the connection REJECTS — routed mode unmatched-reject, a
+ * route whose profile cannot resolve, or a single-profile accept filter — can
+ * never complete: its own sends leave, but every reply from the target is
+ * dropped before decode. Resolution must fail fast with ROUTE_REJECTED before
+ * any packet reaches the wire, instead of running the workflow into a
+ * guaranteed timeout.
+ */
+
+/** Minimal valid profile config-node stand-in. */
+function profileStub(id, name, defaults = {}) {
+  return {
+    id,
+    name,
+    getDialect: () => ({ enums: null }),
+    isValid: () => true,
+    getDefaults: () => defaults
+  };
+}
+
+test('a route-rejected target fails fast with ROUTE_REJECTED', () => {
+  const connection = {
+    profile: profileStub('p1', 'Default', { defaultTargetSystem: 1, defaultTargetComponent: 1 }),
+    getRouteDecision: () => ({ accepted: false, profile: null, reason: 'unmatched-reject' })
+  };
+  assert.throws(
+    () => resolveWorkflowContext(connection, { targetSystem: 5, targetComponent: 1 }),
+    (err) => {
+      assert.strictEqual(err.code, 'ROUTE_REJECTED');
+      assert.strictEqual(err.context.reason, 'unmatched-reject');
+      assert.strictEqual(err.context.targetSystem, 5);
+      return true;
+    }
+  );
+});
+
+test('an explicit profile override does not bypass the route-reject fail-fast', () => {
+  /**
+   * The explicit profile only changes which dialect the workflow encodes
+   * with — inbound replies from a route-rejected target are still dropped, so
+   * the workflow is just as doomed. The check applies to both paths.
+   */
+  const explicit = profileStub('p2', 'Override', { defaultTargetSystem: 7 });
+  const connection = {
+    profile: profileStub('p1', 'Default', {}),
+    resolveProfile: (ref) => (ref === 'p2' ? explicit : { name: ref }),
+    getRouteDecision: () => ({ accepted: false, profile: null, reason: 'unmatched-reject' })
+  };
+  assert.throws(
+    () => resolveWorkflowContext(connection, { profile: 'p2' }),
+    (err) => err.code === 'ROUTE_REJECTED'
+  );
+});
+
+test('an accepted decision routes the workflow to the target profile', () => {
+  const routed = profileStub('p_routed', 'Routed', { preferredMissionItemType: 'MISSION_ITEM' });
+  const connection = {
+    profile: profileStub('p1', 'Default', { defaultTargetSystem: 2 }),
+    getRouteDecision: ({ sysid }) =>
+      sysid === 2 ? { accepted: true, profile: routed } : { accepted: false, profile: null, reason: 'unmatched-reject' }
+  };
+  const ctx = resolveWorkflowContext(connection, {});
+  assert.strictEqual(ctx.profile, routed);
+  assert.strictEqual(ctx.defaults.preferredMissionItemType, 'MISSION_ITEM');
+  assert.strictEqual(ctx.targetSystem, 2);
+});
+
+test('an accepted decision never overrides an explicit profile', () => {
+  const routed = profileStub('p_routed', 'Routed', {});
+  const explicit = profileStub('p2', 'Override', {});
+  const connection = {
+    profile: profileStub('p1', 'Default', {}),
+    resolveProfile: (ref) => (ref === 'p2' ? explicit : { name: ref }),
+    getRouteDecision: () => ({ accepted: true, profile: routed })
+  };
+  const ctx = resolveWorkflowContext(connection, { profile: 'p2', targetSystem: 3 });
+  assert.strictEqual(ctx.profile, explicit, 'explicit override must win over routing');
+});
+
+test('a legacy connection without the decision API keeps the old routed-adoption behavior', () => {
+  const routed = profileStub('p_routed', 'Routed', {});
+  const connection = {
+    profile: profileStub('p1', 'Default', {}),
+    getProfileForPacket: ({ sysid }) => (sysid === 2 ? routed : null)
+  };
+  const ctx = resolveWorkflowContext(connection, { targetSystem: 2 });
+  assert.strictEqual(ctx.profile, routed);
+  /** null (legacy reject/no-match) keeps the default profile — no throw. */
+  const ctx2 = resolveWorkflowContext(connection, { targetSystem: 9 });
+  assert.strictEqual(ctx2.profile.id, 'p1');
+});
+
+test('the connection node exposes the router decision, reject reason included (#196)', (t) => {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c1', name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false,
+    routingMode: 'routed', unmatchedPolicy: 'reject',
+    routeTable: JSON.stringify([{ sysid: 1, compid: '*', profile: 'p1' }])
+  });
+  t.after(() => RED.close(conn));
+
+  const hit = conn.getRouteDecision({ sysid: 1, compid: 1 });
+  assert.strictEqual(hit.accepted, true);
+  assert.ok(hit.profile, 'matched route resolves its profile');
+
+  const miss = conn.getRouteDecision({ sysid: 99, compid: 1 });
+  assert.strictEqual(miss.accepted, false);
+  assert.strictEqual(miss.reason, 'unmatched-reject');
+
+  /** The legacy accessor stays null-collapsing for decode-path callers. */
+  assert.strictEqual(conn.getProfileForPacket({ sysid: 99, compid: 1 }), null);
+});
