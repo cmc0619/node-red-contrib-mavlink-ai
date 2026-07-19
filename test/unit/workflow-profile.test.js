@@ -310,3 +310,51 @@ test('a compid-0-only accept filter rejects a component-broadcast target', (t) =
 
   assert.strictEqual(zeroAndOne.getRouteDecision({ sysid: 1, compid: 0 }).accepted, true);
 });
+
+test('an unresolvable compid-wildcard route shadows all responders and rejects compid-0 targets', (t) => {
+  /**
+   * Codex review round 4 on #302: inbound route() rejects a packet on its
+   * FIRST matching route. An unresolvable 1:* route is the first match for
+   * every real responder component of system 1, so nothing gets through even
+   * under unmatchedPolicy 'default' — the compid-0 viability scan must
+   * reject with profile-unresolved, not fall through to the fallback. An
+   * unresolvable compid-EXACT route only shadows its own component, so
+   * falling through past it stays correct.
+   */
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  const make = (routeTable, id) => RED.create('mavlink-ai-connection', {
+    id, name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false,
+    routingMode: 'routed', unmatchedPolicy: 'default',
+    routeTable: JSON.stringify(routeTable)
+  });
+  /** 1:* -> missing shadows every responder: reject despite unmatched-default. */
+  const shadowed = make([{ sysid: 1, compid: '*', profile: 'missing' }], 'c1');
+  /** 1:5 -> missing shadows only component 5; 1:* -> p1 carries the rest. */
+  const partial = make([
+    { sysid: 1, compid: 5, profile: 'missing' },
+    { sysid: 1, compid: '*', profile: 'p1' }
+  ], 'c2');
+  /** 1:5 -> missing alone: other components fall to the default profile. */
+  const exactOnly = make([{ sysid: 1, compid: 5, profile: 'missing' }], 'c3');
+  t.after(() => { RED.close(shadowed); RED.close(partial); RED.close(exactOnly); });
+
+  const rej = shadowed.getRouteDecision({ sysid: 1, compid: 0 });
+  assert.strictEqual(rej.accepted, false);
+  assert.strictEqual(rej.reason, 'profile-unresolved');
+
+  const viaWildcard = partial.getRouteDecision({ sysid: 1, compid: 0 });
+  assert.strictEqual(viaWildcard.accepted, true);
+  assert.strictEqual(viaWildcard.profile && viaWildcard.profile.id, 'p1');
+
+  const viaDefault = exactOnly.getRouteDecision({ sysid: 1, compid: 0 });
+  assert.strictEqual(viaDefault.accepted, true);
+  assert.strictEqual(viaDefault.profile && viaDefault.profile.id, 'p1');
+});
