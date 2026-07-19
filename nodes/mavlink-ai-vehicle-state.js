@@ -72,6 +72,12 @@ module.exports = function (RED) {
     /**
      * Merge capabilities from the connection's #233 cache onto a snapshot.
      *
+     * AUTOPILOT_VERSION.capabilities decodes as a uint64 BigInt, which is not
+     * JSON-serializable (`JSON.stringify` throws on a bigint). Downstream
+     * consumers deep-clone snapshots with JSON — e.g. the status.json dashboard
+     * — so the raw bitmask is rendered to a decimal string here before it ever
+     * leaves the node.
+     *
      * @param {object} snap
      * @returns {object}
      */
@@ -79,6 +85,9 @@ module.exports = function (RED) {
       let caps = null;
       if (node.connection && typeof node.connection.getVehicleCapabilities === 'function') {
         caps = node.connection.getVehicleCapabilities(snap.sysid, 1);
+      }
+      if (typeof caps === 'bigint') {
+        caps = caps.toString();
       }
       return Object.assign({}, snap, { capabilities: caps === undefined ? null : caps });
     }

@@ -212,6 +212,20 @@ test('SYS_STATUS decodes per-sensor present/enabled/healthy flags', () => {
   assert.strictEqual(gyro.healthy, false);
 });
 
+test('the health section carries its own staleness while heartbeats continue', () => {
+  const c = clock();
+  const engine = new VehicleStateEngine({ staleMs: 5000, now: c.now });
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  engine.ingest({ name: 'SYS_STATUS', sysid: 1, compid: 1, fields: { onboard_control_sensors_present: 0x1, onboard_control_sensors_enabled: 0x1, onboard_control_sensors_health: 0x1 } });
+  assert.strictEqual(engine.snapshot(1).health.stale, false, 'fresh SYS_STATUS is not stale');
+  /** A fresh heartbeat 6 s later must NOT refresh the health section. */
+  c.advance(6000);
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  const s = engine.snapshot(1);
+  assert.strictEqual(s.connected, true, 'heartbeat is fresh');
+  assert.strictEqual(s.health.stale, true, 'but sensor health has gone stale');
+});
+
 test('EXTENDED_SYS_STATE sets the landed state', () => {
   const c = clock();
   const engine = new VehicleStateEngine({ now: c.now });

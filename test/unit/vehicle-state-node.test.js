@@ -72,6 +72,17 @@ test('an on-demand snapshot command emits per-vehicle state on output 2', async 
   assert.strictEqual(snapMsg.payload.contract, 'vehicle-state/1');
 });
 
+test('a bigint capability bitmask is rendered JSON-safe before it leaves the node', async (t) => {
+  const { RED, conn, node } = setup();
+  t.after(() => RED.close(node));
+  conn.getVehicleCapabilities = () => 0x10n; // uint64 AUTOPILOT_VERSION.capabilities
+  conn.deliver(hb(1));
+  const { collected } = await RED.inject(node, { command: 'snapshot' });
+  const snapMsg = collected.map((o) => o[1]).find(Boolean);
+  assert.strictEqual(snapMsg.payload.capabilities, '16', 'bigint bitmask rendered to a decimal string');
+  assert.doesNotThrow(() => JSON.stringify(snapMsg.payload), 'snapshot survives JSON serialization');
+});
+
 test('STATUSTEXT is emitted live on output 3', (t) => {
   const { RED, conn, node } = setup();
   t.after(() => RED.close(node));
