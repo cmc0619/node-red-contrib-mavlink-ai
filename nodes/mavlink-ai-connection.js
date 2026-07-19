@@ -15,6 +15,7 @@ const { statusPayload } = require('../lib/util/status');
 const { toInt, toBool, parseIdListStrict } = require('../lib/util/validation');
 const { MavlinkError, toMavlinkError, errorPayload, TRANSPORT_NOT_READY_CODES } = require('../lib/util/errors');
 const { boundedSet } = require('../lib/util/bounded-map');
+const { normalizeAssertion } = require('../lib/health/advertised-health');
 
 /**
  * Minimum HEARTBEAT interval. HEARTBEAT is a low-rate presence/status message,
@@ -278,6 +279,13 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * setting; each additional binding opts into its own (#228).
      */
     node._heartbeatTimers = new Map();
+    /**
+     * Advertised-health assertions per outbound identity id (#225). A flow asserts
+     * the health of its own onboard function via setAdvertisedHealth; the heartbeat
+     * tick consults this for health-driven identities. Per-connection state — a
+     * redeploy of this connection node rebuilds it empty (resets with the link).
+     */
+    node._advertisedHealth = new Map();
     /**
      * Stream decoders keyed by stream identity: `SHARED_STREAM_KEY` for
      * single-peer transports, or a tcp server client's `clientId` so two
@@ -691,6 +699,30 @@ module.exports = function registerMavlinkAiConnection(RED) {
         'LOCAL_IDENTITY_UNRESOLVED',
         `Local Identity '${ref}' does not match a mavlink-ai-local-identity config-node ID.`
       );
+    };
+
+    /**
+     * Record a flow's health assertion for an outbound identity (#225). The
+     * periodic heartbeat maps it to system_status for identities in health-driven
+     * mode. `identityRef` omitted/null targets the connection's default local
+     * identity.
+     *
+     * @param {?string} identityRef  a Local Identity config-node id, or null for the default
+     * @param {{health: string, ttl_s?: number, note?: string}} input
+     * @returns {{state: string, note: ?string, expires_at: ?number}} the stored record
+     * @throws {Error} `.code` 'UNKNOWN_IDENTITY' (unresolvable ref) or
+     *   'INVALID_HEALTH' (bad assertion).
+     */
+    node.setAdvertisedHealth = (identityRef, input) => {
+      const identity = identityRef == null ? node.localIdentity : node.resolveLocalIdentity(identityRef);
+      if (!identity) {
+        const err = new Error('no local identity to advertise health for');
+        err.code = 'UNKNOWN_IDENTITY';
+        throw err;
+      }
+      const record = normalizeAssertion(input, Date.now());
+      node._advertisedHealth.set(identity.id, record);
+      return record;
     };
 
     /**
