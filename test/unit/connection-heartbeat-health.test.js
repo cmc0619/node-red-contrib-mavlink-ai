@@ -124,6 +124,33 @@ test('setAdvertisedHealth rejects an identity that is not health-driven and hear
 });
 
 /**
+ * #307 review (Codex P2): when the connection is in the fail-closed inactive
+ * state — its default Local Identity is missing/deleted, so `node.localIdentity`
+ * is null — but the heartbeat toggle is still on, a health assertion naming an
+ * explicit identity must still surface a *structured* eligibility error, not a
+ * raw TypeError. Previously `heartbeatSpecs()` emitted a `{ identity: null }`
+ * default spec, and the eligibility check's `spec.identity.id` deref threw
+ * `TypeError` (which the vehicle-state node then mislabels INVALID_HEALTH).
+ */
+test('setAdvertisedHealth surfaces a structured error, not a TypeError, when the default identity is missing but heartbeating is on (#307 review)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  conn.localIdentity = null;      // default identity missing → fail-closed inactive
+  conn.heartbeatEnabled = true;   // yet the heartbeat toggle is on
+  const companion = identity('id-companion');
+  conn.resolveLocalIdentity = (ref) => (ref === 'id-companion'
+    ? companion
+    : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+
+  assert.throws(
+    () => conn.setAdvertisedHealth('id-companion', { health: 'degraded', ttl_s: 10 }),
+    (e) => e.code === 'IDENTITY_NOT_HEALTH_DRIVEN' && !(e instanceof TypeError),
+    'a missing default identity must not turn the eligibility check into a raw TypeError'
+  );
+});
+
+/**
  * The heartbeat tick's health-driven decision (#225), tested via the
  * `_heartbeatFieldsFor` seam rather than driving a live setInterval tick —
  * see the tick refactor in nodes/mavlink-ai-connection.js. Covers the three

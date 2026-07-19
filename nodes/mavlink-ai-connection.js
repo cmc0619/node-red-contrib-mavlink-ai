@@ -2197,7 +2197,13 @@ module.exports = function registerMavlinkAiConnection(RED) {
      */
     function heartbeatSpecs() {
       const specs = [];
-      if (node.heartbeatEnabled) {
+      // Only schedule the default identity when one actually resolved: in the
+      // fail-closed inactive state (default Local Identity missing/deleted)
+      // `node.localIdentity` is null even with the heartbeat toggle on. Emitting
+      // a `{ identity: null }` spec would make every consumer's `spec.identity.id`
+      // deref throw a raw TypeError — including the eligibility check in
+      // setAdvertisedHealth (#225) and startHeartbeats() (#307 review).
+      if (node.heartbeatEnabled && node.localIdentity) {
         specs.push({ identity: node.localIdentity, intervalMs: node.heartbeatIntervalMs });
       }
       if (node.allowMultipleIdentities) {
