@@ -72,8 +72,18 @@
       yawRate: { value: '' },
       /** Optional continuous streaming (#128); rate only matters when streaming. */
       stream: { value: false },
-      /** Stream TTL (#216): stop this many seconds after the last input; 0 = unlimited. */
-      maxStreamSeconds: { value: 300 },
+      /** Stream TTL (#216): stop this many seconds after the last input; 0 =
+       * unlimited, blank = default. Non-numeric/negative input is outlined. */
+      maxStreamSeconds: {
+        value: 300,
+        validate: function (v) {
+          if (v === '' || v == null) {
+            return true;
+          }
+          const n = Number(v);
+          return Number.isFinite(n) && n >= 0;
+        }
+      },
       streamRateHz: {
         value: 5,
         validate: function (v) {

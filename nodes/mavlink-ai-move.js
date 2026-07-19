@@ -58,7 +58,9 @@ module.exports = function registerMavlinkAiMove(RED) {
      * cannot retransmit its final setpoint at the vehicle forever. 0 opts
      * out (unlimited).
      */
-    node.maxStreamSeconds = clampMaxStreamSeconds(Number(config.maxStreamSeconds));
+    /** Blank-aware (#304 review): a cleared editor field means "default",
+     * never the unlimited opt-out that Number('') === 0 would imply. */
+    node.maxStreamSeconds = clampMaxStreamSeconds(toNum(config.maxStreamSeconds, NaN));
     node._streamDeadline = null;
     node._streamTimer = null;
     node._streamState = null;

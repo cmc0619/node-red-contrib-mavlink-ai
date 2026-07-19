@@ -489,3 +489,21 @@ test('the stream TTL defaults to 300 seconds and refreshes on every input (#216)
   await RED.inject(node, { payload: {} });
   assert.ok(node._streamDeadline > first, 'a fresh input pushes the deadline out');
 });
+
+test('a blank Max stream field keeps the default TTL, only explicit 0 opts out (#216 review)', async () => {
+  /**
+   * Number('') coerces to 0, which would silently disable the deadman for a
+   * cleared/imported-blank editor field. Blank falls to the 300 s default via
+   * blank-aware parsing; only an explicit 0 means unlimited.
+   */
+  const blank = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, maxStreamSeconds: '' },
+    { withConnection: true }
+  );
+  assert.strictEqual(blank.node.maxStreamSeconds, 300, 'blank field falls to the default');
+  const zero = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, maxStreamSeconds: '0' },
+    { withConnection: true }
+  );
+  assert.strictEqual(zero.node.maxStreamSeconds, 0, 'explicit 0 stays the unlimited opt-out');
+});
