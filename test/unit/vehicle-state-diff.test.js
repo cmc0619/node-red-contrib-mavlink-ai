@@ -26,6 +26,10 @@ test('first snapshot (prev null) emits connected but no spurious edges', () => {
   const kinds = events.map((e) => e.event);
   assert.ok(kinds.includes('connected'));
   assert.ok(!kinds.includes('disarmed'), 'no edge for an unchanged-from-nothing field');
+  for (const spurious of ['mode_change', 'landed_change', 'gps_fix_change', 'component_appeared', 'home_set', 'armed', 'disarmed']) {
+    assert.ok(!kinds.includes(spurious), `first snapshot must not emit ${spurious}`);
+  }
+  assert.strictEqual(kinds.length, 1, 'first snapshot emits exactly one event (connected)');
 });
 
 test('arming, mode, landed, gps, and home edges fire once on change', () => {
