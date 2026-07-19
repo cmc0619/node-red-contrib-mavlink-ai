@@ -8,6 +8,16 @@ const STATE_MESSAGES = [
   'GPS_RAW_INT', 'GLOBAL_POSITION_INT', 'HOME_POSITION', 'STATUSTEXT'
 ];
 
+/**
+ * Coarse re-diff ticker (#208). A vehicle going silent (link loss) never
+ * triggers a message callback, so `emitTransitions` alone would never see
+ * the connected -> false edge. Re-diffing every vehicle's current (now
+ * possibly stale) snapshot against its last-known snapshot on a fixed
+ * cadence catches `connection_lost` / re-`connected` transitions even when
+ * no telemetry arrives.
+ */
+const CHANGE_TICK_MS = 1000;
+
 /** Parse a comma/space id list to a Set of numbers; blank = empty (all). */
 function parseSysids(raw) {
   return new Set(
@@ -67,6 +77,22 @@ module.exports = function (RED) {
       for (const ev of events) {
         node.send([{ topic: 'vehicle/transition', payload: Object.assign({ contract: 'vehicle-state/1' }, ev) }, null, null]);
       }
+    }
+
+    /**
+     * Re-diff every known vehicle on a fixed cadence (#208), so a silently
+     * lost link still produces a `connection_lost` transition (and a flap
+     * still produces a re-`connected`) without waiting on a message that
+     * will never arrive. Repaints the badge once per tick rather than once
+     * per message.
+     */
+    function reEmitAll() {
+      if (!engine) {
+        return;
+      }
+      for (const id of engine.sysids()) {
+        emitTransitions(id);
+      }
       badge();
     }
 
@@ -124,6 +150,7 @@ module.exports = function (RED) {
           enums: bundle && bundle.valid ? bundle.enums : null
         });
         node.engine = engine;
+        node._reemit = reEmitAll;
       }
       subId = node.connection.subscribe({ messageNames: STATE_MESSAGES }, (message) => {
         const res = engine.ingest(message.payload);
@@ -155,6 +182,11 @@ module.exports = function (RED) {
       }
       timers.push(t);
     }
+    const tickTimer = setInterval(reEmitAll, CHANGE_TICK_MS);
+    if (typeof tickTimer.unref === 'function') {
+      tickTimer.unref();
+    }
+    timers.push(tickTimer);
 
     node.on('input', (msg, send, done) => {
       const command = msg.command || (msg.payload && msg.payload.command);

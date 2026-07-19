@@ -94,3 +94,16 @@ test('the sysid filter restricts which vehicles the node reports', (t) => {
   conn.deliver(hb(2));
   assert.ok(seen.map((o) => o[0]).find(Boolean), 'sysid 2 passes');
 });
+
+test('a silent vehicle emits connection_lost on the re-diff tick (#208 whole-branch review)', async (t) => {
+  const { RED, conn, node } = setup({ staleMs: 20 });
+  t.after(() => RED.close(node));
+  const seen = [];
+  node.send = (outs) => seen.push(outs);
+  conn.deliver(hb(1));                         // vehicle connects
+  await new Promise((r) => setTimeout(r, 40)); // let its heartbeat age past staleMs
+  node._reemit();                              // the coarse re-diff tick
+  const lost = seen.map((o) => o[0]).filter(Boolean).find((m) => m.payload.event === 'connection_lost');
+  assert.ok(lost, 'connection_lost emitted on output 1 when the vehicle goes silent');
+  assert.strictEqual(lost.payload.sysid, 1);
+});
