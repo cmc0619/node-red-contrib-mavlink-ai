@@ -345,6 +345,17 @@ stale/expired state. Named groups can be static or type-based:
 { "scouts": [1, 2], "all-copters": { "type": "MAV_TYPE_QUADROTOR" } }
 ```
 
+### Vehicle State
+
+`mavlink-ai-vehicle-state` aggregates a connection's telemetry into a versioned
+per-vehicle `vehicle-state/1` contract — connected, armed, mode, landed,
+position, home, GPS, battery, sensor health, components, and recent STATUSTEXT —
+with independent per-section freshness (a fresh HEARTBEAT never refreshes
+position or battery). Three outputs: edge-triggered **transitions**, full
+**snapshots** (interval or on-demand), and a live **statustext** feed. HEARTBEAT
+is treated as component presence only, separate from setpoint freshness and
+sensor health.
+
 ### `mavlink-ai-fanout`
 
 Expands one logical command into one message per target vehicle. Targets come
