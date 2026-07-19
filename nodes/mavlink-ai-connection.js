@@ -1689,7 +1689,15 @@ module.exports = function registerMavlinkAiConnection(RED) {
         } catch (err) {
           return Promise.reject(toMavlinkError(err, 'ENCODE_FAILED'));
         }
-        return Promise.all(
+        /**
+         * Best-effort, mirroring UdpTransport#send's own fan-out (#148,
+         * CodeRabbit review): one group's frame may already be on the wire
+         * when the other's enqueue fails, so rejecting the whole send would
+         * invite a retry that duplicates delivery to the group that
+         * succeeded. The send resolves while at least one group went out
+         * and rejects only when every group failed.
+         */
+        return Promise.allSettled(
           buffers.map(({ version, sysids: groupSysids, buffer: groupBuffer }) =>
             node._queue.enqueue(
               groupBuffer,
@@ -1701,7 +1709,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
               }
             )
           )
-        ).then(() => undefined);
+        ).then((results) => {
+          const rejected = results.filter((r) => r.status === 'rejected');
+          if (rejected.length === results.length) {
+            throw rejected[0].reason;
+          }
+        });
       }
       let buffer;
       try {

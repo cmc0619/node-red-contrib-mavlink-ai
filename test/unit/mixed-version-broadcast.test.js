@@ -204,3 +204,45 @@ test('an explicit target_system 0 broadcast also encodes per version group', asy
   assert.deepStrictEqual(v1send.meta.sysids, [3]);
   assert.deepStrictEqual(v2send.meta.sysids, [4]);
 });
+
+test('a mixed broadcast is best-effort: one failed group does not fail the send', async (t) => {
+  /**
+   * CodeRabbit review on #303: Promise.all rejected the whole send when one
+   * group's enqueue failed after the other group's frame may already have
+   * hit the wire — a retry would then duplicate delivery to the group that
+   * succeeded. Mirror UdpTransport#send's fan-out semantics: resolve while
+   * at least one group went out, reject only when every group failed.
+   */
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'P', dialect: 'common', mavlinkVersion: 'auto',
+    defaultTargetSystem: 7, defaultTargetComponent: 3
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c1', name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
+  });
+  t.after(() => RED.close(conn));
+
+  const v1peer = new MavlinkCodec({ bundle: loadDialect('common'), version: 'v1' });
+  const v2peer = new MavlinkCodec({ bundle: loadDialect('common'), version: 'v2' });
+  conn._transport.emit('data', enc(v1peer, 'HEARTBEAT', HB, { sysid: 3, compid: 1 }));
+  conn._transport.emit('data', enc(v2peer, 'HEARTBEAT', HB, { sysid: 4, compid: 1 }));
+  await delay(10);
+
+  /** v1 group enqueue fails, v2 succeeds: the broadcast still counts. */
+  conn._queue = {
+    enqueue(buffer) {
+      return buffer[0] === 0xfe ? Promise.reject(new Error('QUEUE_FULL')) : Promise.resolve();
+    },
+    clear() {}
+  };
+  await conn.send({ name: 'HEARTBEAT', fields: HB });
+
+  /** Every group fails: the send fails with the underlying reason. */
+  conn._queue = { enqueue: () => Promise.reject(new Error('QUEUE_FULL')), clear() {} };
+  await assert.rejects(() => conn.send({ name: 'HEARTBEAT', fields: HB }), /QUEUE_FULL/);
+});
