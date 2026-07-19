@@ -83,6 +83,17 @@ test('a bigint capability bitmask is rendered JSON-safe before it leaves the nod
   assert.doesNotThrow(() => JSON.stringify(snapMsg.payload), 'snapshot survives JSON serialization');
 });
 
+test('the snapshot interval emits full snapshots on output 2 without an input send', async (t) => {
+  const { RED, conn, node } = setup({ intervalSeconds: 0.05 });
+  t.after(() => RED.close(node));
+  conn.deliver(hb(1));
+  await new Promise((resolve) => setTimeout(resolve, 90));
+  const snap = node.sent.map((o) => o[1]).find(Boolean);
+  assert.ok(snap, 'the interval timer published a snapshot via node.send');
+  assert.strictEqual(snap.topic, 'vehicle/state');
+  assert.strictEqual(snap.payload.sysid, 1);
+});
+
 test('a snapshot command scopes to payload.sysid, not just top-level msg.sysid', async (t) => {
   const { RED, conn, node } = setup();
   t.after(() => RED.close(node));

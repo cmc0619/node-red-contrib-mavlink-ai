@@ -144,7 +144,10 @@ module.exports = function (RED) {
      * @param {Function} [emit]
      */
     function emitSnapshot(sysid, emit) {
-      const doSend = emit || node.send;
+      // The interval/re-diff paths call this with no `emit`, so fall back to
+      // node.send bound to the node — a detached `node.send` loses its receiver
+      // and throws in real Node-RED (the input handler passes its own `send`).
+      const doSend = emit || node.send.bind(node);
       const targets = sysid !== undefined ? [sysid] : engine.sysids();
       for (const id of targets) {
         const snap = engine.snapshot(id);

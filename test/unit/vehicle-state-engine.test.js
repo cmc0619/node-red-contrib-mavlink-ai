@@ -68,6 +68,8 @@ test('ingest rejects null/blank/non-numeric sysid and creates no phantom vehicle
   assert.strictEqual(engine.ingest({ name: 'HEARTBEAT', sysid: null, compid: 1, fields: {} }), null);
   assert.strictEqual(engine.ingest({ name: 'HEARTBEAT', sysid: 'x', compid: 1, fields: {} }), null);
   assert.strictEqual(engine.ingest({ name: 'HEARTBEAT', compid: 1, fields: {} }), null);
+  assert.strictEqual(engine.ingest({ name: 'HEARTBEAT', sysid: 0, compid: 1, fields: {} }), null, 'sysid 0 is the broadcast/unknown address, not a real vehicle');
+  assert.strictEqual(engine.ingest({ name: 'HEARTBEAT', sysid: 256, compid: 1, fields: {} }), null, 'sysid > 255 is out of range');
   assert.deepStrictEqual(
     engine.sysids(),
     [],

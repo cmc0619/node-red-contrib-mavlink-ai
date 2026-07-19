@@ -68,6 +68,15 @@ test('mode changes are detected numerically when the mode name is unresolved', (
     .some((e) => e.event === 'mode_change'), 'no churn on an unchanged numeric mode');
 });
 
+test('arming a name-unresolved vehicle does not emit a false mode_change', () => {
+  /** base_mode toggles the SAFETY_ARMED bit (128) but custom_mode is unchanged. */
+  const prev = snap({ armed: false, mode: { name: null, base_mode: 1, custom_mode: 4 } });
+  const next = snap({ armed: true, mode: { name: null, base_mode: 129, custom_mode: 4 } });
+  const kinds = diffVehicleState(prev, next, 1).map((e) => e.event);
+  assert.ok(kinds.includes('armed'), 'the arm edge still fires');
+  assert.ok(!kinds.includes('mode_change'), 'the base_mode armed-bit flip is not a mode change');
+});
+
 test('component appearance/loss and sensor health flips are edges', () => {
   const prev = snap({ components: [{ compid: 1 }] });
   const next = snap({ components: [{ compid: 1 }, { compid: 100 }] });
