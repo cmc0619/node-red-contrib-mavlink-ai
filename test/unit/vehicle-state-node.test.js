@@ -108,6 +108,20 @@ test('the engine is rebuilt when the connection node is redeployed', (t) => {
   void conn2;
 });
 
+test('the engine is cleared when the connection node disappears on redeploy', async (t) => {
+  const { RED, node } = setup();
+  t.after(() => RED.close(node));
+  RED._nodes.get('c1').deliver ? RED._nodes.get('c1').deliver(hb(1)) : null;
+  assert.ok(node.engine, 'engine present while connected');
+  /** Connection node removed on redeploy, then flows:started re-runs attach. */
+  RED.remove('c1');
+  RED.events.emit('flows:started');
+  assert.strictEqual(node.engine, null, 'engine dropped with the vanished connection');
+  const { collected } = await RED.inject(node, { command: 'snapshot' });
+  const errMsg = collected.map((o) => o[1]).find(Boolean);
+  assert.strictEqual(errMsg.payload.code, 'CONNECTION_UNAVAILABLE', 'snapshot now reports unavailable, not stale vehicles');
+});
+
 test('a snapshot command with no resolved connection surfaces an error', async (t) => {
   const { RED, node } = setup({ connection: 'missing-conn' });
   t.after(() => RED.close(node));

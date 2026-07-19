@@ -90,7 +90,7 @@ module.exports = function (RED) {
         // capabilities instead.
         try {
           caps = node.connection.getVehicleCapabilities(snap.sysid, 1);
-        } catch (err) {
+        } catch {
           caps = null;
         }
       }
@@ -181,6 +181,13 @@ module.exports = function (RED) {
       detach();
       node.connection = conn;
       if (!node.connection) {
+        // The connection node was removed or has not resolved yet. Drop the
+        // engine and diff baseline so snapshots/interval/re-diff can't keep
+        // publishing the vanished connection's cached vehicles; a snapshot
+        // command now falls through to CONNECTION_UNAVAILABLE.
+        engine = null;
+        node.engine = null;
+        lastSnapshots = new Map();
         node.status({ fill: 'red', shape: 'ring', text: 'missing connection' });
         return;
       }

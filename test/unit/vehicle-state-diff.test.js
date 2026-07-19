@@ -55,6 +55,19 @@ test('identical snapshots produce no events', () => {
   assert.deepStrictEqual(diffVehicleState(snap(), snap(), 1), []);
 });
 
+test('mode changes are detected numerically when the mode name is unresolved', () => {
+  const prev = snap({ mode: { name: null, base_mode: 1, custom_mode: 4 } });
+  const next = snap({ mode: { name: null, base_mode: 1, custom_mode: 5 } });
+  const events = diffVehicleState(prev, next, 1);
+  const mc = events.find((e) => e.event === 'mode_change');
+  assert.ok(mc, 'a numeric-only custom_mode change still edge-triggers');
+  assert.strictEqual(mc.from, 4);
+  assert.strictEqual(mc.to, 5);
+  /** Same numeric mode with no name must not churn. */
+  assert.ok(!diffVehicleState(prev, snap({ mode: { name: null, base_mode: 1, custom_mode: 4 } }), 1)
+    .some((e) => e.event === 'mode_change'), 'no churn on an unchanged numeric mode');
+});
+
 test('component appearance/loss and sensor health flips are edges', () => {
   const prev = snap({ components: [{ compid: 1 }] });
   const next = snap({ components: [{ compid: 1 }, { compid: 100 }] });
