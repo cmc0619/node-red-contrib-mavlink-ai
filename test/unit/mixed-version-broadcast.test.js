@@ -158,3 +158,49 @@ test('udp _targets resolves meta.sysids to exactly those endpoints, deduped, unk
   transport.remotePort = 14550;
   assert.deepStrictEqual(transport._targets({ sysids: [3] }), [{ address: '192.168.1.20', port: 14550 }]);
 });
+
+test('an explicit target_system 0 broadcast also encodes per version group', async (t) => {
+  /**
+   * Codex review on #303: a message that CARRIES target_system, sent with an
+   * intentional broadcast address (target_system 0, e.g. a broadcast
+   * COMMAND_LONG), resolves routingTargetSystem to 0 — not undefined — but
+   * the transport fans it to every learned peer all the same. It must take
+   * the per-version-group path on a mixed fleet too, with the payload still
+   * addressing 0.
+   */
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'P', dialect: 'common', mavlinkVersion: 'auto',
+    defaultTargetSystem: 7, defaultTargetComponent: 3
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c1', name: 'C', profile: 'p1', localIdentity: 'id1', transport: 'udp',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
+  });
+  t.after(() => RED.close(conn));
+  const sent = [];
+  conn._queue = {
+    enqueue(buffer, priority, meta, opts) {
+      sent.push({ buffer, meta, opts: opts || {} });
+      return Promise.resolve();
+    },
+    clear() {}
+  };
+
+  const v1peer = new MavlinkCodec({ bundle: loadDialect('common'), version: 'v1' });
+  const v2peer = new MavlinkCodec({ bundle: loadDialect('common'), version: 'v2' });
+  conn._transport.emit('data', enc(v1peer, 'HEARTBEAT', HB, { sysid: 3, compid: 1 }));
+  conn._transport.emit('data', enc(v2peer, 'HEARTBEAT', HB, { sysid: 4, compid: 1 }));
+  await delay(10);
+
+  await conn.send({ name: 'COMMAND_LONG', target_system: 0, target_component: 0, fields: { command: 400, param1: 0 } });
+  assert.strictEqual(sent.length, 2, 'explicit broadcast: one enqueue per version group');
+  const v1send = sent.find((s) => s.buffer[0] === 0xfe);
+  const v2send = sent.find((s) => s.buffer[0] === 0xfd);
+  assert.ok(v1send && v2send, 'one frame per wire version');
+  assert.deepStrictEqual(v1send.meta.sysids, [3]);
+  assert.deepStrictEqual(v2send.meta.sysids, [4]);
+});

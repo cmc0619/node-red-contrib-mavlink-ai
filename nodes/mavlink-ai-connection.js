@@ -1666,16 +1666,16 @@ module.exports = function registerMavlinkAiConnection(RED) {
        * version, each routed to exactly that group's sysids, with a
        * version-suffixed coalesce key so the two heartbeat variants don't
        * cancel each other in the queue. Applies only when the version can
-       * actually vary — an untargeted send, 'auto' versioning, and no
-       * signing (signed frames are v2-only by spec, so a signed fleet is
-       * never version-mixed on the wire). Everything else — the common
-       * single-version fleet included — keeps the original one-encode path
-       * byte for byte.
+       * actually vary — a broadcast (untargeted, or explicitly addressed to
+       * target_system 0, which the transport also fans to every peer),
+       * 'auto' versioning, and no signing (signed frames are v2-only by
+       * spec, so a signed fleet is never version-mixed on the wire).
+       * Everything else — the common single-version fleet included — keeps
+       * the original one-encode path byte for byte.
        */
+      const isBroadcast = routingTargetSystem === undefined || Number(routingTargetSystem) === 0;
       const mixed =
-        routingTargetSystem === undefined && !signing && codec.version === 'auto'
-          ? node._link.mixedVersionGroups()
-          : null;
+        isBroadcast && !signing && codec.version === 'auto' ? node._link.mixedVersionGroups() : null;
       if (mixed) {
         const buffers = [];
         try {
