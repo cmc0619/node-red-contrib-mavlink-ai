@@ -332,10 +332,17 @@ const MIN_STREAM_RATE_HZ = 0.2;
 const MAX_STREAM_RATE_HZ = 50;
 /** Stream TTL default (#216): 5 minutes after the LAST input, then stop. */
 const DEFAULT_MAX_STREAM_SECONDS = 300;
+/**
+ * setTimeout clamps delays above 2^31-1 ms to 1 ms, which would make a
+ * longer finite deadman (e.g. 30 days) expire the stream immediately —
+ * cap the TTL at the timer limit (~24.8 days) instead (#304 review).
+ */
+const MAX_STREAM_SECONDS_LIMIT = Math.floor((2 ** 31 - 1) / 1000);
 
 /**
  * Normalize the stream TTL: a non-finite/negative value falls to the default,
- * 0 is the explicit unlimited opt-out, any positive number of seconds stands.
+ * 0 is the explicit unlimited opt-out, any positive number of seconds stands
+ * up to the setTimeout limit.
  *
  * @param {number} seconds
  * @returns {number}
@@ -344,7 +351,7 @@ function clampMaxStreamSeconds(seconds) {
   if (!Number.isFinite(seconds) || seconds < 0) {
     return DEFAULT_MAX_STREAM_SECONDS;
   }
-  return seconds;
+  return Math.min(seconds, MAX_STREAM_SECONDS_LIMIT);
 }
 
 /**

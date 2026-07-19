@@ -530,3 +530,16 @@ test('stream expiry fires on time even when the TTL is shorter than a tick inter
   assert.strictEqual(emitted.length, 1);
   assert.strictEqual(emitted[0].payload.stream, 'expired');
 });
+
+test('a stream TTL beyond the 32-bit timer limit is capped, not instantly expired (#216 review)', () => {
+  /**
+   * setTimeout clamps delays above 2^31-1 ms to 1 ms, so a 30-day deadman
+   * would fire immediately after the stream starts. The TTL is capped at
+   * config time to the timer limit (~24.8 days).
+   */
+  const { node } = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, maxStreamSeconds: 999999999999 },
+    { withConnection: true }
+  );
+  assert.strictEqual(node.maxStreamSeconds, 2147483, 'capped at the setTimeout limit in seconds');
+});
