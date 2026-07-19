@@ -84,7 +84,15 @@ module.exports = function (RED) {
     function withCaps(snap) {
       let caps = null;
       if (node.connection && typeof node.connection.getVehicleCapabilities === 'function') {
-        caps = node.connection.getVehicleCapabilities(snap.sysid, 1);
+        // This runs on every emitTransitions (i.e. every telemetry message);
+        // a throwing connection implementation must not tear down the whole
+        // subscription callback and swallow state updates — fall back to no
+        // capabilities instead.
+        try {
+          caps = node.connection.getVehicleCapabilities(snap.sysid, 1);
+        } catch (err) {
+          caps = null;
+        }
       }
       if (typeof caps === 'bigint') {
         caps = caps.toString();
@@ -176,17 +184,23 @@ module.exports = function (RED) {
         node.status({ fill: 'red', shape: 'ring', text: 'missing connection' });
         return;
       }
-      if (!engine) {
-        const profile = node.connection.profile;
-        const bundle = profile && typeof profile.getDialect === 'function' ? profile.getDialect() : null;
-        engine = new VehicleStateEngine({
-          staleMs: node.staleMs,
-          statustextBuffer,
-          enums: bundle && bundle.valid ? bundle.enums : null
-        });
-        node.engine = engine;
-        node._reemit = reEmitAll;
-      }
+      // We only reach here on first attach or a genuinely different connection
+      // (the identity check above short-circuits an unchanged rebind). Rebuild
+      // the engine from the new connection's dialect enums and drop the diff
+      // baseline — otherwise a redeployed connection with a different dialect
+      // would resolve enum names against stale enums and diff fresh telemetry
+      // against the previous connection's state. State is observational and
+      // safe to rebuild (spec §Node lifecycle).
+      const profile = node.connection.profile;
+      const bundle = profile && typeof profile.getDialect === 'function' ? profile.getDialect() : null;
+      engine = new VehicleStateEngine({
+        staleMs: node.staleMs,
+        statustextBuffer,
+        enums: bundle && bundle.valid ? bundle.enums : null
+      });
+      node.engine = engine;
+      node._reemit = reEmitAll;
+      lastSnapshots = new Map();
       subId = node.connection.subscribe({ messageNames: STATE_MESSAGES }, (message) => {
         const res = engine.ingest(message.payload);
         if (!res) {
@@ -244,6 +258,15 @@ module.exports = function (RED) {
           }) }, null]);
         } else if (engine) {
           emitSnapshot(msg.sysid !== undefined ? Number(msg.sysid) : undefined, send);
+        } else {
+          // Valid config, but the connection node has not resolved yet, so
+          // there is no engine to snapshot. Surface it rather than dropping
+          // the request silently (mirrors the INVALID_CONFIG path above).
+          send([null, { topic: 'mavlink/error', payload: errorPayload({
+            node: 'mavlink-ai-vehicle-state',
+            code: 'CONNECTION_UNAVAILABLE',
+            message: 'mavlink-ai-vehicle-state: no connection resolved yet — cannot snapshot'
+          }) }, null]);
         }
       }
       done();

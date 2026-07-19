@@ -139,6 +139,16 @@ test('battery decodes voltage/current/remaining and nulls the -1 sentinels', () 
   assert.strictEqual(s.battery.batteries[0].remaining_pct, null);
 });
 
+test('per-cell BATTERY_STATUS voltages sum to the pack total', () => {
+  const c = clock();
+  const engine = new VehicleStateEngine({ now: c.now });
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 0, custom_mode: 0, system_status: 3 }));
+  /** A 3S smart battery reporting per-cell mV with UINT16_MAX padding. */
+  engine.ingest({ name: 'BATTERY_STATUS', sysid: 1, compid: 1, fields: { id: 0, voltages: [4200, 4200, 4200, 65535, 65535, 65535, 65535, 65535, 65535, 65535], current_battery: -1, battery_remaining: 90 } });
+  const s = engine.snapshot(1);
+  assert.strictEqual(s.battery.batteries[0].voltage_v, 12.6, 'three 4.2 V cells sum to 12.6 V, not just cell 0');
+});
+
 test('a second battery with a different id appends rather than overwriting', () => {
   const c = clock();
   const engine = new VehicleStateEngine({ now: c.now });

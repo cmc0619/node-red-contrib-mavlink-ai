@@ -83,6 +83,41 @@ test('a bigint capability bitmask is rendered JSON-safe before it leaves the nod
   assert.doesNotThrow(() => JSON.stringify(snapMsg.payload), 'snapshot survives JSON serialization');
 });
 
+test('a throwing getVehicleCapabilities does not break snapshot emission', async (t) => {
+  const { RED, conn, node } = setup();
+  t.after(() => RED.close(node));
+  conn.getVehicleCapabilities = () => { throw new Error('recycled connection'); };
+  conn.deliver(hb(1));
+  const { collected } = await RED.inject(node, { command: 'snapshot' });
+  const snapMsg = collected.map((o) => o[1]).find(Boolean);
+  assert.ok(snapMsg, 'snapshot still emitted despite the throw');
+  assert.strictEqual(snapMsg.payload.capabilities, null, 'capabilities fall back to null');
+});
+
+test('the engine is rebuilt when the connection node is redeployed', (t) => {
+  const { RED, conn, node } = setup();
+  t.after(() => RED.close(node));
+  conn.deliver(hb(1));
+  const firstEngine = node.engine;
+  assert.ok(firstEngine, 'engine created on first attach');
+  /** Stand in for a connection redeploy: a new object under the same id. */
+  const conn2 = stubConnection(RED, 'c1');
+  RED.events.emit('flows:started');
+  assert.notStrictEqual(node.engine, firstEngine, 'engine rebuilt for the new connection');
+  assert.strictEqual(node.engine.sysids().length, 0, 'rebuilt engine starts with no accumulated state');
+  void conn2;
+});
+
+test('a snapshot command with no resolved connection surfaces an error', async (t) => {
+  const { RED, node } = setup({ connection: 'missing-conn' });
+  t.after(() => RED.close(node));
+  assert.ok(!node._configError, 'config itself is valid');
+  const { collected } = await RED.inject(node, { command: 'snapshot' });
+  const errMsg = collected.map((o) => o[1]).find(Boolean);
+  assert.ok(errMsg, 'an error was emitted on output 2');
+  assert.strictEqual(errMsg.payload.code, 'CONNECTION_UNAVAILABLE');
+});
+
 test('STATUSTEXT is emitted live on output 3', (t) => {
   const { RED, conn, node } = setup();
   t.after(() => RED.close(node));
