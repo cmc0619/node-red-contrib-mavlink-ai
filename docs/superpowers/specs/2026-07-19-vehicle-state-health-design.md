@@ -118,6 +118,12 @@ engine is rebuilt on deploy (state is observational, safe to rebuild).
 
 ## PR B — advertised health and the onboard-companion heartbeat (#225)
 
+**Status: shipped.** Advertised-health engine, connection store +
+health-driven heartbeat mapping (including the fatal stop), the onboard
+companion preset default-on, and vehicle-state-node forwarding are all
+implemented and tested; see `README.md`'s "Onboard companion health"
+subsection for the flow-facing contract.
+
 ### Health assertion contract
 
 Flows assert the health of *their own* onboard function by sending to the

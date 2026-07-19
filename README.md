@@ -175,6 +175,42 @@ a Connection uses exactly one as its required default.
 - HEARTBEAT identity (`MAV_TYPE`, autopilot)
 - MAVLink 2 signing credential + policy (sign / verify / require)
 
+#### Onboard companion health ([#225](https://github.com/cmc0619/node-red-contrib-mavlink-ai/issues/225))
+
+The **companion / onboard controller** role preset (sysid shared with the
+vehicle, compid `191` `MAV_COMP_ID_ONBOARD_COMPUTER`, `MAV_TYPE_ONBOARD_CONTROLLER`,
+autopilot `MAV_AUTOPILOT_INVALID`) defaults **Health-driven** on. A
+health-driven identity's periodic HEARTBEAT reports `system_status` from the
+flow's own advertised health instead of the fixed `MAV_STATE_ACTIVE` every
+other identity sends:
+
+| Advertised health | HEARTBEAT `system_status` |
+|---|---|
+| never asserted yet | `MAV_STATE_STANDBY` |
+| `nominal` | `MAV_STATE_ACTIVE` |
+| `degraded` | `MAV_STATE_CRITICAL` |
+| `emergency` | `MAV_STATE_EMERGENCY` |
+| `fatal` | **heartbeat stops** — a faulted component must not keep heartbeating as if present; node status shows the fault; recovery needs a fresh non-fatal assertion |
+| assertion expired past its `ttl_s` | `MAV_STATE_CRITICAL` — an expired lease must never look healthy |
+
+A flow advertises its health by sending to the `mavlink-ai-vehicle-state`
+node's input:
+
+```js
+msg.payload = { health: "nominal" | "degraded" | "emergency" | "fatal", ttl_s: 10, note: "planner watchdog ok" };
+```
+
+A non-`fatal` assertion **requires** a positive `ttl_s` (a lease-less or
+expired claim must never look healthy); `fatal` ignores `ttl_s`. Identities
+that are not health-driven (GCS, default/custom roles) are unchanged — still
+static `MAV_STATE_ACTIVE`.
+
+Documented separations: HEARTBEAT is **component presence** — it is not
+command delivery, not setpoint freshness (that's the Move node's stream
+keep-alive, [#216](https://github.com/cmc0619/node-red-contrib-mavlink-ai/issues/216)),
+not sensor health, and not authorization. A companion must not impersonate a
+GCS to mask loss of the operator station.
+
 ### `mavlink-ai-vehicle` — Vehicle Profile (config)
 
 What vehicle is being addressed and how its protocol metadata is interpreted.
