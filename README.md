@@ -38,6 +38,22 @@ provenance (repo, ref, resolved commit, timestamp, per-file SHA-256), and the
 editor can show whether a same-named bundled dialect exists plus a message/enum
 diff against it. See `lib/dialects/xml-catalog.js`.
 
+### Trusted operator boundary
+
+This package is for a trusted Node-RED operator. The Node-RED editor and its
+admin API can configure live vehicle control, so they are not treated as a
+multi-tenant or hostile-user boundary. An authorized operator may deliberately
+use a local or mounted custom XML path and may download XML or parameter
+metadata from a private-network, self-hosted, or HTTP endpoint (for example a
+flight-controller or lab device at `10.x.x.x`). Those are supported advanced
+workflows, not security defects.
+
+Keep the Node-RED admin interface authenticated and off the public internet.
+The driver retains Node-RED permission middleware and does not execute
+downloaded XML as code. Vehicle-control safety remains a separate concern:
+untrusted MAVLink data, stale control, malformed commands, and unsafe target
+selection must still fail closed.
+
 Remaining release/readiness items live in the open sections of
 [`ROADMAP.md`](ROADMAP.md) and the issue tracker. (`RELEASE_SCOPE.md` records
 resolved design decisions, not open work.)
