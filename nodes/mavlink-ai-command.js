@@ -384,7 +384,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
       }
 
       const defaults = node.profile.getDefaults ? node.profile.getDefaults() : {};
-      const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
+      const bundle = node.profile.getDialect();
       const value = coreEnumValues({ consumer: 'command' });
 
       // Editor preset fields under runtime payload values (#49): a static
@@ -622,7 +622,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
          * mirrors the Send path's `sentOn` capture just below.
          */
         sentOn = node.connection;
-        const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
+        const bundle = node.profile.getDialect();
         // The Local Identity this workflow transmits as (#228): the explicit
         // payload request when present (which must be attached and permitted on
         // the connection), else the connection's default. Never derived from

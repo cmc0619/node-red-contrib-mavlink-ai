@@ -103,7 +103,7 @@ module.exports = function registerMavlinkAiParam(RED) {
       } catch (err) {
         return fail(err, 'PROFILE_UNRESOLVED');
       }
-      const bundle = profile && profile.getDialect ? profile.getDialect() : null;
+      const bundle = profile.getDialect();
 
       // Reject out-of-range targets before locking/sending (#55).
       try {

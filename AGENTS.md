@@ -33,9 +33,15 @@ Follow `DESIGN.md` first. Do not recreate the old coupled architecture.
     condition an upstream boundary already guarantees. If an impossible state
     somehow occurs, let it fail loud (throw) rather than silently substituting a
     value. Every branch must handle a state that can *actually* happen. This
-    targets impossible states only — real external inputs (malformed user XML,
-    dropped sockets, wire garbage, user-supplied node config) are not
-    "impossible" and stay fully handled. Example: a workflow resolves enum
+    targets impossible states only — real *runtime* inputs (malformed user XML,
+    dropped sockets, wire garbage, a `msg` naming a bad profile) are not
+    "impossible" and stay fully handled. But a deployed Node-RED flow has already
+    validated its config-node wiring: at runtime a referenced Vehicle Profile /
+    connection / Local Identity is present and valid *by assumption* — do not
+    re-check it. A broken flow either won't deploy or shouldn't run; if it runs
+    and crashes, the crash is the correct signal, not a bug to paper over with a
+    polished error. (Distinguish deploy-time config, which is trusted, from
+    runtime message content, which is validated.) Example: a workflow resolves enum
     values strictly from the profile's loaded dialect
     (`bindEnumValues(this.enums)`) and throws `ENUM_VALUE_UNAVAILABLE` if the
     index is ever bad — it does *not* fall back to a core bundle, because a

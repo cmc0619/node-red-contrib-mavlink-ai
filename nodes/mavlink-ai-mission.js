@@ -130,7 +130,7 @@ module.exports = function registerMavlinkAiMission(RED) {
       const payloadType = payload.mission_type;
       const hasPayloadType = payloadType !== undefined && payloadType !== null && payloadType !== '';
       const missionTypeName = hasPayloadType ? payloadType : node.missionType || 'mission';
-      const bundle = profile && profile.getDialect ? profile.getDialect() : null;
+      const bundle = profile.getDialect();
       let missionTypeNum;
       let missionTypeAll;
       try {
