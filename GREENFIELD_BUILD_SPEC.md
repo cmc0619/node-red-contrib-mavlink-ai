@@ -69,13 +69,14 @@ specification for framing, IDs, routing, heartbeat, missions, offboard control,
 message signing, and anti-replay details.
 
 **This package is a Node-RED wrapper around node-mavlink, and the spec should
-be read that way.** The library is the wire-protocol implementation: framing,
-payload encode/decode, CRC and crc_extra, frame splitting/parsing, and message
-signing are library primitives, not problems this package re-solves. When
-node-mavlink's behavior and a stricter ideal conflict, **the library wins by
-default** — custom wire-layer code must justify its existence against that
-default, and "the library already does this" is grounds for deletion. Accepted
-library behaviors, deliberately:
+be read that way.** node-mavlink is the source of truth for the wire
+protocol — framing, payload encode/decode, CRC and crc_extra, frame
+splitting/parsing, and message signing are library primitives — and this
+package builds on top of it, never around it. When node-mavlink's behavior
+and a stricter ideal conflict, **the library wins by default** — custom
+wire-layer code must justify its existence against that default, and "the
+library already does this" is grounds for deletion. Accepted library
+behaviors, deliberately:
 
 - v2 outbound truncation is whole-payload (identical to ArduPilot).
 - The splitter skips unknown msgids (trusting the length byte) and validates
@@ -118,8 +119,13 @@ empty boilerplate to trivial private one-liners simply to inflate comment count.
 The UI should reveal the next useful choice from the user's existing selections.
 
 - Use pulldowns wherever a value is known or enumerable.
+- One control per value: when a metadata dropdown drives a value, do not also
+  show a raw text field for it — the raw field appears only when no metadata
+  exists to enumerate from (e.g. a custom-XML profile).
 - Render fields from the selected dialect's metadata.
 - Render enums as human labels with descriptions, not anonymous numeric values.
+- Keep dialogs compact: long metadata descriptions ride as hover tooltips,
+  not inline text; inline hints stay to units and ranges.
 - Dynamically update dependent choices after selecting dialect, message, command,
   firmware, vehicle family, transport, or workflow action.
 - Preserve saved selections while asynchronous metadata loads; a late menu load
@@ -255,6 +261,13 @@ per-identity heartbeats; signing link ID; and all per-link channel state.
 
 One UDP port is one socket, not one vehicle. A routed Connection can receive
 many remote systems and send target-specific packets to learned peers.
+
+A Connection can be disabled from its own config. Node-RED cannot disable
+config nodes, so the node owns the switch. Disabled means zero network
+activity — no dialing, listening, heartbeats, or timers, not merely ignoring
+traffic — because no runtime is constructed at all. Nodes that reference a
+disabled Connection fail closed with a clear reason until it is re-enabled
+and redeployed.
 
 ### 4.4 Safe identity resolution
 
