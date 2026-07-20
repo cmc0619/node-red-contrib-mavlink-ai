@@ -321,3 +321,73 @@ test('formation node: empty vehicle set delivers one mavlink/error, done() clean
   assert.strictEqual(collected[0].payload.code, 'NO_TARGETS');
   assert.strictEqual(collected[0].payload.node, 'mavlink-ai-formation');
 });
+
+/**
+ * #207: MAVLink Out is hardened with a positive allowlist. It encodes/sends
+ * only an outbound build envelope (topic mavlink/send) or a raw buffer
+ * (topic mavlink/raw, or Buffer.isBuffer(msg.payload)). Every other topic —
+ * command/ack, swarm/ack, mission/*, param/*, vehicle/*, mavlink/error, or an
+ * unknown topic — is a result/ack/error, not an outbound message, and is
+ * rejected via done(err) with err.code === 'NOT_OUTBOUND'. This replaces the
+ * old behavior of silently dropping mavlink/error.
+ */
+
+test('out node rejects a non-outbound topic with NOT_OUTBOUND, nothing sent (#207)', async () => {
+  const { RED } = setup();
+  const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
+  const sends = [];
+  node.connection.send = (p) => {
+    sends.push(p);
+    return Promise.resolve();
+  };
+  node.connection.sendRaw = (p) => {
+    sends.push(p);
+    return Promise.resolve();
+  };
+  const { err } = await RED.inject(node, { topic: 'command/ack', payload: { command: 'arm', result: 'ACCEPTED' } });
+  assert.ok(err, 'rejected via done(err)');
+  assert.strictEqual(err.code, 'NOT_OUTBOUND');
+  assert.strictEqual(sends.length, 0, 'nothing was encoded/sent');
+});
+
+test('out node rejects mavlink/error with NOT_OUTBOUND — was silently dropped before (#207)', async () => {
+  const { RED } = setup();
+  const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
+  const sends = [];
+  node.connection.send = (p) => {
+    sends.push(p);
+    return Promise.resolve();
+  };
+  const { err } = await RED.inject(node, { topic: 'mavlink/error', payload: { code: 'X', message: 'boom' } });
+  assert.ok(err, 'rejected via done(err)');
+  assert.strictEqual(err.code, 'NOT_OUTBOUND');
+  assert.strictEqual(sends.length, 0, 'nothing was encoded/sent');
+});
+
+test('out node still accepts and sends mavlink/send (#207)', async () => {
+  const { RED } = setup();
+  const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
+  const sends = [];
+  node.connection.send = (p) => {
+    sends.push(p);
+    return Promise.resolve();
+  };
+  const { err } = await RED.inject(node, { topic: 'mavlink/send', payload: { name: 'HEARTBEAT', fields: {} } });
+  assert.strictEqual(err, undefined);
+  assert.strictEqual(sends.length, 1);
+});
+
+test('out node still accepts and sends a raw Buffer / mavlink/raw (#207)', async () => {
+  const { RED } = setup();
+  const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
+  const sends = [];
+  node.connection.sendRaw = (p) => {
+    sends.push(p);
+    return Promise.resolve();
+  };
+  const { err: err1 } = await RED.inject(node, { topic: 'mavlink/raw', payload: Buffer.from([1, 2, 3]) });
+  assert.strictEqual(err1, undefined);
+  const { err: err2 } = await RED.inject(node, { payload: Buffer.from([4, 5, 6]) });
+  assert.strictEqual(err2, undefined);
+  assert.strictEqual(sends.length, 2);
+});

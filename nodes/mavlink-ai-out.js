@@ -87,21 +87,30 @@ module.exports = function registerMavlinkAiOut(RED) {
         return done(new Error('NO_CONNECTION: mavlink-ai-out has no connection configured/resolved.'));
       }
       /**
-       * Error envelopes (e.g. from an upstream build/command node) are not
-       * outbound MAVLink messages — don't try to encode and send them.
+       * Advanced explicit priority override (#241): msg.priority picks the
+       * outbound queue band, clamped to the valid range (0 critical .. 3
+       * background); absent or non-numeric means the queue default. The
+       * command node stamps it on critical build-only commands.
        */
-      if (msg.topic === 'mavlink/error') {
-        return done();
+      const priority = clampPriority(msg.priority);
+      const isRaw = msg.topic === 'mavlink/raw' || Buffer.isBuffer(msg.payload);
+      if (msg.topic !== 'mavlink/send' && !isRaw) {
+        /**
+         * Positive allowlist (#207): Out encodes only an outbound build
+         * envelope (topic mavlink/send) or a raw buffer. Anything else —
+         * command/ack, swarm/ack, mission/*, param/*, vehicle/*, mavlink/error,
+         * or an unknown topic — is a result/ack/error, not an outbound message.
+         * Reject with a clear diagnostic instead of handing it to the codec.
+         * MAVLink Out must be wired from a node in Build only mode.
+         */
+        node.status({ fill: 'red', shape: 'ring', text: 'not outbound' });
+        return done(Object.assign(
+          new Error(`mavlink-ai-out received a '${msg.topic}' message, which is a result/ack/error, not an outbound MAVLink message. Wire MAVLink Out from an action node in "Build only" mode.`),
+          { code: 'NOT_OUTBOUND' }
+        ));
       }
       try {
-        /**
-         * Advanced explicit priority override (#241): msg.priority picks the
-         * outbound queue band, clamped to the valid range (0 critical .. 3
-         * background); absent or non-numeric means the queue default. The
-         * command node stamps it on critical build-only commands.
-         */
-        const priority = clampPriority(msg.priority);
-        if (msg.topic === 'mavlink/raw' || Buffer.isBuffer(msg.payload)) {
+        if (isRaw) {
           await node.connection.sendRaw(msg.payload, { priority });
         } else {
           await node.connection.send(msg.payload, { priority });
