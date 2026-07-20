@@ -3,6 +3,13 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { VehicleStateEngine } = require('../../lib/state/vehicle-state');
+const { loadDialect } = require('../../lib/dialects/dialect-loader');
+
+// ArduPilot dialect enums, for the HEARTBEAT-driven flight-mode name lookup
+// (#309: modeNameForCustomMode resolves ArduPilot modes from generated enum
+// data, so the engine must be given the dialect enums — the node supplies them
+// from the profile's dialect bundle in production).
+const ARDU = loadDialect('ardupilotmega');
 
 /** A controllable clock so staleness is deterministic. */
 function clock(start = 1000) {
@@ -16,7 +23,7 @@ function heartbeat(fields) {
 
 test('HEARTBEAT from the autopilot fills identity, armed, and mode, keyed per sysid', () => {
   const c = clock();
-  const engine = new VehicleStateEngine({ now: c.now });
+  const engine = new VehicleStateEngine({ now: c.now, enums: ARDU.enums, dialect: ARDU.name });
   const res = engine.ingest(
     heartbeat({ type: 2, autopilot: 3, base_mode: 128 | 1, custom_mode: 0, system_status: 4 })
   );

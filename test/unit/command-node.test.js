@@ -228,8 +228,8 @@ test('raw numeric MavCmd.DO_SET_MODE keeps the explicit numeric escape hatch on 
   const { collected } = await RED.inject(node, {
     payload: { param1: 1, param2: ((4 << 16) | (5 << 24)) >>> 0 }
   });
-  assert.strictEqual(collected[0].payload.fields.param2, 4);
-  assert.strictEqual(collected[0].payload.fields.param3, 5);
+  assert.strictEqual(collected[0][0].payload.fields.param2, 4);
+  assert.strictEqual(collected[0][0].payload.fields.param3, 5);
 });
 
 /** AUTO_RTL is 27 — a bare ArduPilot custom_mode that must NOT be mistaken for packed. */

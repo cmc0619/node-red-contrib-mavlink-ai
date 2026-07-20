@@ -216,7 +216,8 @@ module.exports = function (RED) {
       engine = new VehicleStateEngine({
         staleMs: node.staleMs,
         statustextBuffer,
-        enums: bundle && bundle.valid ? bundle.enums : null
+        enums: bundle && bundle.valid ? bundle.enums : null,
+        dialect: bundle && bundle.valid ? bundle.name : 'unknown'
       });
       node.engine = engine;
       node._reemit = reEmitAll;
