@@ -132,6 +132,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node.serialPath = config.serialPath || '';
     node.serialBaud = toInt(config.serialBaud, 57600);
     node.reconnect = toBool(config.reconnect, true);
+    // Deploy-time kill switch (config-node analog of Node-RED's node-disable):
+    // when set, the connection parks in the existing DEACTIVATED state — no
+    // transport, no heartbeat, sends rejected — until unticked and redeployed.
+    node.disabled = toBool(config.disabled, false);
     node.heartbeatEnabled = toBool(config.heartbeat, false);
     // Clamp the interval to a safe minimum so an imported/edited flow can't
     // silently configure an aggressive HEARTBEAT rate (e.g. 100 ms / 10 Hz).
@@ -390,8 +394,18 @@ module.exports = function registerMavlinkAiConnection(RED) {
       node.error(`mavlink-ai-connection '${node.name || node.id}': ${code}: ${message}`);
     }
 
+    // A disabled connection parks in the same DEACTIVATED state a missing
+    // dependency produces. Seed the reason before the own-config checks so their
+    // fatal exits are guarded on `!startInactive`: a disabled node constructs
+    // dark (grey 'disabled' badge, no fatal()/node.error() noise) rather than
+    // no-op'ing on its own bad accept-filter/signing/binding/transport config.
+    // In the enabled path `startInactive` is null here, so all those checks run
+    // unchanged. (A malformed route table still fails loud — it corrupts the
+    // packet router the constructor depends on, so it cannot park dark.)
+    let startInactive = node.disabled ? { code: 'DISABLED', message: 'Connection is disabled.' } : null;
+
     // --- required default profile / identity ---------------------------------
-    if (node._acceptFilterInvalid) {
+    if (!startInactive && node._acceptFilterInvalid) {
       fatal(
         'ACCEPT_FILTER_INVALID',
         `Accepted sysid/compid filter has invalid ids (${node._acceptFilterInvalid.join(', ')}); ` +
@@ -415,16 +429,21 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * this node, which redeploys it anyway. The first failure wins the recorded
      * reason; the reconcile re-checks everything on each deploy regardless.
      */
-    let startInactive = null;
-    if (!node.profile) {
-      fatal('NO_PROFILE', 'Connection has no Vehicle Profile configured.');
-      startInactive = { code: 'NO_PROFILE', message: 'Connection has no Vehicle Profile configured.' };
-    } else if (!node.profile.isValid()) {
-      const err = node.profile.getError();
-      const code = (err && err.code) || 'PROFILE_INVALID';
-      const message = `Vehicle Profile invalid: ${err && err.message}`;
-      fatal(code, message);
-      startInactive = { code, message };
+    // Guarded on `!startInactive` (first-failure-wins) so a disabled connection
+    // stays DISABLED — grey badge, no fatal()/node.error() noise — instead of a
+    // broken profile overwriting it. In the enabled path `startInactive` is null
+    // here, so this runs unchanged.
+    if (!startInactive) {
+      if (!node.profile) {
+        fatal('NO_PROFILE', 'Connection has no Vehicle Profile configured.');
+        startInactive = { code: 'NO_PROFILE', message: 'Connection has no Vehicle Profile configured.' };
+      } else if (!node.profile.isValid()) {
+        const err = node.profile.getError();
+        const code = (err && err.code) || 'PROFILE_INVALID';
+        const message = `Vehicle Profile invalid: ${err && err.message}`;
+        fatal(code, message);
+        startInactive = { code, message };
+      }
     }
 
     /**
@@ -434,7 +453,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * actionable error instead of guessing (e.g. from a Vehicle Profile).
      */
     node.localIdentity = config.localIdentity ? RED.nodes.getNode(config.localIdentity) : null;
-    if (!isIdentityNode(node.localIdentity)) {
+    if (!startInactive && !isIdentityNode(node.localIdentity)) {
       const message =
         `Connection '${node.name || node.id}' has no Local Identity. Select one in Connection > Local Identity. ` +
         'If none exists, create a GCS, Companion, or Custom Local Identity first.';
@@ -442,7 +461,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (!startInactive) {
         startInactive = { code: 'LOCAL_IDENTITY_REQUIRED', message };
       }
-    } else if (!node.localIdentity.isValid()) {
+    } else if (!startInactive && !node.localIdentity.isValid()) {
       const err = node.localIdentity.getError();
       const message = `Local Identity '${node.localIdentity.name || node.localIdentity.id}' is invalid: ${err && err.message}`;
       fatal('LOCAL_IDENTITY_INVALID', message);
@@ -458,7 +477,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * turn a config mistake into a *different* valid link id (#90), so reject.
      */
     node.signingLinkId = 0;
-    if (config.signingLinkId !== undefined && config.signingLinkId !== null && config.signingLinkId !== '') {
+    if (!startInactive && config.signingLinkId !== undefined && config.signingLinkId !== null && config.signingLinkId !== '') {
       const linkId = Number(config.signingLinkId);
       if (!Number.isInteger(linkId) || linkId < 0 || linkId > 255) {
         fatal(
@@ -483,7 +502,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node.verifyInbound = toBool(config.verifyInbound, false);
     node.requireSignature = toBool(config.requireSignature, false);
     const signingPassphrase = (node.credentials && node.credentials.signingPassphrase) || '';
-    if (node.signOutbound && !signingPassphrase) {
+    if (!startInactive && node.signOutbound && !signingPassphrase) {
       fatal(
         'SIGNING_NO_PASSPHRASE',
         "'Sign outbound' is enabled but no signing passphrase is set — refusing to start rather than send every frame unsigned while the operator believes traffic is authenticated."
@@ -530,9 +549,11 @@ module.exports = function registerMavlinkAiConnection(RED) {
     try {
       node._identityBindings = parseIdentityBindings(config.additionalIdentities);
     } catch (err) {
-      fatal('ADDITIONAL_IDENTITIES_INVALID', err.message);
-      registerNoop(node);
-      return;
+      if (!startInactive) {
+        fatal('ADDITIONAL_IDENTITIES_INVALID', err.message);
+        registerNoop(node);
+        return;
+      }
     }
     if (node._identityBindings.length && !node.allowMultipleIdentities) {
       node.warn(
@@ -572,7 +593,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       serialPath: config.serialPath,
       serialBaud: config.serialBaud
     });
-    if (transportProblems.length) {
+    if (!startInactive && transportProblems.length) {
       fatal('TRANSPORT_CONFIG_INVALID', transportProblems.map((p) => p.message).join(' '));
       registerNoop(node);
       return;
@@ -1397,6 +1418,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * @returns {void}
      */
     function reconcileRequiredConfig() {
+      // A disabled connection stays parked regardless of dependency state — a
+      // flows:started reconcile must never reactivate it (nor re-badge it as a
+      // dependency error). `disabled` is deploy-time immutable per instance.
+      if (node.disabled) {
+        return;
+      }
       const resolvedProfile = RED.nodes.getNode(config.profile);
       const profileOk = isProfileNode(resolvedProfile) && resolvedProfile.isValid && resolvedProfile.isValid();
       if (!profileOk) {
@@ -2705,7 +2732,9 @@ module.exports = function registerMavlinkAiConnection(RED) {
        */
       node._active = false;
       node._inactiveError = new MavlinkError(startInactive.code, startInactive.message);
-      setStatus('error', startInactive.message);
+      // A deliberately disabled connection is not an error: badge it grey
+      // ("disabled"), not red, so downstream nodes show it's intentionally off.
+      setStatus(startInactive.code === 'DISABLED' ? 'disabled' : 'error', startInactive.message);
     } else {
       /**
        * Construction succeeded: the connection is live. Set this before starting

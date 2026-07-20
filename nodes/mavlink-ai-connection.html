@@ -278,6 +278,8 @@
       category: 'config',
       defaults: {
         name: { value: '' },
+        // Deploy-time kill switch: config-node analog of Node-RED's node-disable.
+        disabled: { value: false },
         profile: { value: '', type: 'mavlink-ai-vehicle', required: true },
         // Who this Node-RED runtime is on this link (#228). Required: every
         // transmitted message must resolve to exactly one permitted identity.
@@ -674,6 +676,15 @@
     <input type="text" id="node-config-input-name" placeholder="Copter UDP 14550">
   </div>
   <div class="form-row">
+    <label for="node-config-input-disabled"><i class="fa fa-power-off"></i> Disabled</label>
+    <input type="checkbox" id="node-config-input-disabled" style="display: inline-block; width: auto; vertical-align: top;">
+  </div>
+  <div class="form-tips" style="margin-bottom: 8px;">
+    <b>Disabled</b> parks this connection on the next Deploy: no socket is opened, no heartbeat is
+    sent, and any flow that tries to send through it gets a <code>Connection is disabled</code> error.
+    It is the config-node equivalent of Node-RED's node enable/disable. Untick and Deploy to bring it back.
+  </div>
+  <div class="form-row">
     <label for="node-config-input-profile">Vehicle</label>
     <input type="text" id="node-config-input-profile">
   </div>
@@ -851,6 +862,12 @@
   references a <b>Vehicle Profile</b> (what is being addressed: dialect, targets, vehicle metadata)
   and a required default <b>Local Identity</b> (who this Node-RED runtime is on this link: source
   SysID/CompID, heartbeat identity, signing policy).</p>
+  <p><b>Disabled</b> is a deploy-time kill switch — the config-node equivalent of Node-RED's node
+  enable/disable, which does not apply to config nodes. Tick it and Deploy to park the connection:
+  it opens no socket, dials nothing, sends no heartbeat, and shows a grey <code>disabled</code>
+  badge on the nodes that use it; any flow that tries to send through it gets a structured
+  <code>Connection is disabled</code> (<code>DISABLED</code>) error. Untick and Deploy to bring it
+  back. Useful when a connection reaches out over IP and you want to shut it off without deleting it.</p>
   <p>Every transmitted message resolves to exactly one permitted Local Identity: the connection
   default, or — with <b>Advanced &gt; Allow multiple local identities</b> enabled — an explicitly
   bound additional identity requested via <code>msg.payload.localIdentity</code>. A Vehicle Profile
