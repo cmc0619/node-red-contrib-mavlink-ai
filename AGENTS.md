@@ -65,8 +65,9 @@ guard:
    why on the PR; do not implement on reflex.
 2. **A broken flow is a deploy error, not a runtime input.** Do not add runtime
    handling (guards, structured errors, fallbacks) for config the operator
-   broke — a deleted profile, a dangling connection ref. That is Rule 10. Trust
-   the invariant and let it crash; the crash is the honest signal. Only genuine
+   broke — a deleted profile, a dangling connection ref. That is Hard Rule 10
+   ("do not write code for states that cannot occur"). Trust the invariant and
+   let it crash; the crash is the honest signal. Only genuine
    runtime inputs (a `msg`'s contents, wire bytes, user XML) get validated.
 3. **Apply an invariant uniformly; don't carve out edge exceptions.** If
    "profile is valid at runtime" holds on the send path, it holds on the observe
