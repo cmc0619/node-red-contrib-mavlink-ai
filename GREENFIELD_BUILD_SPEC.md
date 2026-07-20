@@ -68,10 +68,34 @@ Do not recreate MAVLink rules from memory. Refer to the official MAVLink
 specification for framing, IDs, routing, heartbeat, missions, offboard control,
 message signing, and anti-replay details.
 
+**This package is a Node-RED wrapper around node-mavlink, and the spec should
+be read that way.** The library is the wire-protocol implementation: framing,
+payload encode/decode, CRC and crc_extra, frame splitting/parsing, and message
+signing are library primitives, not problems this package re-solves. When
+node-mavlink's behavior and a stricter ideal conflict, **the library wins by
+default** — custom wire-layer code must justify its existence against that
+default, and "the library already does this" is grounds for deletion. Accepted
+library behaviors, deliberately:
+
+- v2 outbound truncation is whole-payload (identical to ArduPilot).
+- The splitter skips unknown msgids (trusting the length byte) and validates
+  against one union magic-number table per connection.
+- Signing timestamps come from Date.now() (no monotonicity guarantee, no
+  replay detection); verification is MavLinkPacketSignature.matches().
+- Encoding has no bespoke validation layer: a thin coercion (editor strings
+  to numbers/BigInt), then the library serializers — garbage surfaces as raw
+  serializer errors or as on-wire zeros, never as a custom FIELD_* taxonomy.
+
 Build on the libraries already selected for this package:
 
-- node-mavlink for MAVLink packet framing, encode/decode, and signing
-  primitives.
+- node-mavlink for everything above. Generate MavLinkData-shaped message
+  classes at runtime from the compiled dialect metadata rather than consuming
+  the pre-generated classes: those cover only some bundled dialects, know
+  nothing of custom user XML, and use camelCase properties, while this
+  package's metadata contract is the XML field names verbatim. This bridge is
+  the one deliberate wire-layer addition; everything else custom lives above
+  the wire (transports, routing, identity, workflows, editor) — territory the
+  library does not cover.
 - mavlink-mappings for bundled dialect definitions and generated metadata.
 - mavlink-mappings-gen for generation/build support for that metadata shape.
 - An XML parser only for MAVLink XML loading and include-graph resolution.
@@ -142,7 +166,7 @@ singleton transport.
 | Source IDs, role, local heartbeat identity | Local Identity |
 | Target defaults, dialect, firmware, modes/params/missions | Vehicle Profile |
 | Transport, queues, peer tracking, routes, subscriptions | Connection |
-| Sequence, signing timestamp, replay memory, peer version | Connection/channel, keyed by local identity as required |
+| Outbound sequence, signing link id, peer version | Connection/channel, keyed by local identity as required |
 | Mission/parameter/ACK/control state | Workflow service/node |
 
 ### 3.4 Serial is optional
@@ -157,24 +181,26 @@ SERIALPORT_MISSING-style error, not an opaque native-module failure.
 Editor validation improves setup; runtime validation is authoritative because
 imported or hand-edited flow JSON can bypass the editor. Missing, ambiguous,
 malformed, stale, unauthorised, or unsafe action input must fail closed with a
-stable machine-readable error code plus a human repair instruction.
+stable machine-readable error code plus a human repair instruction. This
+contract covers the package's own semantics: identity resolution, targets and
+routing, workflow gates, mission/param/command field checks.
 
-The raw builder is deliberately more permissive than friendly nodes, but it
-still validates wire types and numeric precision safely.
+The wire layer is deliberately NOT part of that taxonomy (§2): conversion
+goes through one thin boundary over node-mavlink's serializers — a coercion
+shim (editor strings to numbers/BigInt), no range/blank/type checking of its
+own. Wire-level garbage surfaces as the library's raw errors or as on-wire
+zeros; visible nodes never do their own sign, mask, or numeric coercion
+either — they hand semantic fields to the boundary.
 
-All JavaScript-to-wire conversion (and back) must go through a single
-type-aware boundary module that reads each field's MAVLink type, range, and
-units from dialect metadata; visible nodes must not do their own sign, mask, or
-numeric coercion. Prove it with round-trip tests (encode(decode(x)) reproduces
-x, compared NaN-aware and at float32 precision rather than raw equality) plus
+Prove the boundary with round-trip tests (encode(decode(x)) reproduces x,
+compared NaN-aware and at float32 precision rather than raw equality) plus
 canonical payload-byte vectors or an independent-decoder cross-check. A round
 trip alone can bless a symmetric codec bug, so verify payload bytes but not
 whole frames whose sequence/signature/timestamp legitimately vary. Cover every
 field type, including an unsigned bitmask with bit 31 set, a NaN “keep current”
 sentinel where that message field defines it, an int/float parameter union, and
-a full-length char array. Validate an integer's range before any unsigned
-normalization, so out-of-range input fails closed instead of silently wrapping.
-See WIRE_ENCODING_GOTCHAS.md for the recurring failures this prevents.
+a full-length char array. See WIRE_ENCODING_GOTCHAS.md for the recurring
+failures this prevents.
 
 ## 4. Architecture: three config nodes, one question each
 
@@ -294,8 +320,9 @@ specification for exact cryptographic, timestamp, and anti-replay mechanics.
   or logs.
 - Explain that signing requires MAVLink 2.
 - A Local Identity may select reusable signing policy/credential intent, but the
-  signing link ID, outgoing sequence, monotonic timestamp, replay memory, and
-  detected peer wire version are Connection/channel state.
+  signing link ID, outgoing sequence, and detected peer wire version are
+  Connection/channel state. Timestamps come from node-mavlink's sign()
+  (Date.now(); no replay memory is kept — §2).
 - Preserve this state across Vehicle Profile reloads and codec rebuilds.
 - Key outgoing state at least by connection/channel and local source identity;
   do not put it in a replaceable dialect codec.
