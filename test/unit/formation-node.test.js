@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { EventEmitter } = require('events');
+const { common } = require('node-mavlink');
 const { MockRED } = require('../helpers/mock-red');
 
 /**
@@ -61,6 +62,42 @@ test('a geometric shape transforms a vehicle list into a fanout payload', async 
   assert.strictEqual(collected[0].payload.command_int, true);
   assert.strictEqual(collected[0].payload.fields.frame, 'MAV_FRAME_GLOBAL');
   assert.deepStrictEqual(collected[0].payload.targets.map((t) => t.sysid), [1, 2, 3]);
+});
+
+test('reposition policy accepts exact raw names and numeric ids but rejects the feature alias', async () => {
+  for (const command of [
+    'MAV_CMD_DO_REPOSITION',
+    common.MavCmd.DO_REPOSITION,
+    String(common.MavCmd.DO_REPOSITION)
+  ]) {
+    const RED = new MockRED().loadNodes();
+    const node = RED.create('mavlink-ai-formation', {
+      id: `fm-${command}`,
+      command,
+      shape: 'line',
+      anchorMode: 'fixed',
+      anchorLat: 39.1,
+      anchorLon: -75.1,
+      anchorAlt: 100
+    });
+    const { collected } = await RED.inject(node, { payload: { sysids: [1] } });
+    assert.strictEqual(collected[0].payload.fields.param1, -1);
+    assert.strictEqual(collected[0].payload.fields.param2, 1);
+    assert.ok(Number.isNaN(collected[0].payload.fields.param4));
+  }
+
+  const RED = new MockRED().loadNodes();
+  const alias = RED.create('mavlink-ai-formation', {
+    id: 'fm-alias',
+    command: 'DO_REPOSITION',
+    shape: 'line',
+    anchorMode: 'fixed',
+    anchorLat: 39.1,
+    anchorLon: -75.1,
+    anchorAlt: 100
+  });
+  const { collected } = await RED.inject(alias, { payload: { sysids: [1] } });
+  assert.strictEqual(collected[0].payload.fields.param1, undefined);
 });
 
 test('accepts a swarm registry payload.vehicles directly and a fixed anchor', async () => {

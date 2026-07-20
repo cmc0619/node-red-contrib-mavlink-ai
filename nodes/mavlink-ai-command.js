@@ -4,6 +4,8 @@ const { MavlinkError, errorPayload, toMavlinkError } = require('../lib/util/erro
 const { makeFail } = require('../lib/util/node-errors');
 const { firstDefined, toInt, toNum, toBool, parseJsonObjectConfig } = require('../lib/util/validation');
 const { registerEditorApi } = require('../lib/editor-api');
+const { resolveInEnum } = require('../lib/protocol/enum-resolver');
+const { requireEnumMember } = require('../lib/protocol/protocol-values');
 const { resolveFlightMode, splitPx4CustomMode } = require('../lib/command/flight-modes');
 const { CommandSend } = require('../lib/command/command-workflow');
 const { degToDegE7 } = require('../lib/util/geo');
@@ -466,14 +468,20 @@ module.exports = function registerMavlinkAiCommand(RED) {
        * dropdown value there would otherwise flip AUTO.MISSION to AUTO.RTL); a
        * bare main-mode param2 is left alone and any separate param3 preserved.
        */
-      if (
-        defaults.firmware === 'px4' &&
-        (String(fields.command) === 'MAV_CMD_DO_SET_MODE' || Number(fields.command) === 176)
-      ) {
-        const split = splitPx4CustomMode(fields.param2);
-        if (split) {
-          fields.param2 = split.main;
-          fields.param3 = split.sub;
+      if (defaults.firmware === 'px4') {
+        try {
+          const context = { dialect: bundle ? bundle.name : 'unknown', consumer: 'command' };
+          const setModeCommand = requireEnumMember(bundle ? bundle.enums : null, 'MavCmd', 'DO_SET_MODE', context);
+          const command = resolveInEnum(bundle ? bundle.enums : null, 'MavCmd', fields.command);
+          if (command === setModeCommand) {
+            const split = splitPx4CustomMode(fields.param2);
+            if (split) {
+              fields.param2 = split.main;
+              fields.param3 = split.sub;
+            }
+          }
+        } catch (err) {
+          return fail(toMavlinkError(err, 'ENUM_VALUE_UNAVAILABLE'));
         }
       }
 
@@ -575,6 +583,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
             fields,
             useInt,
             enums: bundle ? bundle.enums : null,
+            dialect: bundle ? bundle.name : 'unknown',
             timeoutMs: node.timeoutMs,
             maxRetries: node.maxRetries,
             onProgress: (p) => node.status({ fill: 'blue', shape: 'dot', text: progressText(p.payload) })

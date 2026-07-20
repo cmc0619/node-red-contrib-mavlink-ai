@@ -228,6 +228,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
             targetSystem,
             targetComponent,
             enums: bundle ? bundle.enums : null,
+            dialect: bundle ? bundle.name : 'unknown',
             defaults,
             payload
           });
@@ -347,6 +348,7 @@ async function runWithAck(node, msg, send, done, ctx) {
       command: ctx.built.fields.command,
       fields: ctx.built.fields,
       enums: ctx.enums,
+      dialect: ctx.dialect,
       timeoutMs: toNum(firstDefined(ctx.payload.timeout_ms, node.timeoutMs), undefined),
       maxRetries: toNum(firstDefined(ctx.payload.max_retries, node.maxRetries), undefined)
     });

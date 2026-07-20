@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { minimal, ardupilotmega } = require('node-mavlink');
+const { minimal, common, ardupilotmega } = require('node-mavlink');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { CommandSend } = require('../../lib/command/command-workflow');
 const { resolveFlightMode, knownModes, modeNameForCustomMode } = require('../../lib/command/flight-modes');
@@ -83,10 +83,10 @@ test('CommandSend resolves on MAV_RESULT_ACCEPTED with readable names (#16)', as
   assert.strictEqual(sent.name, 'COMMAND_LONG');
   assert.strictEqual(sent.fields.command, 400); // resolved MAV_CMD number
   assert.strictEqual(sent.fields.confirmation, 0);
-  conn.deliverAck({ command: 400, result: 0 });
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED });
   const res = await p;
   assert.strictEqual(res.topic, 'command/ack');
-  assert.strictEqual(res.payload.result, 0);
+  assert.strictEqual(res.payload.result, common.MavResult.ACCEPTED);
   assert.strictEqual(res.payload.result_name, 'MAV_RESULT_ACCEPTED');
   assert.strictEqual(res.payload.command_name, 'MAV_CMD_COMPONENT_ARM_DISARM');
 });
@@ -173,7 +173,7 @@ test('CommandSend rejects with the MAV_RESULT name on denial (#16)', async () =>
   });
 });
 
-test('CommandSend keeps waiting through MAV_RESULT_IN_PROGRESS (#16)', async () => {
+test('CommandSend keeps waiting through generated MavResult.IN_PROGRESS (#16)', async () => {
   const conn = new FakeConnection();
   const progress = [];
   const wf = new CommandSend(
@@ -181,11 +181,11 @@ test('CommandSend keeps waiting through MAV_RESULT_IN_PROGRESS (#16)', async () 
   );
   const p = wf.run();
   await delay(0);
-  conn.deliverAck({ command: 400, result: 5, progress: 40 });
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.IN_PROGRESS, progress: 40 });
   assert.strictEqual(wf.state, 'in_progress');
-  conn.deliverAck({ command: 400, result: 0 });
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED });
   const res = await p;
-  assert.strictEqual(res.payload.result, 0);
+  assert.strictEqual(res.payload.result, common.MavResult.ACCEPTED);
   assert.ok(progress.some((x) => x.state === 'in_progress' && x.progress === 40));
 });
 
@@ -286,6 +286,27 @@ test('resolveFlightMode maps ArduPilot modes per vehicle type (#20)', () => {
     base_mode,
     custom_mode: ardupilotmega.RoverMode.AUTO
   });
+});
+
+test('CommandSend fails with complete context when MavResult is unavailable', () => {
+  const enums = {
+    ...ENUMS,
+    enumsByName: { ...ENUMS.enumsByName }
+  };
+  delete enums.enumsByName.MavResult;
+  assert.throws(
+    () => new CommandSend(opts(new FakeConnection(), { enums, dialect: 'missing-result' })),
+    (err) => {
+      assert.strictEqual(err.code, 'ENUM_VALUE_UNAVAILABLE');
+      assert.deepStrictEqual(err.context, {
+        enum: 'MavResult',
+        member: 'ACCEPTED',
+        dialect: 'missing-result',
+        consumer: 'command'
+      });
+      return true;
+    }
+  );
 });
 
 test('ArduPilot modes expose generated additions and reverse-look-up generated values', () => {
