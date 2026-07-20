@@ -385,9 +385,9 @@ module.exports = function registerMavlinkAiCommand(RED) {
 
       const defaults = node.profile.getDefaults ? node.profile.getDefaults() : {};
       const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
-      /** DO_SET_MODE detection resolves MavCmd, a common core enum — fall back
-       * to the core bundle when the profile has no valid dialect so set_mode
-       * still works without one (#309 review: apply core). */
+      // DO_SET_MODE detection resolves MavCmd, a common core enum — fall back
+      // to the core bundle when the profile has no valid dialect so set_mode
+      // still works without one (#309 review: apply core).
       const value = bundle && bundle.valid
         ? bindEnumValues(bundle.enums, { dialect: bundle.name, consumer: 'command' })
         : coreEnumValues({ consumer: 'command' });
