@@ -336,6 +336,18 @@ test('payload with no delivery set fails closed on the error port', async (t) =>
   assert.strictEqual(err.payload.code, 'DELIVERY_UNSET');
 });
 
+/**
+ * Both Codex and Greptile flagged the same gap (#308): before this, a node
+ * saved without a `delivery` value only failed at the first input, so it
+ * looked healthy right after deploy. resolveDeliveryMode is now also called
+ * at construct time, so the red badge appears immediately.
+ */
+test('payload node badges a construct-time DELIVERY_UNSET before any input (#308)', () => {
+  const { node } = setup({ action: 'camera_photo', delivery: undefined }); // no delivery
+  assert.ok(node._configError, 'node._configError set at construct time');
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
+});
+
 test('payload Send & await result emits command/ack on port 0 for a COMMAND_LONG action', async (t) => {
   const { RED, conn, node } = setup(
     { delivery: 'await', action: 'gripper', gripAction: 'grab', timeoutMs: '50', maxRetries: '1' },

@@ -698,3 +698,51 @@ test('fanout dry-run emits swarm/dryrun and sends nothing regardless of delivery
   assert.strictEqual(out.topic, 'swarm/dryrun');
   assert.ok(!collected.map((o) => o[1]).find(Boolean), 'no error on port 1');
 });
+
+/**
+ * The swarm/sent aggregate must expose a top-level `skipped` array (like
+ * swarm/ack's) when stop-on-error aborts remaining targets, not just
+ * `results[sysid].error === 'SKIPPED'` (#308: a consumer checking
+ * `out.skipped` must not get `undefined`).
+ */
+test('fanout Send via connection stop-on-error reports aborted targets in a top-level skipped[] (#308)', async () => {
+  const { RED, node, conn } = setup({
+    command: 'MAV_CMD_COMPONENT_ARM_DISARM',
+    delivery: 'send',
+    stopOnError: true
+  });
+  conn.send = (message) => {
+    conn.sent.push(message);
+    const sysid = message.target_system;
+    if (sysid === 2) {
+      return Promise.reject(new Error('boom'));
+    }
+    return Promise.resolve();
+  };
+  const { collected } = await RED.inject(node, { payload: { sysids: [1, 2, 3] } });
+  const out = collected.map((o) => o[0]).find(Boolean);
+  assert.strictEqual(out.topic, 'swarm/sent');
+  assert.deepStrictEqual(out.payload.sent, [1]);
+  assert.strictEqual(out.payload.failed.length, 1);
+  assert.ok(Array.isArray(out.payload.skipped), 'skipped is a top-level array');
+  assert.deepStrictEqual(out.payload.skipped, [3]);
+  assert.strictEqual(out.payload.results['3'].error, 'SKIPPED');
+});
+
+/**
+ * Both Codex and Greptile flagged the same gap (#308): before this, a node
+ * saved without a `delivery` value only failed at the first input, so it
+ * looked healthy right after deploy. resolveDeliveryMode is now also called
+ * at construct time, folded into the same node._configError path malformed
+ * static JSON already uses, so the red badge appears immediately.
+ */
+test('fanout node badges a construct-time DELIVERY_UNSET before any input (#308)', () => {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  const node = RED.create('mavlink-ai-fanout', { id: 'f2', profile: 'p1', command: 'MAV_CMD_NAV_LAND' }); // no delivery
+  assert.ok(node._configError, 'node._configError set at construct time');
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
+});

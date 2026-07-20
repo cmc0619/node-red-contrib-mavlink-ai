@@ -277,8 +277,36 @@ module.exports = function registerMavlinkAiCommand(RED) {
     const parsedPreset = parseJsonObjectConfig(config.presetFields, 'presetFields');
     const configParams = parsedParams.value;
     const presetParams = parsedPreset.value;
-    node._configError = parsedParams.error || parsedPreset.error;
-    if (node._configError) {
+
+    /**
+     * A missing/invalid Delivery selection (#207, #308) is a construct-time
+     * config error too, not just an input-time one: a pre-upgrade node (or one
+     * created via import/API without a `delivery` value) must show the same red
+     * badge at deploy time as malformed static JSON, instead of looking healthy
+     * until the first message. Folded into the same `node._configError` the
+     * input handler already short-circuits on, so this doesn't compete with
+     * `watchConfigBadge`'s own idle-badge refresh on `flows:started`.
+     */
+    let deliveryConfigError = null;
+    try {
+      resolveDeliveryMode(config, { allow: [DELIVERY.BUILD, DELIVERY.SEND, DELIVERY.AWAIT] });
+    } catch (err) {
+      if (err.code !== 'DELIVERY_UNSET') {
+        throw err;
+      }
+      deliveryConfigError = err.message;
+    }
+
+    node._configError = parsedParams.error || parsedPreset.error || deliveryConfigError;
+    /**
+     * Precedence (#308): "invalid profile" is the more fundamental problem and
+     * watchConfigBadge already painted that badge above, so only paint over it
+     * with "invalid config" when the profile itself resolved fine — a
+     * delivery-unset (or malformed-fields) node with a broken profile keeps
+     * showing "invalid profile" instead of masking it.
+     */
+    const profileOk = !!(node.profile && typeof node.profile.isValid === 'function' && node.profile.isValid());
+    if (node._configError && profileOk) {
       node.status({ fill: 'red', shape: 'ring', text: 'invalid config' });
     }
 
@@ -306,6 +334,13 @@ module.exports = function registerMavlinkAiCommand(RED) {
        * (msg, send, done, code, ...) threading that invited a #276-style
        * arity shift is gone. Two ports (#207): product on 0, error on 1.
        */
+      /**
+       * A send failure must name the connection it actually used, even if a
+       * live redeploy replaced node.connection mid-flight (#128/#238) — the
+       * Send delivery path below records its captured connection here before
+       * awaiting, mirroring the payload/move nodes' `sentOn` pattern.
+       */
+      let sentOn = null;
       const fail = makeFail({
         node,
         nodeName: 'mavlink-ai-command',
@@ -314,7 +349,10 @@ module.exports = function registerMavlinkAiCommand(RED) {
         done,
         outputs: 2,
         errorIndex: 1,
-        connectionName: () => node.connection && node.connection.name
+        connectionName: () => {
+          const c = sentOn || node.connection;
+          return c && c.name;
+        }
       });
       /**
        * Delivery is explicit (#207): a node saved before this change (or
@@ -635,10 +673,18 @@ module.exports = function registerMavlinkAiCommand(RED) {
           return fail(new MavlinkError('NO_CONNECTION',
             'Send via connection requires a connection to send on (select one in the node config).'));
         }
+        /**
+         * Captured before the await (#238): a live flows:started refresh can
+         * null or replace node.connection while this send is in flight, and
+         * the catch path must name the connection actually used rather than a
+         * stale/absent node.connection read after the fact.
+         */
+        const connection = node.connection;
+        sentOn = connection;
         const sendBundle = node.profile && node.profile.getDialect ? node.profile.getDialect() : null;
         const priority = commandPriorityFor(sendBundle ? sendBundle.enums : null, fields.command);
         try {
-          await node.connection.send(
+          await connection.send(
             {
               name: messageName,
               vehicleProfile: node.profile.id,

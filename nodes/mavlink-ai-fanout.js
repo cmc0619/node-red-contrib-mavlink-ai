@@ -72,8 +72,36 @@ module.exports = function registerMavlinkAiFanout(RED) {
      */
     const parsedBase = parseJsonObjectConfig(config.fields, 'fields');
     const configBase = parsedBase.value;
-    node._configError = parsedBase.error;
-    if (node._configError) {
+
+    /**
+     * A missing/invalid Delivery selection (#207, #308) is a construct-time
+     * config error too, not just an input-time one: a pre-upgrade node (or one
+     * created via import/API without a `delivery` value) must show the same red
+     * badge at deploy time as malformed static JSON, instead of looking healthy
+     * until the first message. Folded into the same `node._configError` the
+     * input handler already short-circuits on, so this doesn't compete with
+     * `watchConfigBadge`'s own idle-badge refresh on `flows:started`.
+     */
+    let deliveryConfigError = null;
+    try {
+      resolveDeliveryMode(config, { allow: [DELIVERY.BUILD, DELIVERY.SEND, DELIVERY.AWAIT] });
+    } catch (err) {
+      if (err.code !== 'DELIVERY_UNSET') {
+        throw err;
+      }
+      deliveryConfigError = err.message;
+    }
+
+    node._configError = parsedBase.error || deliveryConfigError;
+    /**
+     * Precedence (#308): "invalid profile" is the more fundamental problem and
+     * watchConfigBadge already painted that badge above, so only paint over it
+     * with "invalid config" when the profile itself resolved fine — a
+     * delivery-unset (or malformed-fields) node with a broken profile keeps
+     * showing "invalid profile" instead of masking it.
+     */
+    const profileOk = !!(node.profile && typeof node.profile.isValid === 'function' && node.profile.isValid());
+    if (node._configError && profileOk) {
       node.status({ fill: 'red', shape: 'ring', text: 'invalid config' });
     }
 
@@ -358,6 +386,7 @@ module.exports = function registerMavlinkAiFanout(RED) {
         const results = {};
         const sent = [];
         const sendFailed = [];
+        const skipped = [];
         let aborted = false;
         let dispatched = 0;
 
@@ -428,15 +457,18 @@ module.exports = function registerMavlinkAiFanout(RED) {
 
         /**
          * Stop-on-error leaves the targets never dispatched — mark them skipped in
-         * target order so the caller sees exactly which vehicles were not sent to.
+         * target order (mirroring the await-ack aggregate's top-level `skipped`
+         * array, #308) so a consumer can see exactly which vehicles were not sent
+         * to without having to scan `results` for `error: 'SKIPPED'` entries.
          */
         for (let i = nextIndex; aborted && i < decorated.length; i += 1) {
           const sysid = decorated[i].target_system;
+          skipped.push(sysid);
           results[sysid] = { error: 'SKIPPED', reason: 'stop-on-error aborted remaining targets' };
         }
         msg.topic = 'swarm/sent';
-        msg.payload = { sent, failed: sendFailed, results };
-        const ok = sendFailed.length === 0;
+        msg.payload = { sent, failed: sendFailed, skipped, results };
+        const ok = sendFailed.length === 0 && skipped.length === 0;
         node.status({
           fill: ok ? 'green' : 'yellow',
           shape: 'dot',

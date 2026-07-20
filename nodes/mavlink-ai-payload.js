@@ -52,6 +52,37 @@ module.exports = function registerMavlinkAiPayload(RED) {
       connection: 'optional',
       connectionRequiredWhen: () => config.delivery === DELIVERY.SEND || config.delivery === DELIVERY.AWAIT
     });
+
+    /**
+     * A missing/invalid Delivery selection (#207, #308) is a construct-time
+     * config error too, not just an input-time one: a pre-upgrade node (or one
+     * created via import/API without a `delivery` value) must show a red badge
+     * at deploy time instead of looking healthy until the first message. This
+     * node has no other construct-time config-error source (unlike command's/
+     * fanout's static `fields` JSON), so `node._configError` is introduced here
+     * for delivery alone — the input handler still fails closed on every
+     * message via its own `resolveDeliveryMode` call regardless of this flag,
+     * so this only adds deploy-time feedback. "invalid profile" is the more
+     * fundamental problem and watchConfigBadge already painted that badge
+     * above, so this only paints over it when the profile itself resolved
+     * fine, and it never competes with watchConfigBadge's own idle-badge
+     * refresh on `flows:started` (which knows nothing of delivery).
+     */
+    let deliveryConfigError = null;
+    try {
+      resolveDeliveryMode(config, { allow: [DELIVERY.BUILD, DELIVERY.SEND, DELIVERY.AWAIT] });
+    } catch (err) {
+      if (err.code !== 'DELIVERY_UNSET') {
+        throw err;
+      }
+      deliveryConfigError = err.message;
+    }
+    node._configError = deliveryConfigError;
+    const profileOk = !!(node.profile && typeof node.profile.isValid === 'function' && node.profile.isValid());
+    if (node._configError && profileOk) {
+      node.status({ fill: 'red', shape: 'ring', text: 'invalid config' });
+    }
+
     node.action = config.action || 'camera_photo';
     node.targetComponent = config.targetComponent;
     node.interval = config.interval;

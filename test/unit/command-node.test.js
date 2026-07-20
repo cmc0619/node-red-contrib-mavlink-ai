@@ -632,6 +632,24 @@ test('command node badges a missing connection only when delivery needs one (#16
   assert.deepStrictEqual(needsConn.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'missing connection' });
 });
 
+/**
+ * Both Codex and Greptile flagged the same gap (#308): before this, a node
+ * saved without a `delivery` value only failed at the first input, so it
+ * looked healthy right after deploy. resolveDeliveryMode is now also called
+ * at construct time, folded into the same node._configError path malformed
+ * static JSON already uses, so the red badge appears immediately.
+ */
+test('command node badges a construct-time DELIVERY_UNSET before any input (#308)', () => {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  const node = RED.create('mavlink-ai-command', { id: 'c5', profile: 'p1', command: 'arm' }); // no delivery
+  assert.ok(node._configError, 'node._configError set at construct time');
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
+});
+
 // --- Delivery modes (#207) ---------------------------------------------------
 
 test('command Build only emits mavlink/send on port 0, nothing on error', async (t) => {
@@ -653,6 +671,34 @@ test('command Send via connection emits command/sent on port 0 (observable fire-
   const out = collected.map((o) => o[0]).find(Boolean);
   assert.strictEqual(out.topic, 'command/sent');
   assert.strictEqual(out.payload.sent, true);
+});
+
+/**
+ * A live redeploy can null/replace node.connection while a Send delivery is
+ * awaiting connection.send() — the AWAIT path and the payload/move nodes
+ * already capture the connection before the await for this reason (#238);
+ * the command node's SEND branch is now the same (#308). Without the
+ * capture, a SEND_FAILED error raised after such a swap would name the
+ * wrong (or missing) connection instead of the one the message actually
+ * went out on.
+ */
+test('command Send via connection reports the connection actually used, even if node.connection is swapped mid-flight (#238/#308)', async (t) => {
+  const { RED, conn, node } = setupWithConnection({ delivery: 'send', command: 'arm' });
+  t.after(() => RED.close(node));
+  let rejectSend;
+  conn.send = () => new Promise((_resolve, reject) => {
+    rejectSend = reject;
+  });
+  const injected = RED.inject(node, {});
+  // Let the input handler run synchronously up to its `await connection.send(...)`,
+  // where it has already captured node.connection, before swapping it out.
+  await new Promise((r) => setTimeout(r, 0));
+  node.connection = { name: 'swapped-in-by-redeploy' };
+  rejectSend(new Error('boom'));
+  const { collected } = await injected;
+  const err = collected.map((o) => o[1]).find(Boolean);
+  assert.strictEqual(err.payload.code, 'SEND_FAILED');
+  assert.strictEqual(err.payload.connection, 'conn', 'names the connection actually sent on, not the swapped-in one');
 });
 
 test('command with no delivery set fails closed on the error port', async (t) => {

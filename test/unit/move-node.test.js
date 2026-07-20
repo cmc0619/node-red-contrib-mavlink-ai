@@ -423,6 +423,23 @@ test('with no delivery set the node fails closed with DELIVERY_UNSET on port 1 (
 });
 
 /**
+ * Both Codex and Greptile flagged the same gap (#308): before this, a node
+ * saved without a `delivery` value only failed at the first input, so it
+ * looked healthy right after deploy. resolveDeliveryMode is now also called
+ * at construct time, so the red badge appears immediately.
+ */
+test('move node badges a construct-time DELIVERY_UNSET before any input (#308)', () => {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  const node = RED.create('mavlink-ai-move', { id: 'm4', profile: 'p1', coordinate: 'local', preset: 'position' }); // no delivery
+  assert.ok(node._configError, 'node._configError set at construct time');
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
+});
+
+/**
  * Node-RED leaves this node in place when only the referenced profile config
  * node changed, so its constructor never re-runs. Before the fix, a profile
  * fixed after deploy left a stale "invalid profile" badge (and node.profile
