@@ -294,6 +294,7 @@ module.exports = function registerMavlinkAiFanout(RED) {
               fields: m.fields,
               useInt,
               enums: bundle && bundle.valid ? bundle.enums : null,
+              dialect: bundle && bundle.valid ? bundle.name : 'unknown',
               timeoutMs: node.timeoutMs,
               maxRetries: node.maxRetries
             });

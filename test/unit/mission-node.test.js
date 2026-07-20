@@ -2,10 +2,14 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { common, minimal } = require('node-mavlink');
 const { MockRED } = require('../helpers/mock-red');
 const { fakeIdentity } = require('../helpers/v3-config');
 const { LockManager } = require('../../lib/runtime/lock-manager');
 const { PRIORITY } = require('../../lib/runtime/send-priority');
+const { loadDialect } = require('../../lib/dialects/dialect-loader');
+
+const DIALECT = loadDialect('ardupilotmega');
 
 /**
  * Build a mission node backed by a real profile and a lightweight stub
@@ -91,7 +95,9 @@ test('a wrong-shaped allow_empty does not confirm a destructive empty upload (#2
 
 test('mission upload with a malformed item field fails before locking (#236)', async () => {
   const { RED, node } = setup();
-  const { collected } = await RED.inject(node, { payload: { action: 'upload', items: [{ command: 16, param1: 'oops' }] } });
+  const { collected } = await RED.inject(node, {
+    payload: { action: 'upload', items: [{ command: common.MavCmd.NAV_WAYPOINT, param1: 'oops' }] }
+  });
   assert.strictEqual(collected[0][2].payload.code, 'INVALID_FIELD');
   assert.strictEqual(collected[0][2].payload.context.field, 'param1');
 });
@@ -124,7 +130,7 @@ function profileStub(id, name, defaults) {
     id,
     name,
     isValid: () => true,
-    getDialect: () => null,
+    getDialect: () => DIALECT,
     getDefaults: () => Object.assign({ defaultTargetSystem: 1, defaultTargetComponent: 1 }, defaults)
   };
 }
@@ -229,8 +235,10 @@ test('a numeric payload.mission_type 0 overrides a node configured for another l
    * an explicit 0 must reach the wire as mission (0), not fence.
    */
   const { RED, conn, node } = setupWithSends({ config: { missionType: 'fence' } });
-  await RED.inject(node, { payload: { action: 'clear', mission_type: 0, wait_ack: false } });
-  assert.strictEqual(conn.sent[0].fields.mission_type, 0);
+  await RED.inject(node, {
+    payload: { action: 'clear', mission_type: common.MavMissionType.MISSION, wait_ack: false }
+  });
+  assert.strictEqual(conn.sent[0].fields.mission_type, common.MavMissionType.MISSION);
 });
 
 test('the best-effort clear stamps the NORMAL band explicitly (#241)', async () => {
@@ -373,14 +381,19 @@ test('mission clear waits for MISSION_ACK by default (#215)', async () => {
   const p = RED.inject(node, { payload: { action: 'clear' } });
   await new Promise((r) => setTimeout(r, 10));
   assert.strictEqual(conn.sent[0] && conn.sent[0].name, 'MISSION_CLEAR_ALL', 'clear sent, workflow waiting');
-  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_ACK', {
+    type: common.MavMissionResult.ACCEPTED,
+    mission_type: common.MavMissionType.MISSION,
+    target_system: 255,
+    target_component: minimal.MavComponent.MISSIONPLANNER
+  });
   const { collected } = await p;
   /** The acked workflow emits progress on output 2 first; the result is the
    * first output-1 message. */
   const out = collected.map((outs) => outs[0]).find(Boolean);
   assert.strictEqual(out.topic, 'mission/cleared');
   assert.strictEqual(out.payload.acked, true, 'default clear resolves on the vehicle ACK');
-  assert.strictEqual(out.payload.result, 0, 'MAV_MISSION_ACCEPTED');
+  assert.strictEqual(out.payload.result, common.MavMissionResult.ACCEPTED);
 });
 
 test('wait_ack false keeps the fire-and-forget clear with acked:false (#215)', async () => {

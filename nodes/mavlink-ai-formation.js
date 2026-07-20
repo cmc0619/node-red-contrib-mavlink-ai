@@ -7,6 +7,7 @@ const { makeFail } = require('../lib/util/node-errors');
 const { toInt, toNum, toBool, firstDefined, parseJsonObjectConfig } = require('../lib/util/validation');
 const { badgeForState, truncateStatus } = require('../lib/util/status');
 const { safeDetach } = require('../lib/util/node-lifecycle');
+const { coreEnumValues } = require('../lib/protocol/protocol-values');
 
 /**
  * Registry messages the follow-leader mode subscribes to: HEARTBEAT discovers
@@ -14,6 +15,7 @@ const { safeDetach } = require('../lib/util/node-lifecycle');
  * follower slots are computed from.
  */
 const FOLLOW_MESSAGES = ['HEARTBEAT', 'GLOBAL_POSITION_INT'];
+const REPOSITION_COMMAND = coreEnumValues({ consumer: 'formation' })('MavCmd', 'DO_REPOSITION');
 
 /**
  * Fallback tick so leader staleness / succession is evaluated even when the
@@ -86,10 +88,15 @@ module.exports = function registerMavlinkAiFormation(RED) {
       node.status({ fill: 'red', shape: 'ring', text: 'invalid config' });
     }
 
-    /** MAV_CMD_DO_REPOSITION in name or numeric (192) form. */
-    const REPOSITION_COMMAND = new Set(['MAV_CMD_DO_REPOSITION', 'DO_REPOSITION', '192']);
+    /** MAV_CMD_DO_REPOSITION in exact source-name or explicit numeric form. */
     function isRepositionCommand(cmd) {
-      return REPOSITION_COMMAND.has(String(cmd));
+      if (cmd === 'MAV_CMD_DO_REPOSITION') {
+        return true;
+      }
+      if (typeof cmd === 'number') {
+        return Number.isFinite(cmd) && cmd === REPOSITION_COMMAND;
+      }
+      return typeof cmd === 'string' && /^\d+$/.test(cmd) && Number(cmd) === REPOSITION_COMMAND;
     }
 
     /**
@@ -382,6 +389,7 @@ module.exports = function registerMavlinkAiFormation(RED) {
           staleMs: node.staleMs,
           expireMs: node.expireMs,
           enums: bundle && bundle.valid ? bundle.enums : null,
+          dialect: bundle && bundle.valid ? bundle.name : 'unknown',
           now: () => node._now()
         });
         node.registry = registry;

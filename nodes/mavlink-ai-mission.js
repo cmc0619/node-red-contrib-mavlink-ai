@@ -132,8 +132,11 @@ module.exports = function registerMavlinkAiMission(RED) {
       const missionTypeName = hasPayloadType ? payloadType : node.missionType || 'mission';
       const bundle = profile && profile.getDialect ? profile.getDialect() : null;
       let missionTypeNum;
+      let missionTypeAll;
       try {
-        missionTypeNum = missionTypeToNumber(missionTypeName, bundle ? bundle.enums : null);
+        const protocolContext = { dialect: bundle ? bundle.name : 'unknown', consumer: 'mission' };
+        missionTypeNum = missionTypeToNumber(missionTypeName, bundle ? bundle.enums : null, protocolContext);
+        missionTypeAll = missionTypeToNumber('all', bundle ? bundle.enums : null, protocolContext);
       } catch (err) {
         return fail(err, 'BAD_MISSION_TYPE');
       }
@@ -239,6 +242,7 @@ module.exports = function registerMavlinkAiMission(RED) {
         sourceComponent: source.compid,
         missionType: missionTypeName,
         enums: bundle ? bundle.enums : null,
+        dialect: bundle ? bundle.name : 'unknown',
         useInt,
         timeoutMs: node.timeoutMs,
         maxRetries: node.maxRetries,
@@ -265,7 +269,7 @@ module.exports = function registerMavlinkAiMission(RED) {
           // workflow into MISSION_TIMEOUT despite a successful clear —
           // explicit wait_ack: true remains available for stacks known to
           // ack type 255 (#304 review).
-          const waitAck = toBool(firstDefined(msg.wait_ack, payload.wait_ack), missionTypeNum !== 255);
+          const waitAck = toBool(firstDefined(msg.wait_ack, payload.wait_ack), missionTypeNum !== missionTypeAll);
           if (waitAck) {
             const clearOpts = Object.assign({}, opts, {
               timeoutMs: toInt(payload.timeout_ms, node.timeoutMs)

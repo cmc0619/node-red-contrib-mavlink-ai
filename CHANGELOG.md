@@ -4,6 +4,46 @@ All notable changes to `node-red-contrib-mavlink-ai` are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking (pre-1.0): generated `node-mavlink` mappings are now authoritative
+  for protocol values.** Copied MAVLink assignments, numeric fallbacks, and
+  feature-specific aliases were removed. Friendly enum and ArduPilot mode input
+  must use exact generated member keys; an affected flow now fails instead of
+  being silently translated.
+- Raw numeric custom or dialect-external identifiers remain supported only on
+  explicit generic/advanced interfaces. Codec, transport, routing, and workflow
+  ownership are unchanged.
+
+### Fixed
+
+- Dialect-independent common protocol values (command/mission results, mission
+  and frame types, param types/capabilities, vehicle classification) now resolve
+  from the always-available core (`minimal`+`standard`+`common`) bundle rather
+  than the profile's dialect. Command, mission, param, move, payload, and swarm
+  operations that need only common values keep working even for a profile whose
+  custom dialect fails to load; genuinely dialect-specific lookups (ArduPilot
+  flight-mode names, custom mission types) still fail closed with
+  `ENUM_VALUE_UNAVAILABLE`.
+
+### Migration
+
+- **Breaking (pre-1.0), no compatibility aliases.** Update flows that used a
+  dropped alias to the exact generated member key:
+  - **Move frame** — use the bare `MavFrame` member key: `LOCAL_NED` (not
+    `MAV_FRAME_LOCAL_NED`), `LOCAL_OFFSET_NED`, `BODY_NED`, `BODY_OFFSET_NED`,
+    `GLOBAL_INT`, `GLOBAL_RELATIVE_ALT_INT`, `GLOBAL_TERRAIN_ALT_INT`. Prefixed
+    (`MAV_FRAME_…`) and numeric values are rejected.
+  - **Plane mode** — `FLY_BY_WIRE_A` / `FLY_BY_WIRE_B` (not `FBWA` / `FBWB`).
+  - **Sub mode** — `MOTORDETECT` (not `MOTOR_DETECT`).
+  - **Tracker mode** — `INITIALIZING` (not the British spelling `INITIALISING`).
+  - **Commands / mission types / param types** — exact generated member keys
+    (e.g. `MAV_CMD_*` names or raw numeric ids on the advanced interfaces).
+  An affected flow now fails with a structured error naming the unresolved
+  member, rather than silently sending a wrong or defaulted value.
+
 ## [0.4.0] - 2026-07-15
 
 ### Changed

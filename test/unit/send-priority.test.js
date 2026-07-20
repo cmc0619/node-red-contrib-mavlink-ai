@@ -2,16 +2,27 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { common } = require('node-mavlink');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { PRIORITY, commandPriority, commandPriorityFor, clampPriority } = require('../../lib/runtime/send-priority');
 const { CommandSend } = require('../../lib/command/command-workflow');
 const { OutboundQueue } = require('../../lib/runtime/outbound-queue');
 
 test('the critical set is exactly the documented safety commands (#241)', () => {
-  for (const id of [400, 176, 185, 208]) {
+  for (const id of [
+    common.MavCmd.COMPONENT_ARM_DISARM,
+    common.MavCmd.DO_SET_MODE,
+    common.MavCmd.DO_FLIGHTTERMINATION,
+    common.MavCmd.DO_PARACHUTE
+  ]) {
     assert.strictEqual(commandPriority(id), PRIORITY.CRITICAL, `MAV_CMD ${id} is critical`);
   }
-  for (const id of [16, 22, 20, 511]) {
+  for (const id of [
+    common.MavCmd.NAV_WAYPOINT,
+    common.MavCmd.NAV_TAKEOFF,
+    common.MavCmd.NAV_RETURN_TO_LAUNCH,
+    common.MavCmd.SET_MESSAGE_INTERVAL
+  ]) {
     assert.strictEqual(commandPriority(id), PRIORITY.NORMAL, `MAV_CMD ${id} rides normal`);
   }
 });
@@ -21,7 +32,7 @@ test('commandPriorityFor resolves names against MavCmd only (#241)', () => {
   assert.strictEqual(commandPriorityFor(enums, 'MAV_CMD_COMPONENT_ARM_DISARM'), PRIORITY.CRITICAL);
   assert.strictEqual(commandPriorityFor(enums, 'MAV_CMD_DO_PARACHUTE'), PRIORITY.CRITICAL);
   assert.strictEqual(commandPriorityFor(enums, 'MAV_CMD_NAV_TAKEOFF'), PRIORITY.NORMAL);
-  assert.strictEqual(commandPriorityFor(enums, 400), PRIORITY.CRITICAL, 'numeric id passes through');
+  assert.strictEqual(commandPriorityFor(enums, common.MavCmd.COMPONENT_ARM_DISARM), PRIORITY.CRITICAL, 'numeric id passes through');
   /** A cross-enum name whose value collides with a critical id must not match. */
   assert.strictEqual(commandPriorityFor(enums, 'MAV_STATE_EMERGENCY'), PRIORITY.NORMAL);
   /** Without enums a name cannot be identified — never guess critical. */
@@ -62,27 +73,42 @@ function stubConnection() {
   conn.acquireLock = () => ({ release: () => {} });
   conn.ack = (command, targetSystem) => {
     for (const cb of conn._subs) {
-      cb({ payload: { name: 'COMMAND_ACK', sysid: 1, fields: { command, result: 0, target_system: targetSystem } } });
+      cb({ payload: { name: 'COMMAND_ACK', sysid: 1, fields: { command, result: common.MavResult.ACCEPTED, target_system: targetSystem } } });
     }
   };
   return conn;
 }
 
 test('the command workflow stamps the policy band on every send (#241)', async () => {
+  const bundle = loadDialect('ardupilotmega');
   /** Arm/disarm rides CRITICAL... */
   const armConn = stubConnection();
-  const arm = new CommandSend({ connection: armConn, targetSystem: 1, targetComponent: 1, command: 400 });
+  const arm = new CommandSend({
+    connection: armConn,
+    targetSystem: 1,
+    targetComponent: 1,
+    command: common.MavCmd.COMPONENT_ARM_DISARM,
+    enums: bundle.enums,
+    dialect: bundle.name
+  });
   const armRun = arm.run();
   assert.strictEqual(armConn.sent[0].options.priority, PRIORITY.CRITICAL);
-  armConn.ack(400, 255);
+  armConn.ack(common.MavCmd.COMPONENT_ARM_DISARM, 255);
   await armRun;
 
   /** ...an ordinary command rides NORMAL. */
   const navConn = stubConnection();
-  const nav = new CommandSend({ connection: navConn, targetSystem: 1, targetComponent: 1, command: 22 });
+  const nav = new CommandSend({
+    connection: navConn,
+    targetSystem: 1,
+    targetComponent: 1,
+    command: common.MavCmd.NAV_TAKEOFF,
+    enums: bundle.enums,
+    dialect: bundle.name
+  });
   const navRun = nav.run();
   assert.strictEqual(navConn.sent[0].options.priority, PRIORITY.NORMAL);
-  navConn.ack(22, 255);
+  navConn.ack(common.MavCmd.NAV_TAKEOFF, 255);
   await navRun;
 });
 
@@ -102,7 +128,7 @@ test('a critical command overtakes queued normal traffic without reordering it (
   const inflight = queue.enqueue(Buffer.from([1]), PRIORITY.NORMAL);
   const m1 = queue.enqueue(Buffer.from([2]), PRIORITY.NORMAL);
   const m2 = queue.enqueue(Buffer.from([3]), PRIORITY.NORMAL);
-  const arm = queue.enqueue(Buffer.from([9]), commandPriority(400));
+  const arm = queue.enqueue(Buffer.from([9]), commandPriority(common.MavCmd.COMPONENT_ARM_DISARM));
   releaseFirst();
   await Promise.all([inflight, m1, m2, arm]);
 

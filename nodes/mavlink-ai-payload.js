@@ -197,6 +197,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
       try {
         built = buildPayload(action, {
           enums: bundle ? bundle.enums : null,
+          dialect: bundle ? bundle.name : 'unknown',
           targetSystem,
           targetComponent,
           interval: toNum(firstDefined(payload.interval, node.interval), undefined),
@@ -262,7 +263,6 @@ module.exports = function registerMavlinkAiPayload(RED) {
        */
       const connection = node.connection;
       sentOn = connection;
-
       /**
        * Send & await result (#129, #207): confirm the device accepted a
        * command instead of fire-and-forget. Only COMMAND_LONG verbs get a
@@ -279,6 +279,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
           targetSystem,
           targetComponent,
           enums: bundle ? bundle.enums : null,
+          dialect: bundle ? bundle.name : 'unknown',
           defaults,
           payload
         });
@@ -422,6 +423,7 @@ async function runWithAck(node, msg, send, done, ctx) {
       command: ctx.built.fields.command,
       fields: ctx.built.fields,
       enums: ctx.enums,
+      dialect: ctx.dialect,
       timeoutMs: toNum(firstDefined(ctx.payload.timeout_ms, node.timeoutMs), undefined),
       maxRetries: toNum(firstDefined(ctx.payload.max_retries, node.maxRetries), undefined)
     });

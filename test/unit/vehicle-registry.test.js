@@ -2,10 +2,16 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { minimal } = require('node-mavlink');
 const { VehicleRegistry } = require('../../lib/swarm/vehicle-registry');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 
-const ENUMS = loadDialect('ardupilotmega').enums;
+const ARDU_BUNDLE = loadDialect('ardupilotmega');
+const ENUMS = ARDU_BUNDLE.enums;
+
+function registry(opts = {}) {
+  return new VehicleRegistry({ enums: ENUMS, dialect: ARDU_BUNDLE.name, ...opts });
+}
 
 /** Manual clock so stale/expiry is deterministic. */
 function makeClock(start = 1000000) {
@@ -20,7 +26,13 @@ function heartbeat(sysid, extra = {}) {
     sysid,
     compid: 1,
     fields: Object.assign(
-      { type: 2, autopilot: 3, base_mode: 81, custom_mode: 4, system_status: 4 },
+      {
+        type: minimal.MavType.QUADROTOR,
+        autopilot: minimal.MavAutopilot.ARDUPILOTMEGA,
+        base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED,
+        custom_mode: 4,
+        system_status: minimal.MavState.ACTIVE
+      },
       extra
     )
   };
@@ -28,7 +40,7 @@ function heartbeat(sysid, extra = {}) {
 
 test('HEARTBEAT discovers vehicles with readable type/status/mode names (#46)', () => {
   const clock = makeClock();
-  const reg = new VehicleRegistry({ enums: ENUMS, now: clock.now });
+  const reg = registry({ now: clock.now });
   const { added } = reg.ingest(heartbeat(1));
   assert.strictEqual(added, true);
   const [v] = reg.vehicles();
@@ -43,14 +55,16 @@ test('HEARTBEAT discovers vehicles with readable type/status/mode names (#46)', 
 });
 
 test('armed flag follows MAV_MODE_FLAG_SAFETY_ARMED (#46)', () => {
-  const reg = new VehicleRegistry({ now: makeClock().now });
-  reg.ingest(heartbeat(1, { base_mode: 81 | 128 }));
+  const reg = registry({ now: makeClock().now });
+  reg.ingest(heartbeat(1, {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED | minimal.MavModeFlag.SAFETY_ARMED
+  }));
   assert.strictEqual(reg.vehicles()[0].armed, true);
 });
 
 test('position/status messages enrich but never discover (#46)', () => {
   const clock = makeClock();
-  const reg = new VehicleRegistry({ now: clock.now });
+  const reg = registry({ now: clock.now });
   const gpi = {
     name: 'GLOBAL_POSITION_INT',
     sysid: 1,
@@ -72,17 +86,17 @@ test('position/status messages enrich but never discover (#46)', () => {
 });
 
 test('GCS heartbeats are ignored unless includeGcs (#46)', () => {
-  const reg = new VehicleRegistry({ now: makeClock().now });
-  reg.ingest(heartbeat(255, { type: 6, autopilot: 8 }));
+  const reg = registry({ now: makeClock().now });
+  reg.ingest(heartbeat(255, { type: minimal.MavType.GCS, autopilot: minimal.MavAutopilot.INVALID }));
   assert.strictEqual(reg.size, 0);
-  const gcsReg = new VehicleRegistry({ now: makeClock().now, includeGcs: true });
-  gcsReg.ingest(heartbeat(255, { type: 6, autopilot: 8 }));
+  const gcsReg = registry({ now: makeClock().now, includeGcs: true });
+  gcsReg.ingest(heartbeat(255, { type: minimal.MavType.GCS, autopilot: minimal.MavAutopilot.INVALID }));
   assert.strictEqual(gcsReg.size, 1);
 });
 
 test('vehicles go stale after staleMs and expire after expireMs (#46)', () => {
   const clock = makeClock();
-  const reg = new VehicleRegistry({ staleMs: 1000, expireMs: 5000, now: clock.now });
+  const reg = registry({ staleMs: 1000, expireMs: 5000, now: clock.now });
   reg.ingest(heartbeat(1));
   clock.advance(1500);
   const [v] = reg.vehicles();
@@ -93,18 +107,20 @@ test('vehicles go stale after staleMs and expire after expireMs (#46)', () => {
 });
 
 test('filters select by sysids, type, and armed state (#46)', () => {
-  const reg = new VehicleRegistry({ enums: ENUMS, now: makeClock().now });
+  const reg = registry({ now: makeClock().now });
   reg.ingest(heartbeat(1)); // quad, disarmed
-  reg.ingest(heartbeat(2, { base_mode: 81 | 128 })); // quad, armed
-  reg.ingest(heartbeat(3, { type: 10 })); // rover
+  reg.ingest(heartbeat(2, {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED | minimal.MavModeFlag.SAFETY_ARMED
+  })); // quad, armed
+  reg.ingest(heartbeat(3, { type: minimal.MavType.GROUND_ROVER })); // rover
   assert.deepStrictEqual(reg.sysids({ type: 'MAV_TYPE_QUADROTOR' }), [1, 2]);
-  assert.deepStrictEqual(reg.sysids({ type: 10 }), [3]);
+  assert.deepStrictEqual(reg.sysids({ type: minimal.MavType.GROUND_ROVER }), [3]);
   assert.deepStrictEqual(reg.sysids({ armed: true }), [2]);
   assert.deepStrictEqual(reg.sysids({ sysids: [1, 3] }), [1, 3]);
 });
 
 test('sysids filter accepts arrays, single ids, and comma strings; rejects garbage (#46)', () => {
-  const reg = new VehicleRegistry({ now: makeClock().now });
+  const reg = registry({ now: makeClock().now });
   reg.ingest(heartbeat(1));
   reg.ingest(heartbeat(2));
   reg.ingest(heartbeat(3));
@@ -118,14 +134,14 @@ test('sysids filter accepts arrays, single ids, and comma strings; rejects garba
 });
 
 test('named groups resolve to vehicles: sysid lists and filters (#46)', () => {
-  const reg = new VehicleRegistry({ enums: ENUMS, now: makeClock().now });
+  const reg = registry({ now: makeClock().now });
   reg.setGroups({
     scouts: [1, 2],
     rovers: { type: 'MAV_TYPE_GROUND_ROVER' }
   });
   reg.ingest(heartbeat(1));
   reg.ingest(heartbeat(2));
-  reg.ingest(heartbeat(3, { type: 10 }));
+  reg.ingest(heartbeat(3, { type: minimal.MavType.GROUND_ROVER }));
   assert.deepStrictEqual(reg.sysids({ group: 'scouts' }), [1, 2]);
   assert.deepStrictEqual(reg.sysids({ group: 'rovers' }), [3]);
   // Unknown group targets nobody rather than everybody.
@@ -133,9 +149,20 @@ test('named groups resolve to vehicles: sysid lists and filters (#46)', () => {
 });
 
 test('one system with several heartbeating components is tracked per compid (#46)', () => {
-  const reg = new VehicleRegistry({ now: makeClock().now });
+  const reg = registry({ now: makeClock().now });
   reg.ingest(heartbeat(1));
-  reg.ingest({ name: 'HEARTBEAT', sysid: 1, compid: 100, fields: { type: 30, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 } });
+  reg.ingest({
+    name: 'HEARTBEAT',
+    sysid: 1,
+    compid: 100,
+    fields: {
+      type: minimal.MavType.CAMERA,
+      autopilot: minimal.MavAutopilot.INVALID,
+      base_mode: 0,
+      custom_mode: 0,
+      system_status: minimal.MavState.ACTIVE
+    }
+  });
   assert.strictEqual(reg.vehicles().length, 2);
   assert.deepStrictEqual(reg.sysids(), [1]); // sysids stay unique for fan-out
 });
@@ -147,12 +174,21 @@ test('one system with several heartbeating components is tracked per compid (#46
  * (custom_mode 4 = copter GUIDED).
  */
 test('VTOL and high-rotor vehicle types resolve mode names in snapshots (#155)', () => {
-  const reg = new VehicleRegistry({ enums: ENUMS, now: makeClock().now });
-  reg.ingest(heartbeat(20, { type: 20, custom_mode: 15 }));
-  reg.ingest(heartbeat(29, { type: 29, custom_mode: 4 }));
-  reg.ingest(heartbeat(35, { type: 35, custom_mode: 4 }));
+  const reg = registry({ now: makeClock().now });
+  reg.ingest(heartbeat(20, { type: minimal.MavType.VTOL_TAILSITTER_QUADROTOR, custom_mode: 15 }));
+  reg.ingest(heartbeat(29, { type: minimal.MavType.DODECAROTOR, custom_mode: 4 }));
+  reg.ingest(heartbeat(35, { type: minimal.MavType.DECAROTOR, custom_mode: 4 }));
   const modes = Object.fromEntries(reg.vehicles().map((v) => [v.sysid, v.mode]));
   assert.strictEqual(modes[20], 'GUIDED');
   assert.strictEqual(modes[29], 'GUIDED');
   assert.strictEqual(modes[35], 'GUIDED');
+});
+
+test('constructs with core classification values even when no dialect is loaded (#309 review: apply core)', () => {
+  // MavType/MavModeFlag/MavAutopilot are common core enums, so a registry
+  // constructs and can classify vehicles for a profile whose dialect failed to
+  // load (enums: null) — its attach() no longer throws.
+  const reg = new VehicleRegistry({ enums: null, dialect: 'unknown' });
+  assert.strictEqual(reg.gcsType, minimal.MavType.GCS);
+  assert.strictEqual(reg.armedFlag, 128); // MAV_MODE_FLAG_SAFETY_ARMED
 });

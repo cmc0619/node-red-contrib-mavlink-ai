@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { common, minimal } = require('node-mavlink');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MissionDownload, extractItem } = require('../../lib/mission/mission-download');
 const { MissionUpload, buildItemFields } = require('../../lib/mission/mission-upload');
@@ -10,6 +11,15 @@ const { DEFAULT_TIMEOUT_MS } = require('../../lib/mission/mission-state-machine'
 const { normalizeUploadItems, resolveUploadItems, validateMissionItems } = require('../../lib/mission/upload-input');
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+const DIALECT = loadDialect('ardupilotmega');
+const GLOBAL_FRAMES = new Set([
+  common.MavFrame.GLOBAL,
+  common.MavFrame.GLOBAL_RELATIVE_ALT,
+  common.MavFrame.GLOBAL_INT,
+  common.MavFrame.GLOBAL_RELATIVE_ALT_INT,
+  common.MavFrame.GLOBAL_TERRAIN_ALT,
+  common.MavFrame.GLOBAL_TERRAIN_ALT_INT
+]);
 
 /**
  * Minimal connection stand-in: records outbound messages and delivers decoded
@@ -53,6 +63,8 @@ function downloadOpts(conn, extra = {}) {
       sourceSystem: 255,
       sourceComponent: 190,
       missionType: 'mission',
+      enums: DIALECT.enums,
+      dialect: DIALECT.name,
       timeoutMs: 50,
       maxRetries: 1
     },
@@ -78,8 +90,16 @@ test('buildItemFields converts lat/lon degrees to the wire scaling (#18)', () =>
 
 test('extractItem adds lat/lon degrees and wire_message for global frames (#18)', () => {
   const int = extractItem(
-    { seq: 0, frame: 6, command: 16, x: 473977420, y: 85455940, z: 50 },
-    'MISSION_ITEM_INT'
+    {
+      seq: 0,
+      frame: common.MavFrame.GLOBAL_RELATIVE_ALT_INT,
+      command: common.MavCmd.NAV_WAYPOINT,
+      x: 473977420,
+      y: 85455940,
+      z: 50
+    },
+    'MISSION_ITEM_INT',
+    GLOBAL_FRAMES
   );
   assert.strictEqual(int.lat, 47.397742);
   assert.strictEqual(int.lon, 8.545594);
@@ -88,15 +108,48 @@ test('extractItem adds lat/lon degrees and wire_message for global frames (#18)'
 
   // MISSION_ITEM_INT with a non-INT global frame (ArduPilot does this) is
   // still degE7 — scaling follows the message, not the frame.
-  const intFrame3 = extractItem({ seq: 0, frame: 3, command: 16, x: 473977420, y: 85455940, z: 50 }, 'MISSION_ITEM_INT');
+  const intFrame3 = extractItem(
+    {
+      seq: 0,
+      frame: common.MavFrame.GLOBAL_RELATIVE_ALT,
+      command: common.MavCmd.NAV_WAYPOINT,
+      x: 473977420,
+      y: 85455940,
+      z: 50
+    },
+    'MISSION_ITEM_INT',
+    GLOBAL_FRAMES
+  );
   assert.strictEqual(intFrame3.lat, 47.397742);
 
-  const flt = extractItem({ seq: 0, frame: 3, command: 16, x: 47.397742, y: 8.545594, z: 50 }, 'MISSION_ITEM');
+  const flt = extractItem(
+    {
+      seq: 0,
+      frame: common.MavFrame.GLOBAL_RELATIVE_ALT,
+      command: common.MavCmd.NAV_WAYPOINT,
+      x: 47.397742,
+      y: 8.545594,
+      z: 50
+    },
+    'MISSION_ITEM',
+    GLOBAL_FRAMES
+  );
   assert.strictEqual(flt.lat, 47.397742);
   assert.strictEqual(flt.lon, 8.545594);
 
   // Local frames (e.g. MAV_FRAME_LOCAL_NED = 1) carry meters, not lat/lon.
-  const local = extractItem({ seq: 0, frame: 1, command: 16, x: 10, y: 20, z: -5 }, 'MISSION_ITEM_INT');
+  const local = extractItem(
+    {
+      seq: 0,
+      frame: common.MavFrame.LOCAL_NED,
+      command: common.MavCmd.NAV_WAYPOINT,
+      x: 10,
+      y: 20,
+      z: -5
+    },
+    'MISSION_ITEM_INT',
+    GLOBAL_FRAMES
+  );
   assert.strictEqual(local.lat, undefined);
   assert.strictEqual(local.lon, undefined);
 });
@@ -107,10 +160,10 @@ test('download ignores responses addressed to another GCS (#34)', async () => {
   const p = wf.run();
   await delay(0);
   // Addressed to GCS sysid 254 — someone else's transfer; must not advance us.
-  conn.deliver('MISSION_COUNT', { count: 1, mission_type: 0, target_system: 254, target_component: 190 });
+  conn.deliver('MISSION_COUNT', { count: 1, mission_type: common.MavMissionType.MISSION, target_system: 254, target_component: minimal.MavComponent.MISSIONPLANNER });
   assert.strictEqual(wf.count, 0);
   // Addressed to us (and a broadcast component) advances the download.
-  conn.deliver('MISSION_COUNT', { count: 0, mission_type: 0, target_system: 255, target_component: 0 });
+  conn.deliver('MISSION_COUNT', { count: 0, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: 0 });
   const res = await p;
   assert.strictEqual(res.payload.count, 0);
 });
@@ -129,13 +182,13 @@ test('upload sequences items by array index, ignoring item.seq (#33)', async () 
   );
   const p = wf.run();
   await delay(0);
-  conn.deliver('MISSION_REQUEST_INT', { seq: 1, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_REQUEST_INT', { seq: 1, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   await delay(0);
   const sentItem = conn.sent.find((m) => m.name === 'MISSION_ITEM_INT');
   assert.ok(sentItem);
   assert.strictEqual(sentItem.fields.seq, 1); // requested seq, not item.seq
   assert.strictEqual(sentItem.fields.x, 30000000); // lat 3 in degE7
-  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_ACK', { type: common.MavMissionResult.ACCEPTED, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   const res = await p;
   assert.strictEqual(res.payload.count, 2);
 });
@@ -149,12 +202,12 @@ test('upload rejection reports the MAV_MISSION_RESULT name (#24)', async () => {
   const p = wf.run();
   await delay(0);
   // MAV_MISSION_RESULT 13 = MAV_MISSION_INVALID_SEQUENCE.
-  conn.deliver('MISSION_ACK', { type: 13, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_ACK', { type: common.MavMissionResult.INVALID_SEQUENCE, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   await assert.rejects(p, (e) => {
     assert.strictEqual(e.code, 'MISSION_REJECTED');
     assert.match(e.message, /13/);
     assert.match(e.message, /INVALID_SEQUENCE/);
-    assert.strictEqual(e.context.result, 13);
+    assert.strictEqual(e.context.result, common.MavMissionResult.INVALID_SEQUENCE);
     assert.match(String(e.context.result_name), /INVALID_SEQUENCE/);
     return true;
   });
@@ -169,11 +222,11 @@ test('download fails fast on an error MISSION_ACK instead of timing out (#145)',
   const p = wf.run();
   await delay(0);
   /** The vehicle denies the download (another transfer in progress). */
-  conn.deliver('MISSION_ACK', { type: 13, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_ACK', { type: common.MavMissionResult.INVALID_SEQUENCE, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   await assert.rejects(p, (e) => {
     assert.strictEqual(e.code, 'MISSION_REJECTED');
     assert.match(e.message, /INVALID_SEQUENCE/);
-    assert.strictEqual(e.context.result, 13);
+    assert.strictEqual(e.context.result, common.MavMissionResult.INVALID_SEQUENCE);
     return true;
   });
 });
@@ -185,7 +238,7 @@ test('download falls back to MISSION_REQUEST when REQUEST_INT goes unanswered (#
   try {
     const p = wf.run();
     await delay(0);
-    conn.deliver('MISSION_COUNT', { count: 1, mission_type: 0, target_system: 255, target_component: 190 });
+    conn.deliver('MISSION_COUNT', { count: 1, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
     await delay(0);
     /** First item request is the _INT variant. */
     assert.ok(conn.sent.some((m) => m.name === 'MISSION_REQUEST_INT'));
@@ -196,7 +249,7 @@ test('download falls back to MISSION_REQUEST when REQUEST_INT goes unanswered (#
     /** A plain MISSION_ITEM now completes the download. */
     conn.deliver(
       'MISSION_ITEM',
-      { seq: 0, frame: 3, command: 16, x: 1, y: 2, z: 3, mission_type: 0, target_system: 255, target_component: 190 }
+      { seq: 0, frame: common.MavFrame.GLOBAL_RELATIVE_ALT, command: 16, x: 1, y: 2, z: 3, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER }
     );
     const res = await p;
     assert.strictEqual(res.payload.count, 1);
@@ -214,13 +267,13 @@ test('upload ignores a premature ACCEPTED before any item was requested (#145)',
   const p = wf.run();
   await delay(0);
   /** Stale ACCEPTED arriving right after MISSION_COUNT — must not complete. */
-  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_ACK', { type: common.MavMissionResult.ACCEPTED, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   await delay(5);
   assert.strictEqual(wf.state, 'waiting_request');
   /** The real transfer still proceeds and completes on the genuine ACCEPTED. */
-  conn.deliver('MISSION_REQUEST_INT', { seq: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_REQUEST_INT', { seq: 0, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   await delay(0);
-  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_ACK', { type: common.MavMissionResult.ACCEPTED, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   const res = await p;
   assert.strictEqual(res.payload.count, 1);
 });
@@ -239,16 +292,16 @@ test('upload ignores a mid-transfer ACCEPTED before the final item is sent (#145
   );
   const p = wf.run();
   await delay(0);
-  conn.deliver('MISSION_REQUEST_INT', { seq: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_REQUEST_INT', { seq: 0, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   await delay(0);
   /** A duplicate ACCEPTED after only item 0 must not complete a 2-item upload. */
-  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_ACK', { type: common.MavMissionResult.ACCEPTED, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   await delay(5);
   assert.strictEqual(wf.state, 'waiting_request');
   /** The final item is requested and sent, then the real ACCEPTED completes. */
-  conn.deliver('MISSION_REQUEST_INT', { seq: 1, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_REQUEST_INT', { seq: 1, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   await delay(0);
-  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_ACK', { type: common.MavMissionResult.ACCEPTED, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   const res = await p;
   assert.strictEqual(res.payload.count, 2);
 });
@@ -258,7 +311,7 @@ test('upload still completes an empty-mission clear on an immediate ACCEPTED (#1
   const wf = new MissionUpload(downloadOpts(conn, { timeoutMs: 1000, maxRetries: 0, items: [] }));
   const p = wf.run();
   await delay(0);
-  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_ACK', { type: common.MavMissionResult.ACCEPTED, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   const res = await p;
   assert.strictEqual(res.payload.count, 0);
 });
@@ -269,10 +322,10 @@ test('mission workflows ignore traffic from a non-matching source component (#14
   const p = wf.run();
   await delay(0);
   /** A camera (compid 100) on the same system must not advance our download. */
-  conn.deliver('MISSION_COUNT', { count: 1, mission_type: 0, target_system: 255, target_component: 190 }, 1, 100);
+  conn.deliver('MISSION_COUNT', { count: 1, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER }, 1, 100);
   assert.strictEqual(wf.count, 0);
   /** The addressed autopilot component (compid 1) does. */
-  conn.deliver('MISSION_COUNT', { count: 0, mission_type: 0, target_system: 255, target_component: 190 }, 1, 1);
+  conn.deliver('MISSION_COUNT', { count: 0, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER }, 1, 1);
   const res = await p;
   assert.strictEqual(res.payload.count, 0);
 });
@@ -282,7 +335,7 @@ test('upload/download reject mission_type "all" (255) — only clear-all may use
   const dl = new MissionDownload(downloadOpts(conn, { missionType: 'all', timeoutMs: 1000, maxRetries: 0 }));
   await assert.rejects(dl.run(), (e) => e.code === 'BAD_MISSION_TYPE');
   const up = new MissionUpload(
-    downloadOpts(conn, { missionType: 255, timeoutMs: 1000, maxRetries: 0, items: [{ command: 16 }] })
+    downloadOpts(conn, { missionType: common.MavMissionType.ALL, timeoutMs: 1000, maxRetries: 0, items: [{ command: 16 }] })
   );
   await assert.rejects(up.run(), (e) => e.code === 'BAD_MISSION_TYPE');
 });
@@ -310,9 +363,20 @@ test('mission workflow default timeout is 10s (#58)', () => {
     connection: conn,
     targetSystem: 1,
     targetComponent: 1,
-    missionType: 'mission'
+    missionType: 'mission',
+    enums: DIALECT.enums,
+    dialect: DIALECT.name
   });
   assert.strictEqual(wf.timeoutMs, 10000);
+});
+
+test('mission workflow resolves core enums from the core bundle even with no loaded dialect (#309 review: apply core)', () => {
+  // MavMissionResult / MavMissionType / MavFrame and the standard mission type
+  // are all common core enums, so download/upload/clear still construct for a
+  // profile whose dialect failed to load (enums: null).
+  const wf = new MissionDownload(downloadOpts(new FakeConnection(), { enums: null, dialect: 'unknown' }));
+  assert.strictEqual(wf.missionAccepted, 0); // MAV_MISSION_ACCEPTED
+  assert.strictEqual(wf.missionTypeMission, 0); // MAV_MISSION_TYPE_MISSION
 });
 
 // --- #57: upload answers with the requested item type ----------------------
@@ -325,14 +389,14 @@ test('upload answers MISSION_REQUEST with MISSION_ITEM (float degrees) (#57)', a
   );
   const p = wf.run();
   await delay(0);
-  conn.deliver('MISSION_REQUEST', { seq: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_REQUEST', { seq: 0, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   await delay(0);
   const sent = conn.sent.find((m) => m.name === 'MISSION_ITEM' || m.name === 'MISSION_ITEM_INT');
   assert.ok(sent);
   assert.strictEqual(sent.name, 'MISSION_ITEM'); // matched the request, not the profile
   assert.strictEqual(sent.fields.x, 3); // float degrees, not degE7
   assert.strictEqual(sent.fields.y, 4);
-  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_ACK', { type: common.MavMissionResult.ACCEPTED, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   await p;
 });
 
@@ -343,12 +407,12 @@ test('upload answers MISSION_REQUEST_INT with MISSION_ITEM_INT (degE7) even if p
   );
   const p = wf.run();
   await delay(0);
-  conn.deliver('MISSION_REQUEST_INT', { seq: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_REQUEST_INT', { seq: 0, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   await delay(0);
   const sent = conn.sent.find((m) => m.name === 'MISSION_ITEM' || m.name === 'MISSION_ITEM_INT');
   assert.strictEqual(sent.name, 'MISSION_ITEM_INT');
   assert.strictEqual(sent.fields.x, 30000000); // lat 3 in degE7
-  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_ACK', { type: common.MavMissionResult.ACCEPTED, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   await p;
 });
 
@@ -392,11 +456,11 @@ test('MissionClear resolves on an accepted MISSION_ACK (#59)', async () => {
   const p = wf.run();
   await delay(0);
   assert.ok(conn.sent.find((m) => m.name === 'MISSION_CLEAR_ALL'));
-  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_ACK', { type: common.MavMissionResult.ACCEPTED, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   const res = await p;
   assert.strictEqual(res.topic, 'mission/cleared');
   assert.strictEqual(res.payload.acked, true);
-  assert.strictEqual(res.payload.result, 0);
+  assert.strictEqual(res.payload.result, common.MavMissionResult.ACCEPTED);
   assert.match(String(res.payload.result_name), /ACCEPTED/);
 });
 
@@ -406,10 +470,10 @@ test('MissionClear rejects a denied clear with the result name (#59)', async () 
   const wf = new MissionClear(downloadOpts(conn, { enums, timeoutMs: 1000, maxRetries: 0 }));
   const p = wf.run();
   await delay(0);
-  conn.deliver('MISSION_ACK', { type: 3, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_ACK', { type: common.MavMissionResult.UNSUPPORTED, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   await assert.rejects(p, (e) => {
     assert.strictEqual(e.code, 'MISSION_CLEAR_REJECTED');
-    assert.strictEqual(e.context.result, 3);
+    assert.strictEqual(e.context.result, common.MavMissionResult.UNSUPPORTED);
     return true;
   });
 });
@@ -481,7 +545,7 @@ test('validateMissionItems rejects non-numeric garbage but preserves NaN sentine
   /** A fully-specified valid item passes. */
   assert.doesNotThrow(() =>
     validateMissionItems([
-      { command: 'MAV_CMD_NAV_WAYPOINT', frame: 3, lat: 1, lon: 2, alt: 10, param1: 0, current: 1, autocontinue: 1 }
+      { command: 'MAV_CMD_NAV_WAYPOINT', frame: common.MavFrame.GLOBAL_RELATIVE_ALT, lat: 1, lon: 2, alt: 10, param1: 0, current: 1, autocontinue: 1 }
     ])
   );
 });
@@ -566,7 +630,7 @@ test('mission workflow sends carry the profile reference end-to-end', async () =
   const conn = new FakeConnection();
   const wf = new MissionClear(downloadOpts(conn, { vehicleProfile: 'p_routed' }));
   const p = wf.run();
-  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_ACK', { type: common.MavMissionResult.ACCEPTED, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   const res = await p;
   assert.strictEqual(res.payload.acked, true);
   assert.strictEqual(conn.sent[0].name, 'MISSION_CLEAR_ALL');
@@ -579,7 +643,7 @@ test('mission workflow without a profile sends no profile reference', async () =
   const conn = new FakeConnection();
   const wf = new MissionClear(downloadOpts(conn));
   const p = wf.run();
-  conn.deliver('MISSION_ACK', { type: 0, mission_type: 0, target_system: 255, target_component: 190 });
+  conn.deliver('MISSION_ACK', { type: common.MavMissionResult.ACCEPTED, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   await p;
   assert.ok(!('profile' in conn.sent[0]));
 });
@@ -591,11 +655,11 @@ test('download never downgrades to float MISSION_REQUEST after an INT item alrea
   try {
     const p = wf.run();
     await delay(0);
-    conn.deliver('MISSION_COUNT', { count: 2, mission_type: 0, target_system: 255, target_component: 190 });
+    conn.deliver('MISSION_COUNT', { count: 2, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
     await delay(0);
     /** Item 0 answered via the INT pathway: the vehicle clearly speaks INT. */
     conn.deliver('MISSION_ITEM_INT', {
-      seq: 0, frame: 6, command: 16, x: 10, y: 20, z: 30, mission_type: 0, target_system: 255, target_component: 190
+      seq: 0, frame: common.MavFrame.GLOBAL_RELATIVE_ALT_INT, command: 16, x: 10, y: 20, z: 30, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER
     });
     await delay(0);
     /**
@@ -608,7 +672,7 @@ test('download never downgrades to float MISSION_REQUEST after an INT item alrea
     assert.ok(!conn.sent.some((m) => m.name === 'MISSION_REQUEST'), 'no downgraded MISSION_REQUEST after an INT item');
     assert.ok(conn.sent.filter((m) => m.name === 'MISSION_REQUEST_INT' && m.fields.seq === 1).length >= 2, 'seq 1 re-requested as INT');
     conn.deliver('MISSION_ITEM_INT', {
-      seq: 1, frame: 6, command: 16, x: 11, y: 21, z: 31, mission_type: 0, target_system: 255, target_component: 190
+      seq: 1, frame: common.MavFrame.GLOBAL_RELATIVE_ALT_INT, command: 16, x: 11, y: 21, z: 31, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER
     });
     const res = await p;
     assert.strictEqual(res.payload.count, 2);
@@ -636,7 +700,7 @@ test('fence/rally over a MAVLink 1 link fails with a pointed error, not a bare t
         sysid: 1,
         compid: 1,
         raw: { magic: 0xfe },
-        fields: { count: 1, mission_type: 0, target_system: 255, target_component: 190 }
+        fields: { count: 1, mission_type: common.MavMissionType.MISSION, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER }
       }
     });
   }

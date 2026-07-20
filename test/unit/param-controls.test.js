@@ -2,8 +2,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { ardupilotmega } = require('node-mavlink');
 
 const { buildMetadata } = require('../../lib/dialects/message-metadata');
+const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { modeChoices } = require('../../lib/command/flight-modes');
 const {
   paramControl,
@@ -11,6 +13,14 @@ const {
   looksBoolean
 } = require('../../lib/command/param-metadata');
 const { resolveParamChoices } = require('../../lib/command/param-resolvers');
+
+const ARDU_BUNDLE = loadDialect('ardupilotmega');
+const flightContext = (vehicleType) => ({
+  firmware: 'ardupilot',
+  vehicleType,
+  enumIndex: ARDU_BUNDLE.enums,
+  dialect: ARDU_BUNDLE.name
+});
 
 // --- generic metadata carried onto raw command params (#97) -----------------
 
@@ -68,23 +78,23 @@ test('a param with no reliable metadata stays a plain numeric', () => {
 // --- flight-mode choices: Copter vs Plane differ (GUIDED 4 vs 15) -----------
 
 test('modeChoices maps the same name to different wire values per vehicle', () => {
-  const copter = modeChoices('ardupilot', 'copter');
-  const plane = modeChoices('ardupilot', 'plane');
-  assert.strictEqual(copter.find((m) => m.name === 'GUIDED').value, 4);
-  assert.strictEqual(plane.find((m) => m.name === 'GUIDED').value, 15);
+  const copter = modeChoices({ ...flightContext('copter'), enums: ARDU_BUNDLE.enums });
+  const plane = modeChoices({ ...flightContext('plane'), enums: ARDU_BUNDLE.enums });
+  assert.strictEqual(copter.find((m) => m.name === 'GUIDED').value, ardupilotmega.CopterMode.GUIDED);
+  assert.strictEqual(plane.find((m) => m.name === 'GUIDED').value, ardupilotmega.PlaneMode.GUIDED);
   // Unsupported combination yields no choices (editor falls back to numeric).
-  assert.deepStrictEqual(modeChoices('generic', 'copter'), []);
+  assert.deepStrictEqual(modeChoices({ firmware: 'generic', vehicleType: 'copter' }), []);
 });
 
 // --- resolver dispatch ------------------------------------------------------
 
 test('profile-flight-mode resolver is profile-scoped and firmware-specific', () => {
-  const copter = resolveParamChoices('profile-flight-mode', { firmware: 'ardupilot', vehicleType: 'copter' });
+  const copter = resolveParamChoices('profile-flight-mode', flightContext('copter'));
   assert.strictEqual(copter.scope, 'profile');
   assert.strictEqual(copter.generic, false);
-  assert.strictEqual(copter.choices.find((c) => c.name === 'GUIDED').value, 4);
-  const plane = resolveParamChoices('profile-flight-mode', { firmware: 'ardupilot', vehicleType: 'plane' });
-  assert.strictEqual(plane.choices.find((c) => c.name === 'GUIDED').value, 15);
+  assert.strictEqual(copter.choices.find((c) => c.name === 'GUIDED').value, ardupilotmega.CopterMode.GUIDED);
+  const plane = resolveParamChoices('profile-flight-mode', flightContext('plane'));
+  assert.strictEqual(plane.choices.find((c) => c.name === 'GUIDED').value, ardupilotmega.PlaneMode.GUIDED);
 });
 
 test('component-mode resolver returns different choices per target component', () => {

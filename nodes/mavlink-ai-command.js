@@ -6,6 +6,8 @@ const { truncateStatus } = require('../lib/util/status');
 const { DELIVERY, resolveDeliveryMode } = require('../lib/util/delivery');
 const { firstDefined, toInt, toNum, toBool, parseJsonObjectConfig } = require('../lib/util/validation');
 const { registerEditorApi } = require('../lib/editor-api');
+const { resolveInEnum } = require('../lib/protocol/enum-resolver');
+const { bindEnumValues, coreEnumValues } = require('../lib/protocol/protocol-values');
 const { resolveFlightMode, splitPx4CustomMode } = require('../lib/command/flight-modes');
 const { CommandSend } = require('../lib/command/command-workflow');
 const { degToDegE7 } = require('../lib/util/geo');
@@ -382,6 +384,13 @@ module.exports = function registerMavlinkAiCommand(RED) {
       }
 
       const defaults = node.profile.getDefaults ? node.profile.getDefaults() : {};
+      const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
+      // DO_SET_MODE detection resolves MavCmd, a common core enum — fall back
+      // to the core bundle when the profile has no valid dialect so set_mode
+      // still works without one (#309 review: apply core).
+      const value = bundle && bundle.valid
+        ? bindEnumValues(bundle.enums, { dialect: bundle.name, consumer: 'command' })
+        : coreEnumValues({ consumer: 'command' });
 
       // Editor preset fields under runtime payload values (#49): a static
       // editor value (e.g. mode "GUIDED", altitude 15) applies unless the
@@ -395,11 +404,12 @@ module.exports = function registerMavlinkAiCommand(RED) {
       const params = Object.assign({}, merged);
       if (selected === 'set_mode' && merged.mode !== undefined) {
         try {
-          const resolved = resolveFlightMode(
-            defaults.firmware,
-            firstDefined(merged.vehicle_type, defaults.vehicleFamily),
-            merged.mode
-          );
+          const resolved = resolveFlightMode({
+            firmware: defaults.firmware,
+            vehicleType: firstDefined(merged.vehicle_type, defaults.vehicleFamily),
+            enums: bundle ? bundle.enums : null,
+            dialect: bundle ? bundle.name : 'unknown'
+          }, merged.mode);
           params.base_mode = firstDefined(merged.base_mode, resolved.base_mode);
           params.custom_mode = firstDefined(merged.custom_mode, resolved.custom_mode);
           params.custom_submode = firstDefined(merged.custom_submode, resolved.custom_submode);
@@ -526,14 +536,19 @@ module.exports = function registerMavlinkAiCommand(RED) {
        * dropdown value there would otherwise flip AUTO.MISSION to AUTO.RTL); a
        * bare main-mode param2 is left alone and any separate param3 preserved.
        */
-      if (
-        defaults.firmware === 'px4' &&
-        (String(fields.command) === 'MAV_CMD_DO_SET_MODE' || Number(fields.command) === 176)
-      ) {
-        const split = splitPx4CustomMode(fields.param2);
-        if (split) {
-          fields.param2 = split.main;
-          fields.param3 = split.sub;
+      if (defaults.firmware === 'px4') {
+        try {
+          const setModeCommand = value('MavCmd', 'DO_SET_MODE');
+          const command = resolveInEnum(bundle ? bundle.enums : null, 'MavCmd', fields.command);
+          if (command === setModeCommand) {
+            const split = splitPx4CustomMode(fields.param2);
+            if (split) {
+              fields.param2 = split.main;
+              fields.param3 = split.sub;
+            }
+          }
+        } catch (err) {
+          return fail(toMavlinkError(err, 'ENUM_VALUE_UNAVAILABLE'));
         }
       }
 
@@ -645,6 +660,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
             fields,
             useInt,
             enums: bundle ? bundle.enums : null,
+            dialect: bundle ? bundle.name : 'unknown',
             timeoutMs: node.timeoutMs,
             maxRetries: node.maxRetries,
             onProgress: (p) => node.status({ fill: 'blue', shape: 'dot', text: progressText(p.payload) })

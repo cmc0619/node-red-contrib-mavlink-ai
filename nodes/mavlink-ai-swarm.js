@@ -169,7 +169,8 @@ module.exports = function registerMavlinkAiSwarm(RED) {
           staleMs: node.staleMs,
           expireMs: node.expireMs,
           includeGcs: node.includeGcs,
-          enums: bundle && bundle.valid ? bundle.enums : null
+          enums: bundle && bundle.valid ? bundle.enums : null,
+          dialect: bundle && bundle.valid ? bundle.name : 'unknown'
         });
         registry.setGroups(groups);
         /** Exposed for tests/diagnostics. */

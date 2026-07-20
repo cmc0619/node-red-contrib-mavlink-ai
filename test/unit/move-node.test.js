@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { common } = require('node-mavlink');
 const { MockRED } = require('../helpers/mock-red');
 
 /** A stub connection exposing just the send() the move node uses. */
@@ -44,7 +45,16 @@ test('local position build-only emits mavlink/send with negated z', async () => 
   assert.strictEqual(out.name, 'SET_POSITION_TARGET_LOCAL_NED');
   assert.strictEqual(out.fields.x, 5);
   assert.strictEqual(out.fields.z, -10);
-  assert.strictEqual(out.fields.type_mask, 3576);
+  const expectedMask =
+    common.PositionTargetTypemask.VX_IGNORE |
+    common.PositionTargetTypemask.VY_IGNORE |
+    common.PositionTargetTypemask.VZ_IGNORE |
+    common.PositionTargetTypemask.AX_IGNORE |
+    common.PositionTargetTypemask.AY_IGNORE |
+    common.PositionTargetTypemask.AZ_IGNORE |
+    common.PositionTargetTypemask.YAW_IGNORE |
+    common.PositionTargetTypemask.YAW_RATE_IGNORE;
+  assert.strictEqual(out.fields.type_mask, expectedMask);
   assert.strictEqual(out.vehicleProfile, 'p1');
   assert.strictEqual(out.target_system, 1);
   assert.ok(!collected.map((o) => o[1]).find(Boolean), 'no error on port 1');
@@ -54,7 +64,7 @@ test('acceleration preset passes the af vector through the node (#128)', async (
   const { RED, node } = setup({
     coordinate: 'local',
     preset: 'acceleration',
-    frame: 'MAV_FRAME_LOCAL_NED',
+    frame: 'LOCAL_NED',
     accelNorth: '1.5',
     accelEast: '0',
     accelUp: '2'
@@ -66,18 +76,21 @@ test('acceleration preset passes the af vector through the node (#128)', async (
 });
 
 test('force preset via msg.payload sets the force bit (#128)', async () => {
-  const { RED, node } = setup({ coordinate: 'local', preset: 'position', frame: 'MAV_FRAME_LOCAL_NED' });
+  const { RED, node } = setup({ coordinate: 'local', preset: 'position', frame: 'LOCAL_NED' });
   const { collected } = await RED.inject(node, { payload: { preset: 'force', accelNorth: 3, accelEast: 0, accelUp: 0 } });
   const out = collected[0][0].payload;
   assert.strictEqual(out.fields.afx, 3);
-  assert.strictEqual(out.fields.type_mask & 0b0000_0010_0000_0000, 0b0000_0010_0000_0000);
+  assert.strictEqual(
+    out.fields.type_mask & common.PositionTargetTypemask.FORCE_SET,
+    common.PositionTargetTypemask.FORCE_SET
+  );
 });
 
 test('global coordinate builds SET_POSITION_TARGET_GLOBAL_INT with degE7', async () => {
   const { RED, node } = setup({
     coordinate: 'global',
     preset: 'position',
-    frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT',
+    frame: 'GLOBAL_RELATIVE_ALT_INT',
     lat: '47.397742',
     lon: '8.545594',
     altitude: '5'
@@ -382,7 +395,7 @@ test('a firmware-unsupported setpoint raises an advisory warning but still sends
     sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   const node = RED.create('mavlink-ai-move', {
-    id: 'm1', profile: 'p1', delivery: 'build', connection: '', coordinate: 'local', preset: 'force', frame: 'MAV_FRAME_LOCAL_NED',
+    id: 'm1', profile: 'p1', delivery: 'build', connection: '', coordinate: 'local', preset: 'force', frame: 'LOCAL_NED',
     accelNorth: '1', accelEast: '0', accelUp: '0'
   });
 

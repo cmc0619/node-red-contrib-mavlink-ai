@@ -3,6 +3,13 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { VehicleStateEngine } = require('../../lib/state/vehicle-state');
+const { loadDialect } = require('../../lib/dialects/dialect-loader');
+
+// ArduPilot dialect enums, for the HEARTBEAT-driven flight-mode name lookup
+// (#309: modeNameForCustomMode resolves ArduPilot modes from generated enum
+// data, so the engine must be given the dialect enums — the node supplies them
+// from the profile's dialect bundle in production).
+const ARDU = loadDialect('ardupilotmega');
 
 /** A controllable clock so staleness is deterministic. */
 function clock(start = 1000) {
@@ -16,7 +23,7 @@ function heartbeat(fields) {
 
 test('HEARTBEAT from the autopilot fills identity, armed, and mode, keyed per sysid', () => {
   const c = clock();
-  const engine = new VehicleStateEngine({ now: c.now });
+  const engine = new VehicleStateEngine({ now: c.now, enums: ARDU.enums, dialect: ARDU.name });
   const res = engine.ingest(
     heartbeat({ type: 2, autopilot: 3, base_mode: 128 | 1, custom_mode: 0, system_status: 4 })
   );
@@ -33,6 +40,21 @@ test('HEARTBEAT from the autopilot fills identity, armed, and mode, keyed per sy
   /** ArduCopter (firmware ardupilot, type copter) custom_mode 0 = STABILIZE. */
   assert.strictEqual(s.mode.custom_mode, 0);
   assert.strictEqual(s.mode.name, 'STABILIZE');
+});
+
+test('an ArduPilot heartbeat under a non-ArduPilot dialect yields a null mode name, not a throw (#309 review)', () => {
+  // A PX4/generic GCS on the `common` dialect watching an ArduPilot vehicle has
+  // a valid but ArduPilot-less enum index. modeNameForCustomMode must honor its
+  // null contract rather than throwing ENUM_VALUE_UNAVAILABLE, which would drop
+  // the whole snapshot for every ArduPilot heartbeat.
+  const c = clock();
+  const COMMON = loadDialect('common');
+  const engine = new VehicleStateEngine({ now: c.now, enums: COMMON.enums, dialect: COMMON.name });
+  engine.ingest(heartbeat({ type: 2, autopilot: 3, base_mode: 128 | 1, custom_mode: 4, system_status: 4 }));
+  let s;
+  assert.doesNotThrow(() => { s = engine.snapshot(1); });
+  assert.strictEqual(s.mode.custom_mode, 4);
+  assert.strictEqual(s.mode.name, null);
 });
 
 test('a non-autopilot component is presence-only and does not own flight state', () => {

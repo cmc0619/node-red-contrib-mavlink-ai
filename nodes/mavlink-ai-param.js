@@ -186,7 +186,9 @@ module.exports = function registerMavlinkAiParam(RED) {
       const paramEncoding = () => {
         const resolved = resolveParamEncoding({
           capabilities: node.connection.getVehicleCapabilities(targetSystem, targetComponent),
-          firmware: defaults.firmware
+          firmware: defaults.firmware,
+          enums: bundle ? bundle.enums : null,
+          dialect: bundle ? bundle.name : 'unknown'
         });
         if (resolved.source === 'capabilities') {
           const labeled = defaults.firmware === 'px4' ? 'bytewise' : 'ccast';
@@ -213,6 +215,7 @@ module.exports = function registerMavlinkAiParam(RED) {
         targetSystem,
         targetComponent,
         enums: bundle ? bundle.enums : null,
+        dialect: bundle ? bundle.name : 'unknown',
         // Label fallback for vehicles that never report capabilities.
         firmware: defaults.firmware,
         paramEncoding,

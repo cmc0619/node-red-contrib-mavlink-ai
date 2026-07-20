@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { common } = require('node-mavlink');
 const { MockRED } = require('../helpers/mock-red');
 const { fakeIdentity } = require('../helpers/v3-config');
 
@@ -217,6 +218,18 @@ test('raw MAV_CMD_DO_SET_MODE on PX4 overwrites a stale param3 from the packed s
   });
   assert.strictEqual(collected[0][0].payload.fields.param2, 4);
   assert.strictEqual(collected[0][0].payload.fields.param3, 4);
+});
+
+test('raw numeric MavCmd.DO_SET_MODE keeps the explicit numeric escape hatch on PX4', async () => {
+  const { RED, node } = setupWithFirmware(
+    { command: String(common.MavCmd.DO_SET_MODE) },
+    { firmware: 'px4', vehicleFamily: 'copter' }
+  );
+  const { collected } = await RED.inject(node, {
+    payload: { param1: 1, param2: ((4 << 16) | (5 << 24)) >>> 0 }
+  });
+  assert.strictEqual(collected[0][0].payload.fields.param2, 4);
+  assert.strictEqual(collected[0][0].payload.fields.param3, 5);
 });
 
 /** AUTO_RTL is 27 — a bare ArduPilot custom_mode that must NOT be mistaken for packed. */
@@ -591,7 +604,15 @@ test('await-ack workflow sends carry the node profile id', async () => {
       queueMicrotask(() =>
         deliver({
           topic: 'mavlink/COMMAND_ACK',
-          payload: { name: 'COMMAND_ACK', sysid: 1, compid: 1, fields: { command: 400, result: 0 } }
+          payload: {
+            name: 'COMMAND_ACK',
+            sysid: 1,
+            compid: 1,
+            fields: {
+              command: common.MavCmd.COMPONENT_ARM_DISARM,
+              result: common.MavResult.ACCEPTED
+            }
+          }
         })
       );
       return Promise.resolve();

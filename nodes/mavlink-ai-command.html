@@ -317,8 +317,17 @@
         const p = RED.nodes.node($('#node-input-profile').val());
         const firmware = (p && p.firmware) || 'generic';
         const vehicleType = (p && p.vehicleFamily) || '';
+        const dialect = currentDialect();
+        const query = {
+          firmware: firmware,
+          vehicleType: vehicleType,
+          dialect: dialect.dialect
+        };
+        if (dialect.customDialectPath) {
+          query.customDialectPath = dialect.customDialectPath;
+        }
         const requestId = ++modesRequestId;
-        $.getJSON('mavlink-ai/modes', { firmware: firmware, vehicleType: vehicleType })
+        $.getJSON('mavlink-ai/modes', query)
           .done(function (data) {
             if (requestId !== modesRequestId || !$select.closest('body').length) {
               return;
@@ -1039,5 +1048,6 @@
   <p>Camera, gimbal, servo, relay and gripper control moved to the dedicated <b>mavlink-ai-payload</b> node.</p>
   <p><b>Advanced / Raw MAV_CMD</b> is the escape hatch, not a normal preset: pick any command from the dialect enum and see its MAVLink description and per-parameter help. Each parameter now renders the best control its metadata supports instead of a bare number: an <b>enum dropdown</b> for enum-backed params, a <b>flag checklist</b> for bitmask params (the combined value is persisted), a <b>checkbox</b> for boolean params, a <b>constrained numeric</b> input when min/max/increment metadata is present, and a <b>profile-aware dropdown</b> for context-specific values (e.g. <code>DO_SET_MODE</code> custom mode, resolved from the profile firmware + vehicle type — <code>GUIDED</code> is 4 on ArduCopter but 15 on ArduPlane). A badge marks whether a choice list is generic MAVLink metadata or firmware/profile/component-specific. Every dropdown keeps a <b>Custom value…</b> option for raw numeric entry (new/unsupported firmware values), unknown values already stored in a flow are preserved, and a param with no reliable metadata stays a plain numeric input. Changing the profile — or, for component-addressed commands, the target component — refreshes the available choices.</p>
   <p><b>Set mode by name</b>: the editor offers a mode dropdown resolved from the profile's firmware and vehicle type (ArduPilot copter/plane/rover/boat/sub/antenna-tracker or PX4), or pass <code>msg.payload.mode</code> (e.g. <code>"GUIDED"</code>, <code>"POSITION"</code>) at runtime. Raw numeric <code>custom_mode</code> values are firmware/vehicle-specific (GUIDED is 4 on ArduCopter but 15 on ArduPlane); numeric <code>custom_mode</code>/<code>base_mode</code> keep working as before. On a PX4 profile the node sends the main mode in <code>param2</code> and the sub mode in <code>param3</code> (what the PX4 commander expects), and a HEARTBEAT-packed <code>custom_mode</code> number is split automatically. Stunts like flips are <i>modes</i>, not commands, on ArduCopter (FLIP mode via set mode) — there is no generic cross-firmware flip command.</p>
+  <p>ArduPilot mode names are exact generated member keys; for example Plane uses <code>FLY_BY_WIRE_A</code>. Locally invented abbreviations are not accepted. PX4 mode aliases remain intentional firmware-facing UX. The <b>Advanced / Raw MAV_CMD</b> path is separate: it accepts fully qualified <code>MAV_CMD_*</code> names and raw numeric custom/dialect-external ids.</p>
   <p><b>COMMAND_INT</b>: choose "Send as COMMAND_INT" (or set <code>msg.payload.command_int</code>) for commands that require it (DO_SET_ROI_LOCATION, DO_REPOSITION, …). The <i>Go To / Reposition</i> preset uses COMMAND_INT automatically. Give <code>lat</code>/<code>lon</code> in float degrees (converted to degE7 automatically) or raw <code>x</code>/<code>y</code>, plus <code>z</code>/<code>alt</code> and an optional <code>frame</code> (default <code>MAV_FRAME_GLOBAL</code>). Coordinates are <b>required</b> for <i>Go To</i> — omitting them is an error, never a silent reposition to 0,0. The message presets (<i>Request Message</i>, <i>Set/Stop Message Interval</i>) likewise require a message id. Raw <code>MAV_CMD_*</code> mode stays permissive.</p>
 </script>

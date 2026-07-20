@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { common } = require('node-mavlink');
 const { MockRED } = require('../helpers/mock-red');
 const { fakeIdentity } = require('../helpers/v3-config');
 const { buildFanout } = require('../../lib/swarm/fanout');
@@ -336,7 +337,12 @@ function probeAckConnection(RED, id, ackDelayMs) {
         for (const cb of subs.values()) {
           cb({
             topic: 'mavlink/COMMAND_ACK',
-            payload: { name: 'COMMAND_ACK', sysid, compid: 1, fields: { command, result: 0 } }
+            payload: {
+              name: 'COMMAND_ACK',
+              sysid,
+              compid: 1,
+              fields: { command, result: common.MavResult.ACCEPTED }
+            }
           });
         }
       }, ackDelayMs);

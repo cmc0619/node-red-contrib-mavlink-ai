@@ -2,12 +2,22 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { common, standard } = require('node-mavlink');
 const { MockRED } = require('../helpers/mock-red');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { fakeIdentity } = require('../helpers/v3-config');
-const { unionIntToFloat } = require('../../lib/param/param-workflow');
+const {
+  buildIntegerParamPolicy,
+  unionIntToFloat: unionIntToFloatWithPolicy
+} = require('../../lib/param/param-workflow');
 
 const NUL = String.fromCharCode(0);
+const DIALECT = loadDialect('ardupilotmega');
+const PARAM_POLICY = buildIntegerParamPolicy(DIALECT.enums, DIALECT.name);
+
+function unionIntToFloat(value, type) {
+  return unionIntToFloatWithPolicy(value, type, PARAM_POLICY);
+}
 
 /** A stub connection config node exposing the runtime API the param node uses. */
 function fakeConnection() {
@@ -16,7 +26,7 @@ function fakeConnection() {
     id: 'p1',
     name: 'Copter',
     getDefaults: () => ({ defaultTargetSystem: 1, defaultTargetComponent: 1 }),
-    getDialect: () => ({ enums: loadDialect('ardupilotmega').enums })
+    getDialect: () => DIALECT
   };
   conn.acquireLock = () => ({ release: () => {} });
   conn.subscribe = (filter, cb) => {
@@ -247,7 +257,7 @@ function px4Profile() {
     id: 'p2',
     name: 'PX4 Rover',
     isValid: () => true,
-    getDialect: () => ({ enums: loadDialect('ardupilotmega').enums }),
+    getDialect: () => DIALECT,
     getDefaults: () => ({ defaultTargetSystem: 3, defaultTargetComponent: 1, firmware: 'px4' })
   };
 }
@@ -281,7 +291,7 @@ test('param node route-resolves the target to its profile when no override is se
     id: 'p_routed',
     name: 'Routed',
     isValid: () => true,
-    getDialect: () => ({ enums: loadDialect('ardupilotmega').enums }),
+    getDialect: () => DIALECT,
     getDefaults: () => ({ defaultTargetSystem: 1, defaultTargetComponent: 1, firmware: 'generic' })
   };
   conn.getRouteDecision = ({ sysid }) => ({ accepted: true, profile: sysid === 2 ? routed : conn.profile });
@@ -314,13 +324,22 @@ test('param node reports an unresolved Local Identity on its error output', asyn
 
 test('param node probes AUTOPILOT_VERSION and uses advertised bytewise encoding (#233)', async () => {
   const { conn, node } = setup({ action: 'set', paramId: 'SYS_AUTOSTART', paramType: 'MAV_PARAM_TYPE_INT32' });
-  /** BYTEWISE bit (0x10) behind a generic-labeled profile. */
-  conn.capabilities = 0x10n;
+  conn.capabilities = BigInt(standard.MavProtocolCapability.PARAM_ENCODE_BYTEWISE);
   const outputs = await run(node, { payload: { param_value: 4001 } }, () => {
     const set = conn.sent.find((m) => m.name === 'PARAM_SET');
     assert.ok(set, 'PARAM_SET sent');
-    assert.strictEqual(set.fields.param_value, unionIntToFloat(4001, 6), 'byte-union despite the generic label');
-    conn.deliver(paramValue({ id: 'SYS_AUTOSTART', value: unionIntToFloat(4001, 6), type: 6 }));
+    assert.strictEqual(
+      set.fields.param_value,
+      unionIntToFloat(4001, common.MavParamType.INT32),
+      'byte-union despite the generic label'
+    );
+    conn.deliver(
+      paramValue({
+        id: 'SYS_AUTOSTART',
+        value: unionIntToFloat(4001, common.MavParamType.INT32),
+        type: common.MavParamType.INT32
+      })
+    );
   });
   const result = outputs.map((o) => o[0]).filter(Boolean).pop();
   assert.strictEqual(result.payload.param_value, 4001, 'echo decoded as byte-union');
@@ -331,7 +350,13 @@ test('param node probes AUTOPILOT_VERSION and uses advertised bytewise encoding 
 
   /** Same vehicle again: the mismatch is warned once per vehicle per deploy. */
   await run(node, { payload: { param_value: 4002 } }, () =>
-    conn.deliver(paramValue({ id: 'SYS_AUTOSTART', value: unionIntToFloat(4002, 6), type: 6 }))
+    conn.deliver(
+      paramValue({
+        id: 'SYS_AUTOSTART',
+        value: unionIntToFloat(4002, common.MavParamType.INT32),
+        type: common.MavParamType.INT32
+      })
+    )
   );
   assert.strictEqual(node.warnings.length, 1, 'no repeat warning');
 });
@@ -341,7 +366,7 @@ test('no capability report keeps the firmware-label behavior, unwarned (#233)', 
   await run(node, { payload: { param_value: 7 } }, () => {
     const set = conn.sent.find((m) => m.name === 'PARAM_SET');
     assert.strictEqual(set.fields.param_value, 7, 'generic label: numeric cast, exactly as before');
-    conn.deliver(paramValue({ id: 'SYS_AUTOSTART', value: 7, type: 6 }));
+    conn.deliver(paramValue({ id: 'SYS_AUTOSTART', value: 7, type: common.MavParamType.INT32 }));
   });
   assert.strictEqual(node.warnings.length, 0, 'label fallback is not a mismatch');
 });

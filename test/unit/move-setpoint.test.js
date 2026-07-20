@@ -2,18 +2,39 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { common } = require('node-mavlink');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const {
   buildTypeMask,
   resolveTypeMask,
   resolveFrame,
-  buildSetpoint,
-  setpointWarnings,
-  DIM_BITS,
-  FORCE_BIT
+  buildSetpoint: buildSetpointFromDialect,
+  setpointWarnings
 } = require('../../lib/move/setpoint');
 
+const DIALECT = loadDialect('ardupilotmega');
+const DIM_BITS = {
+  position:
+    common.PositionTargetTypemask.X_IGNORE |
+    common.PositionTargetTypemask.Y_IGNORE |
+    common.PositionTargetTypemask.Z_IGNORE,
+  velocity:
+    common.PositionTargetTypemask.VX_IGNORE |
+    common.PositionTargetTypemask.VY_IGNORE |
+    common.PositionTargetTypemask.VZ_IGNORE,
+  accel:
+    common.PositionTargetTypemask.AX_IGNORE |
+    common.PositionTargetTypemask.AY_IGNORE |
+    common.PositionTargetTypemask.AZ_IGNORE,
+  yaw: common.PositionTargetTypemask.YAW_IGNORE,
+  yawRate: common.PositionTargetTypemask.YAW_RATE_IGNORE
+};
+const FORCE_BIT = common.PositionTargetTypemask.FORCE_SET;
 const ALL_IGNORE = DIM_BITS.position | DIM_BITS.velocity | DIM_BITS.accel | DIM_BITS.yaw | DIM_BITS.yawRate;
+
+function buildSetpoint(opts) {
+  return buildSetpointFromDialect({ enums: DIALECT.enums, dialect: DIALECT.name, ...opts });
+}
 
 test('buildTypeMask clears only the active dimensions (set bit = ignore)', () => {
   assert.strictEqual(buildTypeMask({ position: true }), ALL_IGNORE & ~DIM_BITS.position);
@@ -27,11 +48,11 @@ test('buildTypeMask clears only the active dimensions (set bit = ignore)', () =>
 });
 
 test('preset masks resolve to the documented inverted values', () => {
-  assert.strictEqual(resolveTypeMask('position'), 3576);
-  assert.strictEqual(resolveTypeMask('velocity'), 3527);
-  assert.strictEqual(resolveTypeMask('position_yaw'), 2552);
-  assert.strictEqual(resolveTypeMask('yaw'), 2559);
-  assert.strictEqual(resolveTypeMask('yaw_rate'), 1535);
+  assert.strictEqual(resolveTypeMask('position'), ALL_IGNORE & ~DIM_BITS.position);
+  assert.strictEqual(resolveTypeMask('velocity'), ALL_IGNORE & ~DIM_BITS.velocity);
+  assert.strictEqual(resolveTypeMask('position_yaw'), ALL_IGNORE & ~DIM_BITS.position & ~DIM_BITS.yaw);
+  assert.strictEqual(resolveTypeMask('yaw'), ALL_IGNORE & ~DIM_BITS.yaw);
+  assert.strictEqual(resolveTypeMask('yaw_rate'), ALL_IGNORE & ~DIM_BITS.yawRate);
 });
 
 test('acceleration presets clear the accel bits but leave the force bit unset (#128)', () => {
@@ -52,7 +73,7 @@ test('buildSetpoint fills the af vector with up-positive accel mapped to -afz (#
   const { fields } = buildSetpoint({
     coordinate: 'local',
     preset: 'acceleration',
-    frame: 'MAV_FRAME_LOCAL_NED',
+    frame: 'LOCAL_NED',
     accelNorth: 1.5,
     accelEast: -0.5,
     accelUp: 2
@@ -67,7 +88,7 @@ test('a force setpoint sends the af inputs with the force bit set (#128)', () =>
   const { fields } = buildSetpoint({
     coordinate: 'local',
     preset: 'force',
-    frame: 'MAV_FRAME_LOCAL_NED',
+    frame: 'LOCAL_NED',
     accelNorth: 3,
     accelEast: 0,
     accelUp: 1
@@ -88,19 +109,28 @@ test('unknown preset throws BAD_PRESET', () => {
   assert.throws(() => resolveTypeMask('bogus'), (e) => e.code === 'BAD_PRESET');
 });
 
-test('resolveFrame uses the dialect enum, then the standard fallback', () => {
-  const enums = loadDialect('ardupilotmega').enums;
-  assert.strictEqual(resolveFrame('MAV_FRAME_LOCAL_NED', enums), 1);
-  assert.strictEqual(resolveFrame('MAV_FRAME_LOCAL_NED', null), 1);
-  assert.strictEqual(resolveFrame('MAV_FRAME_GLOBAL_RELATIVE_ALT_INT', null), 6);
-  assert.throws(() => resolveFrame('MAV_FRAME_NOPE', null), (e) => e.code === 'BAD_FRAME');
+test('resolveFrame accepts only exact generated member keys from the active dialect', () => {
+  const context = { dialect: DIALECT.name };
+  assert.strictEqual(resolveFrame('LOCAL_NED', DIALECT.enums, context), common.MavFrame.LOCAL_NED);
+  for (const value of ['MAV_FRAME_LOCAL_NED', String(common.MavFrame.LOCAL_NED)]) {
+    assert.throws(
+      () => resolveFrame(value, DIALECT.enums, context),
+      (e) => e.code === 'ENUM_VALUE_UNAVAILABLE' && e.context.consumer === 'move'
+    );
+  }
+  const enums = { ...DIALECT.enums, enumsByName: { ...DIALECT.enums.enumsByName } };
+  delete enums.enumsByName.MavFrame;
+  assert.throws(
+    () => resolveFrame('LOCAL_NED', enums, { dialect: 'incomplete' }),
+    (e) => e.code === 'ENUM_VALUE_UNAVAILABLE' && e.context.dialect === 'incomplete'
+  );
 });
 
 test('local setpoint maps up-positive altitude/climb to negative z/vz', () => {
   const { name, fields } = buildSetpoint({
     coordinate: 'local',
     preset: 'position',
-    frame: 'MAV_FRAME_LOCAL_NED',
+    frame: 'LOCAL_NED',
     north: 5,
     east: -2,
     altitude: 10,
@@ -111,15 +141,15 @@ test('local setpoint maps up-positive altitude/climb to negative z/vz', () => {
   assert.strictEqual(fields.x, 5);
   assert.strictEqual(fields.y, -2);
   assert.strictEqual(fields.z, -10);
-  assert.strictEqual(fields.type_mask, 3576);
-  assert.strictEqual(fields.coordinate_frame, 1);
+  assert.strictEqual(fields.type_mask, ALL_IGNORE & ~DIM_BITS.position);
+  assert.strictEqual(fields.coordinate_frame, common.MavFrame.LOCAL_NED);
 });
 
 test('global setpoint converts degrees to 1e7 ints and keeps altitude up-positive', () => {
   const { name, fields } = buildSetpoint({
     coordinate: 'global',
     preset: 'position_velocity',
-    frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT',
+    frame: 'GLOBAL_RELATIVE_ALT_INT',
     lat: 47.397742,
     lon: 8.545594,
     altitude: 5,
@@ -133,14 +163,14 @@ test('global setpoint converts degrees to 1e7 ints and keeps altitude up-positiv
   assert.strictEqual(fields.alt, 5);
   assert.strictEqual(fields.vx, 1);
   assert.strictEqual(fields.vz, -2);
-  assert.strictEqual(fields.coordinate_frame, 6);
+  assert.strictEqual(fields.coordinate_frame, common.MavFrame.GLOBAL_RELATIVE_ALT_INT);
 });
 
 test('yaw and yaw-rate are converted from degrees to radians', () => {
   const { fields } = buildSetpoint({
     coordinate: 'local',
     preset: 'position_yaw',
-    frame: 'MAV_FRAME_LOCAL_NED',
+    frame: 'LOCAL_NED',
     north: 0,
     east: 0,
     altitude: 0,
@@ -151,36 +181,33 @@ test('yaw and yaw-rate are converted from degrees to radians', () => {
   assert.ok(Math.abs(fields.yaw_rate - Math.PI) < 1e-9);
 });
 
-test('MAV_FRAME_BODY_NED (PX4 body frame) resolves via the fallback map and the dialect enum index (#128)', () => {
-  /** No enums: the FRAME_FALLBACK map. BODY_NED (8) — not BODY_FRD — is the
-   * body frame SET_POSITION_TARGET_LOCAL_NED accepts. */
-  assert.strictEqual(resolveFrame('MAV_FRAME_BODY_NED', null), 8);
+test('BODY_NED (PX4 body frame) resolves from the active dialect (#128)', () => {
   /** With a real dialect index: the enum-lookup branch. */
-  const enums = loadDialect('ardupilotmega').enums;
-  assert.strictEqual(resolveFrame('MAV_FRAME_BODY_NED', enums), 8);
+  const enums = DIALECT.enums;
+  assert.strictEqual(resolveFrame('BODY_NED', enums, { dialect: DIALECT.name }), common.MavFrame.BODY_NED);
   const { fields } = buildSetpoint({
     coordinate: 'local',
     preset: 'velocity',
-    frame: 'MAV_FRAME_BODY_NED',
+    frame: 'BODY_NED',
     enums,
     velNorth: 2,
     velEast: 0,
     climb: 1
   });
-  assert.strictEqual(fields.coordinate_frame, 8);
+  assert.strictEqual(fields.coordinate_frame, common.MavFrame.BODY_NED);
   assert.strictEqual(fields.vz, -1, 'body NED z stays down-positive, so climb is negated');
 });
 
 test('setpointWarnings normalizes a mixed-case firmware value (#128)', () => {
   const forceMask = resolveTypeMask('force');
-  const warnings = setpointWarnings({ firmware: 'ArduPilot', typeMask: forceMask, frameName: 'MAV_FRAME_LOCAL_NED' });
+  const warnings = setpointWarnings({ firmware: 'ArduPilot', typeMask: forceMask, frameName: 'LOCAL_NED' });
   assert.strictEqual(warnings.length, 1, 'mixed-case firmware still warns');
 });
 
 test('setpointWarnings flags force setpoints on both known firmwares (#128)', () => {
   const forceMask = resolveTypeMask('force');
   for (const firmware of ['ardupilot', 'px4']) {
-    const warnings = setpointWarnings({ firmware, typeMask: forceMask, frameName: 'MAV_FRAME_LOCAL_NED' });
+    const warnings = setpointWarnings({ firmware, typeMask: forceMask, frameName: 'LOCAL_NED' });
     assert.strictEqual(warnings.length, 1, `${firmware} warns on FORCE`);
     assert.match(warnings[0], /FORCE/);
   }
@@ -188,31 +215,31 @@ test('setpointWarnings flags force setpoints on both known firmwares (#128)', ()
 
 test('setpointWarnings flags acceleration on ArduPilot only (#128)', () => {
   const accelMask = resolveTypeMask('acceleration');
-  const ap = setpointWarnings({ firmware: 'ardupilot', typeMask: accelMask, frameName: 'MAV_FRAME_LOCAL_NED' });
+  const ap = setpointWarnings({ firmware: 'ardupilot', typeMask: accelMask, frameName: 'LOCAL_NED' });
   assert.strictEqual(ap.length, 1);
   assert.match(ap[0], /acceleration/i);
-  const px4 = setpointWarnings({ firmware: 'px4', typeMask: accelMask, frameName: 'MAV_FRAME_LOCAL_NED' });
+  const px4 = setpointWarnings({ firmware: 'px4', typeMask: accelMask, frameName: 'LOCAL_NED' });
   assert.deepStrictEqual(px4, [], 'PX4 OFFBOARD supports acceleration setpoints');
 });
 
 test('setpointWarnings flags PX4-unsupported frames (#128)', () => {
   const posMask = resolveTypeMask('position');
-  const terrain = setpointWarnings({ firmware: 'px4', typeMask: posMask, frameName: 'MAV_FRAME_GLOBAL_TERRAIN_ALT_INT' });
+  const terrain = setpointWarnings({ firmware: 'px4', typeMask: posMask, frameName: 'GLOBAL_TERRAIN_ALT_INT' });
   assert.strictEqual(terrain.length, 1);
   assert.match(terrain[0], /terrain/i);
-  const offset = setpointWarnings({ firmware: 'px4', typeMask: posMask, frameName: 'MAV_FRAME_BODY_OFFSET_NED' });
+  const offset = setpointWarnings({ firmware: 'px4', typeMask: posMask, frameName: 'BODY_OFFSET_NED' });
   assert.strictEqual(offset.length, 1);
   assert.match(offset[0], /OFFSET/);
-  const bodyNed = setpointWarnings({ firmware: 'px4', typeMask: posMask, frameName: 'MAV_FRAME_BODY_NED' });
+  const bodyNed = setpointWarnings({ firmware: 'px4', typeMask: posMask, frameName: 'BODY_NED' });
   assert.deepStrictEqual(bodyNed, [], 'body NED is fine on PX4');
-  const apOffset = setpointWarnings({ firmware: 'ardupilot', typeMask: posMask, frameName: 'MAV_FRAME_BODY_OFFSET_NED' });
+  const apOffset = setpointWarnings({ firmware: 'ardupilot', typeMask: posMask, frameName: 'BODY_OFFSET_NED' });
   assert.deepStrictEqual(apOffset, [], 'body offset is ArduPilot-native');
 });
 
 test('setpointWarnings stays silent for unknown firmwares (#128)', () => {
   const forceMask = resolveTypeMask('force');
-  assert.deepStrictEqual(setpointWarnings({ firmware: 'generic', typeMask: forceMask, frameName: 'MAV_FRAME_LOCAL_NED' }), []);
-  assert.deepStrictEqual(setpointWarnings({ typeMask: forceMask, frameName: 'MAV_FRAME_LOCAL_NED' }), []);
+  assert.deepStrictEqual(setpointWarnings({ firmware: 'generic', typeMask: forceMask, frameName: 'LOCAL_NED' }), []);
+  assert.deepStrictEqual(setpointWarnings({ typeMask: forceMask, frameName: 'LOCAL_NED' }), []);
 });
 
 test('a position-driving global setpoint requires finite, in-range lat/lon', () => {
@@ -221,7 +248,7 @@ test('a position-driving global setpoint requires finite, in-range lat/lon', () 
    * live OFFBOARD/GUIDED vehicle heading for 0N 0E. Must fail loudly instead.
    */
   assert.throws(
-    () => buildSetpoint({ coordinate: 'global', preset: 'position', frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT', altitude: 20 }),
+    () => buildSetpoint({ coordinate: 'global', preset: 'position', frame: 'GLOBAL_RELATIVE_ALT_INT', altitude: 20 }),
     (e) => e.code === 'BAD_SETPOINT_POSITION'
   );
   assert.throws(
@@ -229,7 +256,7 @@ test('a position-driving global setpoint requires finite, in-range lat/lon', () 
       buildSetpoint({
         coordinate: 'global',
         preset: 'position',
-        frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT',
+        frame: 'GLOBAL_RELATIVE_ALT_INT',
         lat: 91,
         lon: 0,
         altitude: 20
@@ -240,7 +267,7 @@ test('a position-driving global setpoint requires finite, in-range lat/lon', () 
   const vel = buildSetpoint({
     coordinate: 'global',
     preset: 'velocity',
-    frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT',
+    frame: 'GLOBAL_RELATIVE_ALT_INT',
     velNorth: 1,
     velEast: 0,
     climb: 0
@@ -250,7 +277,7 @@ test('a position-driving global setpoint requires finite, in-range lat/lon', () 
   const ok = buildSetpoint({
     coordinate: 'global',
     preset: 'position',
-    frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT',
+    frame: 'GLOBAL_RELATIVE_ALT_INT',
     lat: 47.397742,
     lon: 8.545594,
     altitude: 20
@@ -274,8 +301,8 @@ test('a blank active field fails instead of shipping a value-substituted zero (#
   ];
   for (const c of cases) {
     assert.throws(
-      () => buildSetpoint({ coordinate: 'local', preset: c.preset, frame: 'MAV_FRAME_LOCAL_NED', ...c.opts }),
-      (e) => e.code === 'BAD_SETPOINT_FIELD' && e.context.fields.includes(c.missing) && /MAV_FRAME_LOCAL_NED/.test(e.message),
+      () => buildSetpoint({ coordinate: 'local', preset: c.preset, frame: 'LOCAL_NED', ...c.opts }),
+      (e) => e.code === 'BAD_SETPOINT_FIELD' && e.context.fields.includes(c.missing) && /LOCAL_NED/.test(e.message),
       `${c.preset} with blank ${c.missing} must fail`
     );
   }
@@ -284,7 +311,7 @@ test('a blank active field fails instead of shipping a value-substituted zero (#
 test('NaN / Infinity active fields fail; intentional zeros build (#235)', () => {
   for (const bad of [NaN, Infinity, -Infinity, 'x', '']) {
     assert.throws(
-      () => buildSetpoint({ coordinate: 'local', preset: 'velocity', frame: 'MAV_FRAME_LOCAL_NED', velNorth: bad, velEast: 0, climb: 0 }),
+      () => buildSetpoint({ coordinate: 'local', preset: 'velocity', frame: 'LOCAL_NED', velNorth: bad, velEast: 0, climb: 0 }),
       (e) => e.code === 'BAD_SETPOINT_FIELD' && e.context.fields.includes('velNorth')
     );
   }
@@ -292,7 +319,7 @@ test('NaN / Infinity active fields fail; intentional zeros build (#235)', () => 
   const { fields } = buildSetpoint({
     coordinate: 'local',
     preset: 'velocity',
-    frame: 'MAV_FRAME_LOCAL_NED',
+    frame: 'LOCAL_NED',
     velNorth: 0,
     velEast: 0,
     climb: 0
@@ -304,11 +331,11 @@ test('NaN / Infinity active fields fail; intentional zeros build (#235)', () => 
 
 test('ignored axes need no value; global altitude is validated only when active (#235)', () => {
   /** A yaw-only setpoint ignores position/velocity/accel — blanks there are masked, not sent. */
-  const yawOnly = buildSetpoint({ coordinate: 'local', preset: 'yaw', frame: 'MAV_FRAME_LOCAL_NED', yaw: 45 });
+  const yawOnly = buildSetpoint({ coordinate: 'local', preset: 'yaw', frame: 'LOCAL_NED', yaw: 45 });
   assert.strictEqual(yawOnly.fields.x, 0, 'ignored position axis is masked, sent as 0');
   /** A global position setpoint whose altitude axis is active but blank must fail. */
   assert.throws(
-    () => buildSetpoint({ coordinate: 'global', preset: 'position', frame: 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT', lat: 47.39, lon: 8.54 }),
+    () => buildSetpoint({ coordinate: 'global', preset: 'position', frame: 'GLOBAL_RELATIVE_ALT_INT', lat: 47.39, lon: 8.54 }),
     (e) => e.code === 'BAD_SETPOINT_FIELD' && e.context.fields.includes('altitude')
   );
 });

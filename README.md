@@ -359,6 +359,11 @@ Build only / Send / Send & await result (timeout/retry) — see
 confirmation gate on reboot. Camera and gimbal control live in
 `mavlink-ai-payload`.
 
+Feature-specific names are exact generated member keys. For example, an
+ArduPlane mode is `FLY_BY_WIRE_A`, not a local abbreviation, and a Move frame
+is `LOCAL_NED`. PX4's documented mode aliases remain intentional firmware UX;
+they are not MAVLink enum aliases.
+
 ### `mavlink-ai-mission`
 
 Runs the mission protocol state machine (download / upload / clear) so flows do
@@ -622,6 +627,24 @@ Decoded messages and outbound messages use stable shapes (see `DESIGN.md`
 Enum names such as `MAV_CMD_COMPONENT_ARM_DISARM` or `MAV_TYPE_GCS` are resolved
 to numbers automatically when building messages.
 
+### Protocol value contract
+
+The installed `node-mavlink` mappings are authoritative for MAVLink numeric
+assignments. Workflow and feature nodes accept only exact generated member keys
+for their friendly fields; for example, Plane mode `FLY_BY_WIRE_A` and Move
+frame `LOCAL_NED`. They do not guess prefixes, accept numeric strings, or carry
+compatibility aliases. If a required generated member is absent from the active
+dialect, the flow fails with `ENUM_VALUE_UNAVAILABLE` instead of substituting a
+number.
+
+The generic **Build** and explicit advanced/raw paths have a separate contract:
+they accept fully qualified MAVLink source names such as
+`MAV_CMD_COMPONENT_ARM_DISARM`, other scoped `MAV_*` names, and numeric
+identifiers. Numeric input there is an advanced escape hatch for custom or
+dialect-external values, not the normal feature-node API. Codec, transport,
+routing, queueing, subscription, and workflow state-machine ownership are
+unchanged by this value-boundary cleanup.
+
 64-bit integer fields (`int64_t` / `uint64_t`, e.g. `time_usec`) are decoded as
 **decimal strings** so the payload is JSON-serializable and keeps full precision
 (a `Number` would lose it above 2^53). When building an outbound message these
@@ -672,9 +695,10 @@ lib/
   editor-api.js  shared /mavlink-ai/* admin endpoints
 ```
 
-Node files never call `node-mavlink` directly — they go through the `lib`
-layer. There is no global parser/dialect/connection state; everything is scoped
-to a config-node instance.
+Generated protocol data is resolved through `lib/protocol` and `lib/dialects`;
+the Connection also uses `node-mavlink`'s public packet/signing primitives
+directly. There is no global parser/dialect/connection state; everything is
+scoped to a config-node instance.
 
 ## Dependencies
 

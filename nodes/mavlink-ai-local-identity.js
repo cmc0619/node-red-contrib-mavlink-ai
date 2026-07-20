@@ -1,7 +1,11 @@
 'use strict';
 
 const { MavlinkError } = require('../lib/util/errors');
+const { coreEnumValues } = require('../lib/protocol/protocol-values');
 const { toBool } = require('../lib/util/validation');
+const coreValue = coreEnumValues({ consumer: 'local-identity' });
+const MISSIONPLANNER_COMPONENT = coreValue('MavComponent', 'MISSIONPLANNER');
+const ONBOARD_COMPUTER_COMPONENT = coreValue('MavComponent', 'ONBOARD_COMPUTER');
 
 /**
  * mavlink-ai-local-identity (issue #228).
@@ -27,14 +31,14 @@ const { toBool } = require('../lib/util/validation');
 const ROLE_PRESETS = {
   gcs: {
     sysid: 255,
-    compid: 190, // MAV_COMP_ID_MISSIONPLANNER, the conventional GCS component
+    compid: MISSIONPLANNER_COMPONENT,
     heartbeatType: 'MAV_TYPE_GCS'
   },
   companion: {
     // A companion normally shares its vehicle's sysid (commonly 1) and keeps
     // its own component id: MAV_COMP_ID_ONBOARD_COMPUTER.
     sysid: 1,
-    compid: 191,
+    compid: ONBOARD_COMPUTER_COMPONENT,
     heartbeatType: 'MAV_TYPE_ONBOARD_CONTROLLER',
     // A companion is well-placed to advertise its own health via HEARTBEAT
     // system_status (#225); default that behavior on for this role.
@@ -42,7 +46,7 @@ const ROLE_PRESETS = {
   },
   custom: {
     sysid: 255,
-    compid: 190,
+    compid: MISSIONPLANNER_COMPONENT,
     heartbeatType: 'MAV_TYPE_GENERIC'
   }
 };

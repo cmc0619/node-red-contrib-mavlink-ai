@@ -2,13 +2,21 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { minimal, common, ardupilotmega } = require('node-mavlink');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { CommandSend } = require('../../lib/command/command-workflow');
 const { resolveFlightMode, knownModes, modeNameForCustomMode } = require('../../lib/command/flight-modes');
 const { LockManager } = require('../../lib/runtime/lock-manager');
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
-const ENUMS = loadDialect('ardupilotmega').enums;
+const ARDU_BUNDLE = loadDialect('ardupilotmega');
+const ENUMS = ARDU_BUNDLE.enums;
+const modeContext = (firmware, vehicleType) => ({
+  firmware,
+  vehicleType,
+  enums: ARDU_BUNDLE.enums,
+  dialect: ARDU_BUNDLE.name
+});
 
 /** Minimal connection stand-in (same shape as the mission/param test fakes). */
 class FakeConnection {
@@ -56,6 +64,7 @@ function opts(conn, extra = {}) {
       targetSystem: 1,
       targetComponent: 1,
       enums: ENUMS,
+      dialect: ARDU_BUNDLE.name,
       command: 'MAV_CMD_COMPONENT_ARM_DISARM',
       fields: { param1: 1 },
       timeoutMs: 30,
@@ -74,10 +83,10 @@ test('CommandSend resolves on MAV_RESULT_ACCEPTED with readable names (#16)', as
   assert.strictEqual(sent.name, 'COMMAND_LONG');
   assert.strictEqual(sent.fields.command, 400); // resolved MAV_CMD number
   assert.strictEqual(sent.fields.confirmation, 0);
-  conn.deliverAck({ command: 400, result: 0 });
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED });
   const res = await p;
   assert.strictEqual(res.topic, 'command/ack');
-  assert.strictEqual(res.payload.result, 0);
+  assert.strictEqual(res.payload.result, common.MavResult.ACCEPTED);
   assert.strictEqual(res.payload.result_name, 'MAV_RESULT_ACCEPTED');
   assert.strictEqual(res.payload.command_name, 'MAV_CMD_COMPONENT_ARM_DISARM');
 });
@@ -87,10 +96,10 @@ test('CommandSend ignores acks for other commands and other systems (#16)', asyn
   const wf = new CommandSend(opts(conn, { timeoutMs: 1000, maxRetries: 0 }));
   const p = wf.run();
   await delay(0);
-  conn.deliverAck({ command: 22, result: 0 }); // different command
-  conn.deliverAck({ command: 400, result: 0 }, 7); // different sysid
+  conn.deliverAck({ command: common.MavCmd.NAV_TAKEOFF, result: common.MavResult.ACCEPTED }); // different command
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED }, 7); // different sysid
   assert.strictEqual(wf.state, 'waiting_ack');
-  conn.deliverAck({ command: 400, result: 0 });
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED });
   await p;
 });
 
@@ -101,40 +110,40 @@ test('CommandSend ignores an ack addressed to another GCS on a shared link (#99)
   // naming the GCS it answers.
   const wf = new CommandSend(opts(conn, {
     sourceSystem: 255,
-    sourceComponent: 190,
+    sourceComponent: minimal.MavComponent.MISSIONPLANNER,
     timeoutMs: 1000,
     maxRetries: 0
   }));
   const p = wf.run();
   await delay(0);
   // Right command/system/component but addressed to the other GCS: must not settle.
-  conn.deliverAck({ command: 400, result: 0, target_system: 254, target_component: 190 });
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED, target_system: 254, target_component: minimal.MavComponent.MISSIONPLANNER });
   assert.strictEqual(wf.state, 'waiting_ack');
   // A different target_component (another component acting as GCS) is also ignored.
-  conn.deliverAck({ command: 400, result: 0, target_system: 255, target_component: 191 });
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED, target_system: 255, target_component: minimal.MavComponent.ONBOARD_COMPUTER });
   assert.strictEqual(wf.state, 'waiting_ack');
   // Addressed to our identity: settles.
-  conn.deliverAck({ command: 400, result: 0, target_system: 255, target_component: 190 });
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED, target_system: 255, target_component: minimal.MavComponent.MISSIONPLANNER });
   const res = await p;
-  assert.strictEqual(res.payload.result, 0);
+  assert.strictEqual(res.payload.result, common.MavResult.ACCEPTED);
 });
 
 test('CommandSend accepts broadcast or absent ack target fields for older variants (#99)', async () => {
   const conn = new FakeConnection();
-  const wf = new CommandSend(opts(conn, { sourceSystem: 255, sourceComponent: 190 }));
+  const wf = new CommandSend(opts(conn, { sourceSystem: 255, sourceComponent: minimal.MavComponent.MISSIONPLANNER }));
   const p = wf.run();
   await delay(0);
   // Broadcast target (0) and absent target fields both remain permissive.
-  conn.deliverAck({ command: 400, result: 0, target_system: 0, target_component: 0 });
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED, target_system: 0, target_component: 0 });
   const res = await p;
-  assert.strictEqual(res.payload.result, 0);
+  assert.strictEqual(res.payload.result, common.MavResult.ACCEPTED);
 
   const conn2 = new FakeConnection();
-  const wf2 = new CommandSend(opts(conn2, { sourceSystem: 255, sourceComponent: 190 }));
+  const wf2 = new CommandSend(opts(conn2, { sourceSystem: 255, sourceComponent: minimal.MavComponent.MISSIONPLANNER }));
   const p2 = wf2.run();
   await delay(0);
-  conn2.deliverAck({ command: 400, result: 0 }); // no target fields (older MAVLink)
-  assert.strictEqual((await p2).payload.result, 0);
+  conn2.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED }); // no target fields (older MAVLink)
+  assert.strictEqual((await p2).payload.result, common.MavResult.ACCEPTED);
 });
 
 test('CommandSend retransmits with incrementing confirmation, then times out (#16)', async () => {
@@ -155,16 +164,16 @@ test('CommandSend rejects with the MAV_RESULT name on denial (#16)', async () =>
   const wf = new CommandSend(opts(conn, { timeoutMs: 1000, maxRetries: 0 }));
   const p = wf.run();
   await delay(0);
-  conn.deliverAck({ command: 400, result: 2 }); // MAV_RESULT_DENIED
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.DENIED }); // MAV_RESULT_DENIED
   await assert.rejects(p, (e) => {
     assert.strictEqual(e.code, 'COMMAND_REJECTED');
     assert.match(e.message, /MAV_RESULT_DENIED/);
-    assert.strictEqual(e.context.result, 2);
+    assert.strictEqual(e.context.result, common.MavResult.DENIED);
     return true;
   });
 });
 
-test('CommandSend keeps waiting through MAV_RESULT_IN_PROGRESS (#16)', async () => {
+test('CommandSend keeps waiting through generated MavResult.IN_PROGRESS (#16)', async () => {
   const conn = new FakeConnection();
   const progress = [];
   const wf = new CommandSend(
@@ -172,11 +181,11 @@ test('CommandSend keeps waiting through MAV_RESULT_IN_PROGRESS (#16)', async () 
   );
   const p = wf.run();
   await delay(0);
-  conn.deliverAck({ command: 400, result: 5, progress: 40 });
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.IN_PROGRESS, progress: 40 });
   assert.strictEqual(wf.state, 'in_progress');
-  conn.deliverAck({ command: 400, result: 0 });
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED });
   const res = await p;
-  assert.strictEqual(res.payload.result, 0);
+  assert.strictEqual(res.payload.result, common.MavResult.ACCEPTED);
   assert.ok(progress.some((x) => x.state === 'in_progress' && x.progress === 40));
 });
 
@@ -195,13 +204,13 @@ test('CommandSend does not retransmit after IN_PROGRESS; a later ACK still resol
     const p = wf.run();
     await delay(0);
     assert.strictEqual(conn.sent.length, 1); /** initial COMMAND_LONG */
-    conn.deliverAck({ command: 400, result: 5, progress: 20 });
+    conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.IN_PROGRESS, progress: 20 });
     assert.strictEqual(wf.state, 'in_progress');
     await delay(25); /** let a full timeout window elapse with no further ack */
     assert.strictEqual(conn.sent.length, 1); /** still no retransmit while in progress */
-    conn.deliverAck({ command: 400, result: 0 });
+    conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED });
     const res = await p;
-    assert.strictEqual(res.payload.result, 0);
+    assert.strictEqual(res.payload.result, common.MavResult.ACCEPTED);
   } finally {
     clearInterval(keepAlive);
   }
@@ -219,7 +228,7 @@ test('CommandSend times out (bounded) after IN_PROGRESS silence without retransm
   try {
     const p = wf.run();
     await delay(0);
-    conn.deliverAck({ command: 400, result: 5, progress: 10 });
+    conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.IN_PROGRESS, progress: 10 });
     await assert.rejects(p, (e) => e.code === 'COMMAND_TIMEOUT');
   } finally {
     clearInterval(keepAlive);
@@ -233,7 +242,7 @@ test('CommandSend COMMAND_INT omits confirmation and resends unchanged (#17)', a
     opts(conn, {
       command: 'MAV_CMD_DO_REPOSITION',
       useInt: true,
-      fields: { frame: 6, x: 473977420, y: 85455940, z: 30 },
+      fields: { frame: common.MavFrame.GLOBAL_RELATIVE_ALT_INT, x: 473977420, y: 85455940, z: 30 },
       timeoutMs: 15,
       maxRetries: 1
     })
@@ -260,20 +269,66 @@ test('CommandSend fails fast on an unresolvable command name', () => {
 });
 
 test('resolveFlightMode maps ArduPilot modes per vehicle type (#20)', () => {
-  assert.deepStrictEqual(resolveFlightMode('ardupilot', 'copter', 'GUIDED'), { base_mode: 1, custom_mode: 4 });
-  assert.deepStrictEqual(resolveFlightMode('ardupilot', 'plane', 'GUIDED'), { base_mode: 1, custom_mode: 15 });
-  assert.deepStrictEqual(resolveFlightMode('ardupilot', 'rover', 'AUTO'), { base_mode: 1, custom_mode: 10 });
-  assert.deepStrictEqual(resolveFlightMode('ardupilot', 'boat', 'AUTO'), { base_mode: 1, custom_mode: 10 });
-  // Case/spacing tolerant.
-  assert.deepStrictEqual(resolveFlightMode('ardupilot', 'copter', 'alt hold'), { base_mode: 1, custom_mode: 2 });
+  const base_mode = minimal.MavModeFlag.CUSTOM_MODE_ENABLED;
+  assert.deepStrictEqual(resolveFlightMode(modeContext('ardupilot', 'copter'), 'GUIDED'), {
+    base_mode,
+    custom_mode: ardupilotmega.CopterMode.GUIDED
+  });
+  assert.deepStrictEqual(resolveFlightMode(modeContext('ardupilot', 'plane'), 'GUIDED'), {
+    base_mode,
+    custom_mode: ardupilotmega.PlaneMode.GUIDED
+  });
+  assert.deepStrictEqual(resolveFlightMode(modeContext('ardupilot', 'rover'), 'AUTO'), {
+    base_mode,
+    custom_mode: ardupilotmega.RoverMode.AUTO
+  });
+  assert.deepStrictEqual(resolveFlightMode(modeContext('ardupilot', 'boat'), 'AUTO'), {
+    base_mode,
+    custom_mode: ardupilotmega.RoverMode.AUTO
+  });
 });
 
-/** Recent ArduPilot modes added in #155: ArduCopter TURTLE (28), ArduPlane AUTOLAND (26). */
-test('resolveFlightMode maps recently-added ArduPilot modes and reverse-looks-up (#155)', () => {
-  assert.deepStrictEqual(resolveFlightMode('ardupilot', 'copter', 'TURTLE'), { base_mode: 1, custom_mode: 28 });
-  assert.deepStrictEqual(resolveFlightMode('ardupilot', 'plane', 'AUTOLAND'), { base_mode: 1, custom_mode: 26 });
-  assert.strictEqual(modeNameForCustomMode('ardupilot', 'copter', 28), 'TURTLE');
-  assert.strictEqual(modeNameForCustomMode('ardupilot', 'plane', 26), 'AUTOLAND');
+test('CommandSend resolves MavResult from the core bundle even with no loaded dialect (#309 review: apply core)', () => {
+  // MavResult is a common core enum, so a command send's ACK matching still
+  // constructs for a profile whose dialect failed to load (enums: null). A
+  // numeric command id is the dialect-external escape hatch that keeps working
+  // without a dialect (a command *name* still needs the dialect to resolve).
+  const cmd = new CommandSend(opts(new FakeConnection(), { enums: null, dialect: 'unknown', command: 400 }));
+  assert.strictEqual(cmd.acceptedResult, 0); // MAV_RESULT_ACCEPTED
+  assert.strictEqual(cmd.inProgressResult, 5); // MAV_RESULT_IN_PROGRESS
+});
+
+test('ArduPilot modes expose generated additions and reverse-look-up generated values', () => {
+  const plane = modeContext('ardupilot', 'plane');
+  const rover = modeContext('ardupilot', 'rover');
+  const sub = modeContext('ardupilot', 'sub');
+  assert.ok(knownModes(plane).includes('INITIALIZING'));
+  assert.ok(knownModes(rover).includes('INITIALIZING'));
+  assert.ok(knownModes(sub).includes('SURFTRAK'));
+  assert.deepStrictEqual(resolveFlightMode(plane, 'FLY_BY_WIRE_A'), {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED,
+    custom_mode: ardupilotmega.PlaneMode.FLY_BY_WIRE_A
+  });
+  assert.deepStrictEqual(resolveFlightMode(sub, 'MOTORDETECT'), {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED,
+    custom_mode: ardupilotmega.SubMode.MOTORDETECT
+  });
+  assert.strictEqual(modeNameForCustomMode(sub, ardupilotmega.SubMode.SURFTRAK), 'SURFTRAK');
+  assert.strictEqual(modeNameForCustomMode(plane, ardupilotmega.PlaneMode.INITIALIZING), 'INITIALIZING');
+});
+
+test('ArduPilot mode resolution rejects aliases, normalization, and wrong case', () => {
+  const cases = [
+    [modeContext('ardupilot', 'plane'), 'FBWA'],
+    [modeContext('ardupilot', 'plane'), 'FBWB'],
+    [modeContext('ardupilot', 'sub'), 'MOTOR_DETECT'],
+    [modeContext('ardupilot', 'antenna-tracker'), 'INITIALISING'],
+    [modeContext('ardupilot', 'copter'), 'guided'],
+    [modeContext('ardupilot', 'copter'), 'alt hold']
+  ];
+  for (const [context, name] of cases) {
+    assert.throws(() => resolveFlightMode(context, name), (err) => err.code === 'UNKNOWN_MODE');
+  }
 });
 
 /**
@@ -283,24 +338,38 @@ test('resolveFlightMode maps recently-added ArduPilot modes and reverse-looks-up
  * RETURN -> AUTO(4).RTL(5); OFFBOARD(6) is what a packed param2 would truncate to 0.
  */
 test('resolveFlightMode maps PX4 main/sub modes as separate DO_SET_MODE params (#20, #136)', () => {
-  assert.deepStrictEqual(resolveFlightMode('px4', 'copter', 'POSITION'), {
-    base_mode: 1,
+  const px4 = modeContext('px4', 'copter');
+  assert.deepStrictEqual(resolveFlightMode(px4, 'POSITION'), {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED,
     custom_mode: 3,
     custom_submode: 0
   });
-  assert.deepStrictEqual(resolveFlightMode('px4', 'copter', 'MISSION'), {
-    base_mode: 1,
+  assert.deepStrictEqual(resolveFlightMode(px4, 'MISSION'), {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED,
     custom_mode: 4,
     custom_submode: 4
   });
-  assert.deepStrictEqual(resolveFlightMode('px4', 'copter', 'RETURN'), {
-    base_mode: 1,
+  assert.deepStrictEqual(resolveFlightMode(px4, 'RETURN'), {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED,
     custom_mode: 4,
     custom_submode: 5
   });
-  assert.deepStrictEqual(resolveFlightMode('px4', 'copter', 'OFFBOARD'), {
-    base_mode: 1,
+  assert.deepStrictEqual(resolveFlightMode(px4, 'OFFBOARD'), {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED,
     custom_mode: 6,
+    custom_submode: 0
+  });
+});
+
+test('resolveFlightMode resolves PX4 base_mode from core with no loaded dialect (#309 review: apply core)', () => {
+  // MavModeFlag.CUSTOM_MODE_ENABLED is a common core bit, so a PX4 profile
+  // whose custom dialect failed to load (enums: null) still resolves every
+  // set_mode to base_mode 1 instead of throwing ENUM_VALUE_UNAVAILABLE. PX4
+  // custom_mode/custom_submode come from the hardcoded PX4 tables, never a dialect.
+  const px4NoDialect = { firmware: 'px4', vehicleType: 'copter', enums: null, dialect: 'unknown' };
+  assert.deepStrictEqual(resolveFlightMode(px4NoDialect, 'POSITION'), {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED,
+    custom_mode: 3,
     custom_submode: 0
   });
 });
@@ -315,11 +384,11 @@ test('splitPx4CustomMode splits packed values and passes bare main modes through
 });
 
 test('resolveFlightMode fails loudly for unknown modes/firmware (#20)', () => {
-  assert.throws(() => resolveFlightMode('ardupilot', 'copter', 'WARP_SPEED'), (e) => e.code === 'UNKNOWN_MODE');
-  assert.throws(() => resolveFlightMode('generic', 'copter', 'GUIDED'), (e) => e.code === 'UNKNOWN_MODE');
-  assert.ok(knownModes('ardupilot', 'copter').includes('GUIDED'));
-  assert.ok(knownModes('px4').includes('OFFBOARD'));
-  assert.deepStrictEqual(knownModes('generic', 'copter'), []);
+  assert.throws(() => resolveFlightMode(modeContext('ardupilot', 'copter'), 'WARP_SPEED'), (e) => e.code === 'UNKNOWN_MODE');
+  assert.throws(() => resolveFlightMode(modeContext('generic', 'copter'), 'GUIDED'), (e) => e.code === 'UNKNOWN_MODE');
+  assert.ok(knownModes(modeContext('ardupilot', 'copter')).includes('GUIDED'));
+  assert.ok(knownModes(modeContext('px4')).includes('OFFBOARD'));
+  assert.deepStrictEqual(knownModes(modeContext('generic', 'copter')), []);
 });
 
 test('CommandSend ignores acks from a different component on the same system', async () => {
@@ -329,12 +398,12 @@ test('CommandSend ignores acks from a different component on the same system', a
   await delay(0);
   // A gimbal (compid 154) acking the same MAV_CMD must not settle us.
   for (const { cb } of conn._subs.values()) {
-    cb({ topic: 'mavlink/COMMAND_ACK', payload: { name: 'COMMAND_ACK', sysid: 1, compid: 154, fields: { command: 400, result: 2 } } });
+    cb({ topic: 'mavlink/COMMAND_ACK', payload: { name: 'COMMAND_ACK', sysid: 1, compid: minimal.MavComponent.GIMBAL, fields: { command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.DENIED } } });
   }
   assert.strictEqual(wf.state, 'waiting_ack');
   // The addressed component's ack does.
   for (const { cb } of conn._subs.values()) {
-    cb({ topic: 'mavlink/COMMAND_ACK', payload: { name: 'COMMAND_ACK', sysid: 1, compid: 1, fields: { command: 400, result: 0 } } });
+    cb({ topic: 'mavlink/COMMAND_ACK', payload: { name: 'COMMAND_ACK', sysid: 1, compid: 1, fields: { command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED } } });
   }
   await p;
 });
@@ -345,7 +414,7 @@ test('CommandSend with broadcast component accepts any responder', async () => {
   const p = wf.run();
   await delay(0);
   for (const { cb } of conn._subs.values()) {
-    cb({ topic: 'mavlink/COMMAND_ACK', payload: { name: 'COMMAND_ACK', sysid: 1, compid: 154, fields: { command: 400, result: 0 } } });
+    cb({ topic: 'mavlink/COMMAND_ACK', payload: { name: 'COMMAND_ACK', sysid: 1, compid: minimal.MavComponent.GIMBAL, fields: { command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED } } });
   }
   await p;
 });
@@ -366,9 +435,9 @@ test('a second identical ACK-waiting command fails fast with COMMAND_BUSY (#82)'
   assert.strictEqual(conn.sent.length, 1, 'the busy command sent nothing');
 
   // Exactly one workflow consumes the ack.
-  conn.deliverAck({ command: 400, result: 0 });
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED });
   const res = await p1;
-  assert.strictEqual(res.payload.result, 0);
+  assert.strictEqual(res.payload.result, common.MavResult.ACCEPTED);
 });
 
 test('different commands or targets are not serialized (#82)', async () => {
@@ -381,22 +450,22 @@ test('different commands or targets are not serialized (#82)', async () => {
   const p3 = takeoff.run();
   await delay(0);
   assert.strictEqual(conn.sent.length, 3, 'all three distinct workflows sent');
-  conn.deliverAck({ command: 400, result: 0 }, 1);
-  conn.deliverAck({ command: 400, result: 0 }, 2);
-  conn.deliverAck({ command: 22, result: 0 }, 1);
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED }, 1);
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED }, 2);
+  conn.deliverAck({ command: common.MavCmd.NAV_TAKEOFF, result: common.MavResult.ACCEPTED }, 1);
   await Promise.all([p1, p2, p3]);
 });
 
 test('the command lock is released on every settle path (#82)', async () => {
   const conn = new FakeConnection();
-  const key = 'command:1:1:400';
+  const key = `command:1:1:${common.MavCmd.COMPONENT_ARM_DISARM}`;
 
   // Accepted.
   const ok = new CommandSend(opts(conn));
   const pOk = ok.run();
   await delay(0);
   assert.strictEqual(conn.locks.isHeld(key), true);
-  conn.deliverAck({ command: 400, result: 0 });
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED });
   await pOk;
   assert.strictEqual(conn.locks.isHeld(key), false);
 
@@ -404,7 +473,7 @@ test('the command lock is released on every settle path (#82)', async () => {
   const rejected = new CommandSend(opts(conn));
   const pRej = rejected.run();
   await delay(0);
-  conn.deliverAck({ command: 400, result: 2 });
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.DENIED });
   await assert.rejects(pRej, (err) => err.code === 'COMMAND_REJECTED');
   assert.strictEqual(conn.locks.isHeld(key), false);
 
@@ -445,7 +514,7 @@ test('CommandSend carries its profile reference on every send, including retrans
   const wf = new CommandSend(opts(conn, { vehicleProfile: 'p_routed', timeoutMs: 20, maxRetries: 1 }));
   const p = wf.run();
   await delay(35); // let one retransmit fire
-  conn.deliverAck({ command: 400, result: 0 });
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED });
   await p;
   assert.ok(conn.sent.length >= 2, 'expected the initial send plus a retransmit');
   for (const m of conn.sent) {
@@ -458,7 +527,7 @@ test('CommandSend without a profile sends no profile reference (connection defau
   const wf = new CommandSend(opts(conn));
   const p = wf.run();
   await delay(0);
-  conn.deliverAck({ command: 400, result: 0 });
+  conn.deliverAck({ command: common.MavCmd.COMPONENT_ARM_DISARM, result: common.MavResult.ACCEPTED });
   await p;
   assert.ok(!('profile' in conn.sent[0]));
 });

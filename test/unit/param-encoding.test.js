@@ -2,46 +2,72 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const {
-  resolveParamEncoding,
-  PARAM_ENCODE_BYTEWISE,
-  PARAM_ENCODE_C_CAST
-} = require('../../lib/param/param-encoding');
+const { standard } = require('node-mavlink');
+const { loadDialect } = require('../../lib/dialects/dialect-loader');
+const { resolveParamEncoding } = require('../../lib/param/param-encoding');
+
+const DIALECT = loadDialect('ardupilotmega');
+
+function opts(extra = {}) {
+  return { enums: DIALECT.enums, dialect: DIALECT.name, ...extra };
+}
 
 test('capability bits win over the firmware label (#233)', () => {
-  /** BYTEWISE-advertising vehicle behind a generic/ArduPilot-labeled profile. */
-  assert.deepStrictEqual(resolveParamEncoding({ capabilities: PARAM_ENCODE_BYTEWISE, firmware: 'generic' }), {
-    encoding: 'bytewise',
-    source: 'capabilities'
-  });
-  /** C_CAST-advertising vehicle behind a px4-labeled profile. */
-  assert.deepStrictEqual(resolveParamEncoding({ capabilities: PARAM_ENCODE_C_CAST, firmware: 'px4' }), {
-    encoding: 'ccast',
-    source: 'capabilities'
-  });
+  assert.deepStrictEqual(
+    resolveParamEncoding(opts({ capabilities: standard.MavProtocolCapability.PARAM_ENCODE_BYTEWISE, firmware: 'generic' })),
+    { encoding: 'bytewise', source: 'capabilities' }
+  );
+  assert.deepStrictEqual(
+    resolveParamEncoding(opts({ capabilities: standard.MavProtocolCapability.PARAM_ENCODE_C_CAST, firmware: 'px4' })),
+    { encoding: 'ccast', source: 'capabilities' }
+  );
 });
 
 test('a vehicle advertising both bits resolves to bytewise (lossless for NaN-pattern ints)', () => {
-  const both = PARAM_ENCODE_BYTEWISE | PARAM_ENCODE_C_CAST;
-  assert.strictEqual(resolveParamEncoding({ capabilities: both, firmware: 'generic' }).encoding, 'bytewise');
+  const both = BigInt(standard.MavProtocolCapability.PARAM_ENCODE_BYTEWISE) |
+    BigInt(standard.MavProtocolCapability.PARAM_ENCODE_C_CAST);
+  assert.strictEqual(resolveParamEncoding(opts({ capabilities: both, firmware: 'generic' })).encoding, 'bytewise');
 });
 
 test('no encoding bits (or no report) falls back to the firmware label', () => {
-  /** Capabilities reported but with neither encoding bit — e.g. only MISSION_INT. */
-  assert.deepStrictEqual(resolveParamEncoding({ capabilities: 0x8n, firmware: 'px4' }), {
+  assert.deepStrictEqual(resolveParamEncoding(opts({ capabilities: 0x8n, firmware: 'px4' })), {
     encoding: 'bytewise',
     source: 'firmware'
   });
-  assert.deepStrictEqual(resolveParamEncoding({ capabilities: undefined, firmware: 'generic' }), {
+  assert.deepStrictEqual(resolveParamEncoding(opts({ capabilities: undefined, firmware: 'generic' })), {
     encoding: 'ccast',
     source: 'firmware'
   });
-  assert.strictEqual(resolveParamEncoding({}).encoding, 'ccast');
+  assert.strictEqual(resolveParamEncoding(opts()).encoding, 'ccast');
 });
 
 test('capabilities accepted as Number or BigInt; garbage falls back to the label', () => {
-  assert.strictEqual(resolveParamEncoding({ capabilities: 16, firmware: 'generic' }).encoding, 'bytewise');
-  assert.strictEqual(resolveParamEncoding({ capabilities: 16n, firmware: 'generic' }).encoding, 'bytewise');
-  const garbage = resolveParamEncoding({ capabilities: 'not-a-number', firmware: 'px4' });
-  assert.deepStrictEqual(garbage, { encoding: 'bytewise', source: 'firmware' });
+  const bytewise = standard.MavProtocolCapability.PARAM_ENCODE_BYTEWISE;
+  assert.strictEqual(resolveParamEncoding(opts({ capabilities: bytewise, firmware: 'generic' })).encoding, 'bytewise');
+  assert.strictEqual(resolveParamEncoding(opts({ capabilities: BigInt(bytewise), firmware: 'generic' })).encoding, 'bytewise');
+  assert.deepStrictEqual(resolveParamEncoding(opts({ capabilities: 'not-a-number', firmware: 'px4' })), {
+    encoding: 'bytewise',
+    source: 'firmware'
+  });
+});
+
+test('missing capability members fail with complete protocol context', () => {
+  for (const member of ['PARAM_ENCODE_BYTEWISE', 'PARAM_ENCODE_C_CAST']) {
+    const enums = { ...DIALECT.enums, enumsByName: { ...DIALECT.enums.enumsByName } };
+    enums.enumsByName.MavProtocolCapability = { ...enums.enumsByName.MavProtocolCapability };
+    delete enums.enumsByName.MavProtocolCapability[member];
+    assert.throws(
+      () => resolveParamEncoding({ enums, dialect: 'incomplete', firmware: 'px4' }),
+      (err) => {
+        assert.strictEqual(err.code, 'ENUM_VALUE_UNAVAILABLE');
+        assert.deepStrictEqual(err.context, {
+          enum: 'MavProtocolCapability',
+          member,
+          dialect: 'incomplete',
+          consumer: 'param-encoding'
+        });
+        return true;
+      }
+    );
+  }
 });
