@@ -147,6 +147,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
       try {
         built = buildPayload(action, {
           enums: bundle ? bundle.enums : null,
+          dialect: bundle ? bundle.name : 'unknown',
           targetSystem,
           targetComponent,
           interval: toNum(firstDefined(payload.interval, node.interval), undefined),

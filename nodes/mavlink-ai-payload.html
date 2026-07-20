@@ -112,6 +112,22 @@
     },
     oneditprepare: function () {
       const $action = $('#node-input-action');
+      const componentLabels = {
+        AUTOPILOT1: 'Autopilot',
+        CAMERA: 'Camera',
+        GIMBAL: 'Gimbal',
+        MISSIONPLANNER: 'Mission planner',
+        ONBOARD_COMPUTER: 'Onboard computer'
+      };
+      $.getJSON('mavlink-ai/protocol-values').done(function (data) {
+        const $list = $('#mav-payload-components').empty();
+        (data && data.components ? data.components : []).forEach(function (component) {
+          $('<option></option>')
+            .val(component.value)
+            .text((componentLabels[component.name] || component.name) + ' (MAV_COMP_ID_' + component.name + ')')
+            .appendTo($list);
+        });
+      });
 
       /** Show only the input rows the selected action uses. */
       function refresh() {
@@ -204,12 +220,8 @@
   </div>
   <div class="form-row">
     <label for="node-input-targetComponent">Component</label>
-    <input type="number" id="node-input-targetComponent" min="0" max="255" step="1" list="mav-payload-components" placeholder="blank = autopilot 1; 100 camera; 154 gimbal">
-    <datalist id="mav-payload-components">
-      <option value="1">Autopilot (MAV_COMP_ID_AUTOPILOT1)</option>
-      <option value="100">Camera (MAV_COMP_ID_CAMERA)</option>
-      <option value="154">Gimbal (MAV_COMP_ID_GIMBAL)</option>
-    </datalist>
+    <input type="number" id="node-input-targetComponent" min="0" max="255" step="1" list="mav-payload-components" placeholder="blank = profile default">
+    <datalist id="mav-payload-components"></datalist>
   </div>
   <div class="form-tips" id="mav-payload-component-hint" style="margin: -6px 0 8px 105px; width: 70%;"></div>
 

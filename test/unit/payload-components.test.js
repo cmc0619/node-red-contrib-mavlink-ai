@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { minimal, common } = require('node-mavlink');
 const { MockRED } = require('../helpers/mock-red');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MAV_COMP_ID, DEFAULT_TARGET_COMPONENT } = require('../../lib/payload/components');
@@ -15,11 +16,11 @@ const { MAV_COMP_ID, DEFAULT_TARGET_COMPONENT } = require('../../lib/payload/com
  */
 
 test('well-known component ids and the default are the documented values', () => {
-  assert.strictEqual(MAV_COMP_ID.AUTOPILOT1, 1);
-  assert.strictEqual(MAV_COMP_ID.CAMERA, 100);
-  assert.strictEqual(MAV_COMP_ID.GIMBAL, 154);
+  assert.strictEqual(MAV_COMP_ID.AUTOPILOT1, minimal.MavComponent.AUTOPILOT1);
+  assert.strictEqual(MAV_COMP_ID.CAMERA, minimal.MavComponent.CAMERA);
+  assert.strictEqual(MAV_COMP_ID.GIMBAL, minimal.MavComponent.GIMBAL);
   /** The unspecified-everywhere default is the autopilot component. */
-  assert.strictEqual(DEFAULT_TARGET_COMPONENT, 1);
+  assert.strictEqual(DEFAULT_TARGET_COMPONENT, minimal.MavComponent.AUTOPILOT1);
 });
 
 /**
@@ -57,7 +58,7 @@ test('a camera verb with no component set falls back to the autopilot component 
 test('a camera verb honors an explicit per-message component (a standalone camera) (#155)', async () => {
   const { RED, node } = setup(profileWithoutComponentDefault('p1'), { action: 'camera_photo' });
   const { collected } = await RED.inject(node, { payload: { target_component: MAV_COMP_ID.CAMERA } });
-  assert.strictEqual(collected[0].payload.target_component, 100);
+  assert.strictEqual(collected[0].payload.target_component, minimal.MavComponent.CAMERA);
 });
 
 test('the node-configured component wins over the fallback for a gimbal verb (#155)', async () => {
@@ -66,7 +67,7 @@ test('the node-configured component wins over the fallback for a gimbal verb (#1
     targetComponent: String(MAV_COMP_ID.GIMBAL)
   });
   const { collected } = await RED.inject(node, { payload: { pitch: -20 } });
-  assert.strictEqual(collected[0].payload.target_component, 154);
+  assert.strictEqual(collected[0].payload.target_component, minimal.MavComponent.GIMBAL);
 });
 
 test('camera_photo sequence defaults to 1 only for single captures (spec: 0 for multi-shot)', async () => {
@@ -92,11 +93,11 @@ test('gripper resolves grab/release strictly and fails an unknown action closed 
   const grabNode = setup(profileWithoutComponentDefault('g1'), { action: 'gripper', gripAction: 'grab' });
   const grab = await grabNode.RED.inject(grabNode.node, { payload: {} });
   assert.strictEqual(grab.collected[0].topic, 'mavlink/send');
-  assert.strictEqual(grab.collected[0].payload.fields.param2, 1); /** GRIPPER_GRAB */
+  assert.strictEqual(grab.collected[0].payload.fields.param2, common.GripperActions.GRAB);
 
   const relNode = setup(profileWithoutComponentDefault('g2'), { action: 'gripper', gripAction: 'release' });
   const rel = await relNode.RED.inject(relNode.node, { payload: {} });
-  assert.strictEqual(rel.collected[0].payload.fields.param2, 0); /** GRIPPER_RELEASE */
+  assert.strictEqual(rel.collected[0].payload.fields.param2, common.GripperActions.RELEASE);
 
   /**
    * An unknown/misspelled action must NOT fall through to the destructive

@@ -2,13 +2,15 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { common } = require('node-mavlink');
 const { MockRED } = require('../helpers/mock-red');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { buildPayload } = require('../../lib/payload/payload');
 const { LockManager } = require('../../lib/runtime/lock-manager');
 const { fakeIdentity } = require('../helpers/v3-config');
 
-const enums = loadDialect('ardupilotmega').enums;
+const bundle = loadDialect('ardupilotmega');
+const enums = bundle.enums;
 
 /** A stub connection exposing just the send() the payload node uses. */
 function fakeConnection() {
@@ -72,13 +74,37 @@ function setup(payloadConfig, { withConnection = false, ack = false } = {}) {
 }
 
 test('buildPayload resolves the MAV_CMD and sets gripper action', () => {
-  const grab = buildPayload('gripper', { enums, instance: 2, action: 'grab', targetSystem: 1, targetComponent: 1 });
+  const grab = buildPayload('gripper', {
+    enums,
+    dialect: bundle.name,
+    instance: 2,
+    action: 'grab',
+    targetSystem: 1,
+    targetComponent: 1
+  });
+  assert.strictEqual(grab.fields.command, common.MavCmd.DO_GRIPPER);
+  assert.strictEqual(grab.fields.param2, common.GripperActions.GRAB);
   assert.strictEqual(grab.name, 'COMMAND_LONG');
   assert.strictEqual(typeof grab.fields.command, 'number');
   assert.strictEqual(grab.fields.param1, 2);
-  assert.strictEqual(grab.fields.param2, 1);
+  assert.strictEqual(grab.fields.param2, common.GripperActions.GRAB);
   const release = buildPayload('gripper', { enums, action: 'release' });
-  assert.strictEqual(release.fields.param2, 0);
+  assert.strictEqual(release.fields.param2, common.GripperActions.RELEASE);
+});
+
+test('a missing generated friendly-action member fails with payload context', () => {
+  const incomplete = { ...enums, enumsByName: { ...enums.enumsByName } };
+  incomplete.enumsByName.GripperActions = { ...incomplete.enumsByName.GripperActions };
+  delete incomplete.enumsByName.GripperActions.GRAB;
+  assert.throws(
+    () => buildPayload('gripper', { enums: incomplete, dialect: 'incomplete', action: 'grab' }),
+    (err) =>
+      err.code === 'ENUM_VALUE_UNAVAILABLE' &&
+      err.context.enum === 'GripperActions' &&
+      err.context.member === 'GRAB' &&
+      err.context.dialect === 'incomplete' &&
+      err.context.consumer === 'payload'
+  );
 });
 
 test('buildPayload rejects an unknown action and a servo with no PWM', () => {
@@ -111,6 +137,7 @@ test('gimbal aim sets pitch/roll/yaw params in degrees', async () => {
   const out = collected[0].payload;
   assert.strictEqual(out.fields.param1, -30);
   assert.strictEqual(out.fields.param3, 90);
+  assert.strictEqual(out.fields.param7, common.MavMountMode.MAVLINK_TARGETING);
 });
 
 test('relay on/off maps to param2 1/0 and payload overrides the editor', async () => {
@@ -124,7 +151,7 @@ test('gimbal_manager_aim builds a GIMBAL_MANAGER_SET_PITCHYAW message in radians
   assert.strictEqual(aim.name, 'GIMBAL_MANAGER_SET_PITCHYAW');
   assert.ok(Math.abs(aim.fields.pitch - -Math.PI / 2) < 1e-9);
   assert.ok(Math.abs(aim.fields.yaw - Math.PI / 4) < 1e-9);
-  assert.strictEqual(aim.fields.flags, 16);
+  assert.strictEqual(aim.fields.flags, common.GimbalManagerFlags.YAW_LOCK);
   assert.strictEqual(aim.fields.gimbal_device_id, 0);
   assert.ok(Number.isNaN(aim.fields.pitch_rate), 'unused rate is NaN (ignore), not 0');
   assert.ok(Number.isNaN(aim.fields.yaw_rate), 'unused rate is NaN (ignore), not 0');
@@ -144,7 +171,7 @@ test('camera_mode maps friendly names to the CAMERA_MODE value', async () => {
   const { collected } = await RED.inject(node, { payload: {} });
   const out = collected[0].payload;
   assert.strictEqual(out.name, 'COMMAND_LONG');
-  assert.strictEqual(out.fields.param2, 2);
+  assert.strictEqual(out.fields.param2, common.CameraMode.IMAGE_SURVEY);
 });
 
 test('cam_trigger_distance sets the distance and rejects a negative value', async () => {
@@ -163,7 +190,7 @@ test('gimbal_manager_attitude builds a quaternion GIMBAL_MANAGER_SET_ATTITUDE wi
     enums, roll: 0, pitch: -90, yaw: 0, yawLock: true, targetSystem: 1, targetComponent: 1
   });
   assert.strictEqual(att.name, 'GIMBAL_MANAGER_SET_ATTITUDE');
-  assert.strictEqual(att.fields.flags, 16);
+  assert.strictEqual(att.fields.flags, common.GimbalManagerFlags.YAW_LOCK);
   assert.strictEqual(att.fields.q.length, 4);
   /** -90° pitch (ZYX) → q = [cos45, 0, -sin45, 0]. */
   const h = Math.SQRT1_2;
@@ -179,10 +206,10 @@ test('gimbal_manager_attitude builds a quaternion GIMBAL_MANAGER_SET_ATTITUDE wi
 test('camera_zoom / camera_focus map friendly types and reject unknown ones (#129)', () => {
   const zoom = buildPayload('camera_zoom', { enums, zoomType: 'range', zoomValue: 60, targetSystem: 1, targetComponent: 1 });
   assert.strictEqual(zoom.name, 'COMMAND_LONG');
-  assert.strictEqual(zoom.fields.param1, 2, 'ZOOM_TYPE_RANGE');
+  assert.strictEqual(zoom.fields.param1, common.CameraZoomType.RANGE);
   assert.strictEqual(zoom.fields.param2, 60);
   const focus = buildPayload('camera_focus', { enums, focusType: 'auto', targetSystem: 1, targetComponent: 1 });
-  assert.strictEqual(focus.fields.param1, 4, 'FOCUS_TYPE_AUTO');
+  assert.strictEqual(focus.fields.param1, common.SetFocusType.AUTO);
   assert.throws(() => buildPayload('camera_zoom', { enums, zoomType: 'bogus' }), (e) => e.code === 'BAD_ZOOM_TYPE');
   assert.throws(() => buildPayload('camera_focus', { enums, focusType: 'bogus' }), (e) => e.code === 'BAD_FOCUS_TYPE');
 });
@@ -190,11 +217,11 @@ test('camera_zoom / camera_focus map friendly types and reject unknown ones (#12
 test('winch / parachute map friendly actions and reject unknown ones (#129)', () => {
   const winch = buildPayload('winch', { enums, instance: 1, winchAction: 'length', length: 3, rate: 0.5, targetSystem: 1, targetComponent: 1 });
   assert.strictEqual(winch.name, 'COMMAND_LONG');
-  assert.strictEqual(winch.fields.param2, 1, 'WINCH_RELATIVE_LENGTH_CONTROL');
+  assert.strictEqual(winch.fields.param2, common.WinchActions.RELATIVE_LENGTH_CONTROL);
   assert.strictEqual(winch.fields.param3, 3);
   assert.strictEqual(winch.fields.param4, 0.5);
   const chute = buildPayload('parachute', { enums, parachuteAction: 'release', targetSystem: 1, targetComponent: 1 });
-  assert.strictEqual(chute.fields.param1, 2, 'PARACHUTE_RELEASE');
+  assert.strictEqual(chute.fields.param1, common.ParachuteAction.RELEASE);
   assert.throws(() => buildPayload('winch', { enums, winchAction: 'bogus' }), (e) => e.code === 'BAD_WINCH_ACTION');
   assert.throws(() => buildPayload('parachute', { enums, parachuteAction: 'bogus' }), (e) => e.code === 'BAD_PARACHUTE_ACTION');
 });

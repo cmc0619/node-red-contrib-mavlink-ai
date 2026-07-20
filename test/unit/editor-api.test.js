@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { ardupilotmega } = require('node-mavlink');
+const { ardupilotmega, minimal } = require('node-mavlink');
 const { registerEditorApi } = require('../../lib/editor-api');
 
 // Minimal RED.httpAdmin capture so we can invoke the route handlers directly.
@@ -46,6 +46,19 @@ test('registerEditorApi is a no-op without httpAdmin (does not throw)', () => {
 test('routes are registered', () => {
   assert.ok(routes['/mavlink-ai/metadata'], 'metadata route registered');
   assert.ok(routes['/mavlink-ai/dialects'], 'dialects route registered');
+  assert.ok(routes['/mavlink-ai/protocol-values'], 'protocol-values route registered');
+});
+
+test('protocol-values endpoint serves generated pre-profile component choices', async () => {
+  const { body } = await invoke(routes['/mavlink-ai/protocol-values']);
+  assert.strictEqual(body.ok, true);
+  assert.deepStrictEqual(body.components, [
+    { name: 'AUTOPILOT1', value: minimal.MavComponent.AUTOPILOT1 },
+    { name: 'CAMERA', value: minimal.MavComponent.CAMERA },
+    { name: 'GIMBAL', value: minimal.MavComponent.GIMBAL },
+    { name: 'MISSIONPLANNER', value: minimal.MavComponent.MISSIONPLANNER },
+    { name: 'ONBOARD_COMPUTER', value: minimal.MavComponent.ONBOARD_COMPUTER }
+  ]);
 });
 
 test('metadata endpoint serves messages + enums + field enum mapping', async () => {
