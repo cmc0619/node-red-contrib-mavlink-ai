@@ -288,25 +288,14 @@ test('resolveFlightMode maps ArduPilot modes per vehicle type (#20)', () => {
   });
 });
 
-test('CommandSend fails with complete context when MavResult is unavailable', () => {
-  const enums = {
-    ...ENUMS,
-    enumsByName: { ...ENUMS.enumsByName }
-  };
-  delete enums.enumsByName.MavResult;
-  assert.throws(
-    () => new CommandSend(opts(new FakeConnection(), { enums, dialect: 'missing-result' })),
-    (err) => {
-      assert.strictEqual(err.code, 'ENUM_VALUE_UNAVAILABLE');
-      assert.deepStrictEqual(err.context, {
-        enum: 'MavResult',
-        member: 'ACCEPTED',
-        dialect: 'missing-result',
-        consumer: 'command'
-      });
-      return true;
-    }
-  );
+test('CommandSend resolves MavResult from the core bundle even with no loaded dialect (#309 review: apply core)', () => {
+  // MavResult is a common core enum, so a command send's ACK matching still
+  // constructs for a profile whose dialect failed to load (enums: null). A
+  // numeric command id is the dialect-external escape hatch that keeps working
+  // without a dialect (a command *name* still needs the dialect to resolve).
+  const cmd = new CommandSend(opts(new FakeConnection(), { enums: null, dialect: 'unknown', command: 400 }));
+  assert.strictEqual(cmd.acceptedResult, 0); // MAV_RESULT_ACCEPTED
+  assert.strictEqual(cmd.inProgressResult, 5); // MAV_RESULT_IN_PROGRESS
 });
 
 test('ArduPilot modes expose generated additions and reverse-look-up generated values', () => {

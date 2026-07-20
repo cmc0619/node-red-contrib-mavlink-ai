@@ -184,9 +184,11 @@ test('VTOL and high-rotor vehicle types resolve mode names in snapshots (#155)',
   assert.strictEqual(modes[35], 'GUIDED');
 });
 
-test('construction fails when required MAVLink enum members are unavailable', () => {
-  assert.throws(
-    () => new VehicleRegistry({ enums: { enumsByName: {} }, dialect: 'broken' }),
-    (err) => err.code === 'ENUM_VALUE_UNAVAILABLE' && err.context.dialect === 'broken'
-  );
+test('constructs with core classification values even when no dialect is loaded (#309 review: apply core)', () => {
+  // MavType/MavModeFlag/MavAutopilot are common core enums, so a registry
+  // constructs and can classify vehicles for a profile whose dialect failed to
+  // load (enums: null) — its attach() no longer throws.
+  const reg = new VehicleRegistry({ enums: null, dialect: 'unknown' });
+  assert.strictEqual(reg.gcsType, minimal.MavType.GCS);
+  assert.strictEqual(reg.armedFlag, 128); // MAV_MODE_FLAG_SAFETY_ARMED
 });

@@ -370,28 +370,13 @@ test('mission workflow default timeout is 10s (#58)', () => {
   assert.strictEqual(wf.timeoutMs, 10000);
 });
 
-test('mission workflow fails with complete context when a required generated enum is unavailable', () => {
-  for (const [enumName, member] of [
-    ['MavMissionResult', 'ACCEPTED'],
-    ['MavMissionType', 'MISSION'],
-    ['MavFrame', 'GLOBAL']
-  ]) {
-    const enums = { ...DIALECT.enums, enumsByName: { ...DIALECT.enums.enumsByName } };
-    delete enums.enumsByName[enumName];
-    assert.throws(
-      () => new MissionDownload(downloadOpts(new FakeConnection(), { enums, dialect: 'incomplete' })),
-      (err) => {
-        assert.strictEqual(err.code, 'ENUM_VALUE_UNAVAILABLE');
-        assert.deepStrictEqual(err.context, {
-          enum: enumName,
-          member,
-          dialect: 'incomplete',
-          consumer: 'mission'
-        });
-        return true;
-      }
-    );
-  }
+test('mission workflow resolves core enums from the core bundle even with no loaded dialect (#309 review: apply core)', () => {
+  // MavMissionResult / MavMissionType / MavFrame and the standard mission type
+  // are all common core enums, so download/upload/clear still construct for a
+  // profile whose dialect failed to load (enums: null).
+  const wf = new MissionDownload(downloadOpts(new FakeConnection(), { enums: null, dialect: 'unknown' }));
+  assert.strictEqual(wf.missionAccepted, 0); // MAV_MISSION_ACCEPTED
+  assert.strictEqual(wf.missionTypeMission, 0); // MAV_MISSION_TYPE_MISSION
 });
 
 // --- #57: upload answers with the requested item type ----------------------

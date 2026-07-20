@@ -7,7 +7,7 @@ const { DELIVERY, resolveDeliveryMode } = require('../lib/util/delivery');
 const { firstDefined, toInt, toNum, toBool, parseJsonObjectConfig } = require('../lib/util/validation');
 const { registerEditorApi } = require('../lib/editor-api');
 const { resolveInEnum } = require('../lib/protocol/enum-resolver');
-const { bindEnumValues } = require('../lib/protocol/protocol-values');
+const { bindEnumValues, coreEnumValues } = require('../lib/protocol/protocol-values');
 const { resolveFlightMode, splitPx4CustomMode } = require('../lib/command/flight-modes');
 const { CommandSend } = require('../lib/command/command-workflow');
 const { degToDegE7 } = require('../lib/util/geo');
@@ -385,10 +385,12 @@ module.exports = function registerMavlinkAiCommand(RED) {
 
       const defaults = node.profile.getDefaults ? node.profile.getDefaults() : {};
       const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
-      const value = bindEnumValues(bundle ? bundle.enums : null, {
-        dialect: bundle ? bundle.name : 'unknown',
-        consumer: 'command'
-      });
+      /** DO_SET_MODE detection resolves MavCmd, a common core enum — fall back
+       * to the core bundle when the profile has no valid dialect so set_mode
+       * still works without one (#309 review: apply core). */
+      const value = bundle && bundle.valid
+        ? bindEnumValues(bundle.enums, { dialect: bundle.name, consumer: 'command' })
+        : coreEnumValues({ consumer: 'command' });
 
       // Editor preset fields under runtime payload values (#49): a static
       // editor value (e.g. mode "GUIDED", altitude 15) applies unless the
