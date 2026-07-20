@@ -1,4 +1,16 @@
 <script type="text/javascript">
+  // #210: browser mirror of lib/util/numeric-bounds.js. Kept in sync by
+  // test/unit/numeric-bounds-editor-spec.test.js — edit both together.
+  function mavlinkNumericBounds() {
+    function isBlank(v) { return v === undefined || v === null || String(v).trim() === ''; }
+    return {
+      positive: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n > 0; },
+      nonNegativeInteger: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return Number.isInteger(n) && n >= 0; },
+      nonNegative: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n >= 0; },
+      atLeast: function (min) { return function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n >= min; }; },
+      integerAtLeast: function (min) { return function (v) { if (isBlank(v)) { return true; } var n = Number(v); return Number.isInteger(n) && n >= min; }; }
+    };
+  }
   RED.nodes.registerType('mavlink-ai-command', {
     category: 'MAVLink AI',
     paletteLabel: 'MAVLink Command',
@@ -27,8 +39,8 @@
       command: { value: 'arm', required: true },
       sendAs: { value: 'long' },
       delivery: { value: 'build' },
-      timeoutMs: { value: 3000, validate: RED.validators.number() },
-      maxRetries: { value: 3, validate: RED.validators.number() },
+      timeoutMs: { value: 3000, validate: function (v) { return mavlinkNumericBounds().positive(v); } },
+      maxRetries: { value: 3, validate: function (v) { return mavlinkNumericBounds().nonNegativeInteger(v); } },
       fields: { value: '' },
       // Friendly preset parameters (#49), stored separately from the raw
       // paramN fields so preset/raw switches can't corrupt saved values.

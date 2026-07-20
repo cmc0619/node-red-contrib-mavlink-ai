@@ -391,3 +391,20 @@ test('out node still accepts and sends a raw Buffer / mavlink/raw (#207)', async
   assert.strictEqual(err2, undefined);
   assert.strictEqual(sends.length, 2);
 });
+
+test('out node tolerates a falsy transport rejection without crashing (#310 CodeRabbit review)', async () => {
+  /**
+   * A transport that rejects with a falsy value (e.g. `throw null`) must not
+   * crash the error badge: reading `err.code` on a falsy `err` throws a
+   * TypeError. The catch guards `err && err.code` (matching the earlier
+   * `if (err && ...)` transient-state guard) and falls back to 'send error'.
+   */
+  const { RED } = setup({});
+  const node = RED.create('mavlink-ai-out', { id: 'o1', connection: 'conn1' });
+  node.connection.send = () => Promise.reject(null);
+  node.connection.sendRaw = node.connection.send;
+  const { err } = await RED.inject(node, { topic: 'mavlink/send', payload: { name: 'HEARTBEAT', fields: {} } });
+  const last = node.statusHistory[node.statusHistory.length - 1];
+  assert.strictEqual(last.text, 'send error', 'falsy rejection falls back to the static badge, not a null.code crash');
+  assert.ok(!err, 'the falsy rejection surfaces via done(err) without a thrown TypeError');
+});

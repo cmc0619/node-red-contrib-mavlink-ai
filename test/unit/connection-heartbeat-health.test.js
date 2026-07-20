@@ -51,6 +51,63 @@ function connection(RED) {
   return conn;
 }
 
+/**
+ * #225 follow-up: `heartbeatSpecs()` emits start-phrased warnings ("cannot
+ * start heartbeat…", "outbound disabled…") for additional identities it skips.
+ * That function is now also called from `setAdvertisedHealth`'s eligibility
+ * probe, which is not a start — so those warnings must NOT fire on the probe
+ * path (otherwise every health assertion re-warns). They stay gated to the
+ * actual (re)start path via `warnSkips`.
+ */
+test('setAdvertisedHealth probe does not emit start-phrased heartbeat warnings (#225 follow-up)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-default');
+  conn.localIdentity = def;
+  conn.heartbeatEnabled = true;
+  conn.allowMultipleIdentities = true;
+  // An additional binding heartbeatSpecs() would skip-and-warn about (heartbeat
+  // on, outbound disabled). The probe walks the same specs to check eligibility.
+  const extra = identity('id-extra');
+  conn._identityBindings = [{ identity: 'id-extra', heartbeat: true, allowOutbound: false, heartbeatIntervalMs: 1000 }];
+  conn.resolveLocalIdentity = (ref) => {
+    if (ref == null || ref === def.id) return def;
+    if (ref === 'id-extra') return extra;
+    const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e;
+  };
+  conn.warnings.length = 0;
+  conn.setAdvertisedHealth(undefined, { health: 'degraded', ttl_s: 10 });
+  assert.ok(
+    !conn.warnings.some((w) => /cannot start heartbeat|outbound disabled/.test(w)),
+    `the eligibility probe must not warn about skipped identities, got: ${JSON.stringify(conn.warnings)}`
+  );
+});
+
+test('the heartbeat start path still warns about a skipped additional identity (#225 follow-up)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  // Default identity absent so no live default timer is scheduled; only the
+  // outbound-disabled additional binding is present, which the start path skips.
+  conn.localIdentity = null;
+  conn.heartbeatEnabled = true;
+  conn.allowMultipleIdentities = true;
+  const extra = identity('id-extra');
+  conn._identityBindings = [{ identity: 'id-extra', heartbeat: true, allowOutbound: false, heartbeatIntervalMs: 1000 }];
+  conn.resolveLocalIdentity = (ref) => (ref === 'id-extra'
+    ? extra
+    : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+  conn.warnings.length = 0;
+  // Drive the real start path: transport 'listening' → startHeartbeats() →
+  // heartbeatSpecs({ warnSkips: true }).
+  conn._transport.emit('listening', {});
+  assert.ok(
+    conn.warnings.some((w) => /outbound disabled/.test(w)),
+    `the start path must still warn about the skipped identity, got: ${JSON.stringify(conn.warnings)}`
+  );
+});
+
 test('setAdvertisedHealth stores a normalized record for the default identity', async (t) => {
   const RED = new MockRED().loadNodes();
   const conn = connection(RED);

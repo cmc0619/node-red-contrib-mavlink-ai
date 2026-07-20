@@ -1,4 +1,16 @@
 <script type="text/javascript">
+  // #210: browser mirror of lib/util/numeric-bounds.js. Kept in sync by
+  // test/unit/numeric-bounds-editor-spec.test.js — edit both together.
+  function mavlinkNumericBounds() {
+    function isBlank(v) { return v === undefined || v === null || String(v).trim() === ''; }
+    return {
+      positive: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n > 0; },
+      nonNegativeInteger: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return Number.isInteger(n) && n >= 0; },
+      nonNegative: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n >= 0; },
+      atLeast: function (min) { return function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n >= min; }; },
+      integerAtLeast: function (min) { return function (v) { if (isBlank(v)) { return true; } var n = Number(v); return Number.isInteger(n) && n >= min; }; }
+    };
+  }
   RED.nodes.registerType('mavlink-ai-swarm', {
     category: 'MAVLink AI',
     paletteLabel: 'MAVLink Swarm',
@@ -6,10 +18,10 @@
     defaults: {
       name: { value: '' },
       connection: { value: '', type: 'mavlink-ai-connection', required: true },
-      staleMs: { value: 5000, validate: RED.validators.number() },
-      expireMs: { value: 30000, validate: RED.validators.number() },
+      staleMs: { value: 5000, validate: function (v) { return mavlinkNumericBounds().positive(v); } },
+      expireMs: { value: 30000, validate: function (v) { return mavlinkNumericBounds().nonNegative(v); } },
       emitOnChange: { value: true },
-      intervalMs: { value: 0, validate: RED.validators.number() },
+      intervalMs: { value: 0, validate: function (v) { return mavlinkNumericBounds().nonNegative(v); } },
       includeGcs: { value: false },
       groups: { value: '' }
     },

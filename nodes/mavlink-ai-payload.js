@@ -6,6 +6,7 @@ const { CommandSend } = require('../lib/command/command-workflow');
 const { toNum, toBool, firstDefined } = require('../lib/util/validation');
 const { MavlinkError } = require('../lib/util/errors');
 const { makeFail } = require('../lib/util/node-errors');
+const { truncateStatus } = require('../lib/util/status');
 const { DELIVERY, resolveDeliveryMode } = require('../lib/util/delivery');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { watchConfigBadge } = require('../lib/util/node-lifecycle');
@@ -317,7 +318,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
         if (node._closed) {
           return done();
         }
-        node.status({ fill: 'green', shape: 'dot', text: `sent ${action}` });
+        node.status({ fill: 'green', shape: 'dot', text: truncateStatus(`sent ${action}`) });
         msg.topic = 'payload/sent';
         msg.payload = { name: built.name, target_system: targetSystem, target_component: targetComponent, sent: true };
         send([msg, null]);
@@ -349,7 +350,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
           msg.priority = priority;
         }
       }
-      node.status({ fill: 'green', shape: 'dot', text: action });
+      node.status({ fill: 'green', shape: 'dot', text: truncateStatus(action) });
       send([msg, null]);
       done();
     });
@@ -435,7 +436,7 @@ async function runWithAck(node, msg, send, done, ctx) {
     if (node._closed) {
       return done();
     }
-    node.status({ fill: 'green', shape: 'dot', text: `ack ${ctx.action}` });
+    node.status({ fill: 'green', shape: 'dot', text: truncateStatus(`ack ${ctx.action}`) });
     msg.topic = result.topic;
     msg.payload = result.payload;
     send([msg, null]);

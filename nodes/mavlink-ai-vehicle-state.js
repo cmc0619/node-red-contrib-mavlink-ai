@@ -3,6 +3,7 @@
 const { VehicleStateEngine, diffVehicleState } = require('../lib/state/vehicle-state');
 const { parseIdListStrict } = require('../lib/util/validation');
 const { errorPayload } = require('../lib/util/errors');
+const { truncateStatus } = require('../lib/util/status');
 
 /** Messages the engine ingests (capabilities come from the #233 cache, not here). */
 const STATE_MESSAGES = [
@@ -67,7 +68,7 @@ module.exports = function (RED) {
       }
       const snaps = engine.snapshots().filter((s) => wanted(s.sysid));
       const connected = snaps.filter((s) => s.connected).length;
-      node.status({ fill: snaps.length ? 'green' : 'grey', shape: 'dot', text: `${snaps.length} vehicles · ${connected} connected` });
+      node.status({ fill: snaps.length ? 'green' : 'grey', shape: 'dot', text: truncateStatus(`${snaps.length} vehicles · ${connected} connected`) });
     }
 
     /**
