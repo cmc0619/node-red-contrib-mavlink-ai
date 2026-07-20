@@ -32,3 +32,32 @@ test('truncateStatus tolerates non-string and empty input', () => {
   assert.strictEqual(truncateStatus(null), '');
   assert.strictEqual(truncateStatus(123), '123');
 });
+
+const { MockRED } = require('../helpers/mock-red');
+
+test('a node applies truncateStatus to a long badge end-to-end (#221)', async () => {
+  // The Build node badges the built message name (nodes/mavlink-ai-build.js).
+  // SET_POSITION_TARGET_GLOBAL_INT is 30 chars — over the 24-char cap — so its
+  // status badge must come back capped, proving the wrapping is wired in a real
+  // node path, not just the helper in isolation.
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1',
+    name: 'Copter',
+    dialect: 'ardupilotmega',
+    mavlinkVersion: 'v2',
+    defaultTargetSystem: 1,
+    defaultTargetComponent: 1
+  });
+  const node = RED.create('mavlink-ai-build', {
+    id: 'b1',
+    profile: 'p1',
+    messageName: 'SET_POSITION_TARGET_GLOBAL_INT'
+  });
+  const { err } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(err, undefined);
+  const last = node.statusHistory[node.statusHistory.length - 1];
+  assert.ok(last, 'expected a status badge to be set');
+  assert.ok(last.text.length <= 24, `badge not capped: ${JSON.stringify(last)}`);
+  assert.ok(last.text.startsWith('SET_POSITION_TARGET'), `unexpected badge text: ${last.text}`);
+});

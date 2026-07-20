@@ -4,6 +4,7 @@ const { buildSetpoint, setpointWarnings } = require('../lib/move/setpoint');
 const { toNum, toBool, firstDefined } = require('../lib/util/validation');
 const { MavlinkError, errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { makeFail } = require('../lib/util/node-errors');
+const { truncateStatus } = require('../lib/util/status');
 const { DELIVERY, resolveDeliveryMode } = require('../lib/util/delivery');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { watchConfigBadge } = require('../lib/util/node-lifecycle');
@@ -326,7 +327,7 @@ module.exports = function registerMavlinkAiMove(RED) {
         node._streamDeadline = node.maxStreamSeconds > 0 ? Date.now() + node.maxStreamSeconds * 1000 : null;
         armStreamExpiry(node);
         startStream(node);
-        node.status({ fill: 'green', shape: 'dot', text: `streaming ${labelFor(built.name)} @ ${node.streamRateHz} Hz` });
+        node.status({ fill: 'green', shape: 'dot', text: truncateStatus(`streaming ${labelFor(built.name)} @ ${node.streamRateHz} Hz`) });
         return done();
       }
 
@@ -552,7 +553,7 @@ function streamTick(node) {
         return;
       }
       const e = toMavlinkError(err, 'SEND_FAILED');
-      node.status({ fill: 'yellow', shape: 'ring', text: `stream: ${e.code}` });
+      node.status({ fill: 'yellow', shape: 'ring', text: truncateStatus(`stream: ${e.code}`) });
       if (!node._streamErrored) {
         node._streamErrored = true;
         /** Per-streak send failures land on port 1 (#207: two-port [out, error]). */

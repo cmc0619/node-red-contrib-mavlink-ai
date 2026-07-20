@@ -2,6 +2,7 @@
 
 const { MavlinkError, toMavlinkError } = require('../lib/util/errors');
 const { makeFail } = require('../lib/util/node-errors');
+const { truncateStatus } = require('../lib/util/status');
 const { DELIVERY, resolveDeliveryMode } = require('../lib/util/delivery');
 const { firstDefined, toInt, toNum, toBool, parseJsonObjectConfig } = require('../lib/util/validation');
 const { registerEditorApi } = require('../lib/editor-api');
@@ -660,7 +661,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
             if (closed) {
               return done(); // aborted by close: no output from an obsolete node
             }
-            node.status({ fill: 'green', shape: 'dot', text: `${selected} accepted` });
+            node.status({ fill: 'green', shape: 'dot', text: truncateStatus(`${selected} accepted`) });
             msg.topic = result.topic;
             msg.payload = result.payload;
             send([msg, null]);
@@ -729,7 +730,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
         if (closed) {
           return done();
         }
-        node.status({ fill: 'green', shape: 'dot', text: `${selected} sent` });
+        node.status({ fill: 'green', shape: 'dot', text: truncateStatus(`${selected} sent`) });
         msg.topic = 'command/sent';
         msg.payload = { name: messageName, target_system: targetSystem, target_component: targetComponent, sent: true };
         send([msg, null]);
@@ -768,7 +769,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
         }
       }
 
-      node.status({ fill: 'green', shape: 'dot', text: selected });
+      node.status({ fill: 'green', shape: 'dot', text: truncateStatus(selected) });
       send([msg, null]);
       done();
     });

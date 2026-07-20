@@ -6,6 +6,7 @@ const { boundedSet } = require('../lib/util/bounded-map');
 const { toInt, firstDefined } = require('../lib/util/validation');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { MavlinkError } = require('../lib/util/errors');
+const { truncateStatus } = require('../lib/util/status');
 const { makeFail } = require('../lib/util/node-errors');
 const { resolveWorkflowContext } = require('../lib/util/workflow-profile');
 const { watchConfigBadge } = require('../lib/util/node-lifecycle');
@@ -135,7 +136,7 @@ module.exports = function registerMavlinkAiParam(RED) {
       }
 
       const onProgress = (progress) => {
-        node.status({ fill: 'blue', shape: 'dot', text: progressText(progress.payload) });
+        node.status({ fill: 'blue', shape: 'dot', text: truncateStatus(progressText(progress.payload)) });
         send([null, progress, null]);
       };
 
