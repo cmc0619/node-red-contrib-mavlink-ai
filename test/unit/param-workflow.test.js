@@ -2,20 +2,53 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { common } = require('node-mavlink');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const {
+  buildIntegerParamPolicy,
   trimParamId,
-  projectParam,
-  unionIntToFloat,
-  unionFloatToInt,
-  ParamRead,
-  ParamSet,
-  ParamSetAuto,
-  ParamList
+  projectParam: projectParamWithPolicy,
+  unionIntToFloat: unionIntToFloatWithPolicy,
+  unionFloatToInt: unionFloatToIntWithPolicy,
+  ParamRead: RawParamRead,
+  ParamSet: RawParamSet,
+  ParamSetAuto: RawParamSetAuto,
+  ParamList: RawParamList
 } = require('../../lib/param/param-workflow');
 
 const NUL = String.fromCharCode(0);
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+const DIALECT = loadDialect('ardupilotmega');
+const PARAM_POLICY = buildIntegerParamPolicy(DIALECT.enums, DIALECT.name);
+
+function withDialect(Base) {
+  return class extends Base {
+    constructor(opts = {}) {
+      super({ enums: DIALECT.enums, dialect: DIALECT.name, ...opts });
+    }
+  };
+}
+
+const ParamRead = withDialect(RawParamRead);
+const ParamSet = withDialect(RawParamSet);
+const ParamSetAuto = withDialect(RawParamSetAuto);
+const ParamList = withDialect(RawParamList);
+
+function unionIntToFloat(value, type) {
+  return unionIntToFloatWithPolicy(value, type, PARAM_POLICY);
+}
+
+function unionFloatToInt(value, type) {
+  return unionFloatToIntWithPolicy(value, type, PARAM_POLICY);
+}
+
+function projectParam(fields, enums = DIALECT.enums, opts = {}) {
+  return projectParamWithPolicy(fields, enums, PARAM_POLICY, opts);
+}
+
+function workflowOpts(connection, extra = {}) {
+  return { connection, enums: DIALECT.enums, dialect: DIALECT.name, ...extra };
+}
 
 /**
  * Minimal connection stand-in: records outbound messages and delivers
@@ -223,26 +256,59 @@ test('Param ids go out verbatim and echoes match exactly (case-sensitive wire fi
 });
 
 test('PX4 byte-union helpers round-trip integer values (#27)', () => {
+  const policy = buildIntegerParamPolicy(DIALECT.enums, DIALECT.name);
+  const int32 = common.MavParamType.INT32;
+  const uint8 = common.MavParamType.UINT8;
+  const int16 = common.MavParamType.INT16;
   // INT32 (type 6)
-  assert.strictEqual(unionFloatToInt(unionIntToFloat(1, 6), 6), 1);
-  assert.strictEqual(unionFloatToInt(unionIntToFloat(-42, 6), 6), -42);
-  assert.strictEqual(unionFloatToInt(unionIntToFloat(123456789, 6), 6), 123456789);
+  assert.strictEqual(unionFloatToInt(unionIntToFloat(1, int32, policy), int32, policy), 1);
+  assert.strictEqual(unionFloatToInt(unionIntToFloat(-42, int32, policy), int32, policy), -42);
+  assert.strictEqual(unionFloatToInt(unionIntToFloat(123456789, int32, policy), int32, policy), 123456789);
   // UINT8 (type 1)
-  assert.strictEqual(unionFloatToInt(unionIntToFloat(255, 1), 1), 255);
+  assert.strictEqual(unionFloatToInt(unionIntToFloat(255, uint8, policy), uint8, policy), 255);
   // INT16 (type 4)
-  assert.strictEqual(unionFloatToInt(unionIntToFloat(-1000, 4), 4), -1000);
+  assert.strictEqual(unionFloatToInt(unionIntToFloat(-1000, int16, policy), int16, policy), -1000);
   // The union float of INT32 1 is a denormal, not 1.0 — the whole point.
-  assert.notStrictEqual(unionIntToFloat(1, 6), 1);
+  assert.notStrictEqual(unionIntToFloat(1, int32, policy), 1);
+});
+
+test('integer parameter policy resolves every fixed-width generated type', () => {
+  const policy = buildIntegerParamPolicy(DIALECT.enums, DIALECT.name);
+  for (const member of ['UINT8', 'INT8', 'UINT16', 'INT16', 'UINT32', 'INT32']) {
+    assert.ok(policy.has(common.MavParamType[member]), member);
+  }
+});
+
+test('missing MavParamType.INT32 fails before any PARAM send', () => {
+  const enums = { ...DIALECT.enums, enumsByName: { ...DIALECT.enums.enumsByName } };
+  enums.enumsByName.MavParamType = { ...enums.enumsByName.MavParamType };
+  delete enums.enumsByName.MavParamType.INT32;
+  const conn = new FakeConnection();
+  assert.throws(
+    () =>
+      new ParamSet(
+        workflowOpts(conn, {
+          enums,
+          dialect: 'incomplete',
+          targetSystem: 1,
+          targetComponent: 1,
+          paramId: 'X',
+          value: 1
+        })
+      ),
+    (err) => err.code === 'ENUM_VALUE_UNAVAILABLE' && err.context.member === 'INT32' && conn.sent.length === 0
+  );
 });
 
 test('projectParam decodes byte-union integers when firmware is px4 (#27)', () => {
-  const fields = paramValue({ id: 'SYS_AUTOSTART', value: unionIntToFloat(4001, 6), type: 6 }).fields;
+  const int32 = common.MavParamType.INT32;
+  const fields = paramValue({ id: 'SYS_AUTOSTART', value: unionIntToFloat(4001, int32), type: int32 }).fields;
   const px4 = projectParam(fields, null, { firmware: 'px4' });
   assert.strictEqual(px4.param_value, 4001);
-  assert.strictEqual(px4.param_raw_value, unionIntToFloat(4001, 6));
+  assert.strictEqual(px4.param_raw_value, unionIntToFloat(4001, int32));
   // Non-px4 firmware leaves the wire value alone.
   const generic = projectParam(fields, null, { firmware: 'generic' });
-  assert.strictEqual(generic.param_value, unionIntToFloat(4001, 6));
+  assert.strictEqual(generic.param_value, unionIntToFloat(4001, int32));
 });
 
 test('ParamSet encodes and confirms byte-union integers for px4 (#27)', async () => {
@@ -261,8 +327,14 @@ test('ParamSet encodes and confirms byte-union integers for px4 (#27)', async ()
   const set = conn.sent.find((m) => m.name === 'PARAM_SET');
   assert.ok(set);
   // The wire value is the byte-union float, not the numeric cast.
-  assert.strictEqual(set.fields.param_value, unionIntToFloat(4001, 6));
-  conn.deliverParamValue(paramValue({ id: 'SYS_AUTOSTART', value: unionIntToFloat(4001, 6), type: 6 }));
+  assert.strictEqual(set.fields.param_value, unionIntToFloat(4001, common.MavParamType.INT32));
+  conn.deliverParamValue(
+    paramValue({
+      id: 'SYS_AUTOSTART',
+      value: unionIntToFloat(4001, common.MavParamType.INT32),
+      type: common.MavParamType.INT32
+    })
+  );
   const res = await p;
   assert.strictEqual(res.payload.param_value, 4001);
   assert.strictEqual(res.payload.applied, true);
@@ -291,8 +363,18 @@ test('a paramEncoding resolver overrides the firmware label per use (#233)', asy
   advertised = 'bytewise';
   const p = wf.run();
   const set = conn.sent.find((m) => m.name === 'PARAM_SET');
-  assert.strictEqual(set.fields.param_value, unionIntToFloat(4001, 6), 'byte-union despite the generic label');
-  conn.deliverParamValue(paramValue({ id: 'SYS_AUTOSTART', value: unionIntToFloat(4001, 6), type: 6 }));
+  assert.strictEqual(
+    set.fields.param_value,
+    unionIntToFloat(4001, common.MavParamType.INT32),
+    'byte-union despite the generic label'
+  );
+  conn.deliverParamValue(
+    paramValue({
+      id: 'SYS_AUTOSTART',
+      value: unionIntToFloat(4001, common.MavParamType.INT32),
+      type: common.MavParamType.INT32
+    })
+  );
   const res = await p;
   assert.strictEqual(res.payload.param_value, 4001, 'echo decoded as byte-union too');
   assert.strictEqual(res.payload.applied, true);
@@ -484,7 +566,14 @@ test('projectParam prefers exact wire bits for PX4 byte-union integers (#146)', 
    * bits the normalizer attaches recover the true value.
    */
   const projected = projectParam(
-    { param_id: 'COM_X', param_value: 'NaN', param_value_bits: 0xffffffff, param_type: 6, param_index: 0, param_count: 1 },
+    {
+      param_id: 'COM_X',
+      param_value: 'NaN',
+      param_value_bits: 0xffffffff,
+      param_type: common.MavParamType.INT32,
+      param_index: 0,
+      param_count: 1
+    },
     null,
     { firmware: 'px4' }
   );
@@ -500,7 +589,7 @@ test('ParamSet px4 int rides exactFloatBits so -1 reaches the wire byte-exact (#
     firmware: 'px4',
     paramId: 'COM_FLTMODE1',
     value: -1,
-    paramType: 6
+    paramType: common.MavParamType.INT32
   });
   const p = wf.run();
   const sent = conn.sent.find((m) => m.name === 'PARAM_SET');
@@ -515,7 +604,7 @@ test('ParamSet px4 int rides exactFloatBits so -1 reaches the wire byte-exact (#
       param_id: 'COM_FLTMODE1' + NUL.repeat(4),
       param_value: 'NaN',
       param_value_bits: 0xffffffff,
-      param_type: 6,
+      param_type: common.MavParamType.INT32,
       param_index: 0,
       param_count: 1
     }
