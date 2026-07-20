@@ -1,7 +1,7 @@
 'use strict';
 
 const { EventEmitter } = require('events');
-const { MavLinkPacketSignature, MavLinkProtocolV2 } = require('node-mavlink');
+const { MavLinkPacketSignature } = require('node-mavlink');
 const { MavlinkCodec, verifyInboundPacket } = require('../lib/protocol/mavlink-codec');
 const { LinkState } = require('../lib/protocol/link-state');
 const { createTransport } = require('../lib/transport');
@@ -25,14 +25,6 @@ const { normalizeAssertion, resolveHeartbeatStatus } = require('../lib/health/ad
  */
 const HEARTBEAT_MIN_INTERVAL_MS = 1000;
 
-/**
- * MAVLink 2 incompatibility flags this implementation understands. The spec
- * requires discarding any inbound frame that sets an incompat flag the receiver
- * doesn't implement. Today only MAVLINK_IFLAG_SIGNED (0x01) is handled (its
- * signature is verified per the default identity's policy); a frame setting any
- * other bit is rejected in onPacket rather than decoded with an unknown framing
- * (#153).
- */
 /**
  * Stream key for transports that carry a single peer's byte stream (serial,
  * tcp client-role). They share one decoder; a tcp server keys one per client via its
@@ -2035,30 +2027,16 @@ module.exports = function registerMavlinkAiConnection(RED) {
     function onPacket(packet, origin) {
       const header = packet.header;
       /**
-       * Discard a frame carrying a MAVLink-2 incompatibility flag we don't
-       * implement (#153). The spec mandates dropping such a frame: an unknown
-       * incompat flag can change how the rest of the frame must be interpreted,
-       * so decoding it anyway risks misreading the payload. Only IFLAG_SIGNED
-       * (0x01) is understood — its signature is checked below; any other bit set
-       * means we cannot safely decode. (v1 frames have no incompat field, so
-       * incompatibilityFlags is 0/undefined and this never trips.)
+       * The peer's wire version, from the protocol instance the parser
+       * attaches to every packet (its START_BYTE static) — node-mavlink's v1
+       * parser never sets header.magic, so the header field cannot be used
+       * (#138). Recorded below on the shared LinkState (#192), only after
+       * routing and signature policy accept the packet — an unsigned forged v1
+       * frame passes CRC without any secret, so learning the version here would
+       * let it silently downgrade outbound framing for a trusted peer even
+       * under requireSignature.
        */
-      const incompatFlags = Number(header.incompatibilityFlags) || 0;
-      if (incompatFlags & ~MavLinkProtocolV2.IFLAG_SIGNED) {
-        node.emitter.emit('rejected', rejectedInfo(header, 'incompat-unsupported', origin));
-        return;
-      }
-      /**
-       * Read the wire version from the actual first frame byte, not
-       * header.magic: node-mavlink's v1 parser never sets header.magic (it
-       * stays 0), so a v1 (0xFE) frame would otherwise never be detected (#138).
-       * Recorded below on the shared LinkState (#192), only after routing and
-       * signature policy accept the packet — an unsigned forged v1 frame
-       * passes CRC without any secret, so learning the version here would let
-       * it silently downgrade outbound framing for a trusted peer even under
-       * requireSignature.
-       */
-      const wireMagic = packet.buffer && packet.buffer.length ? packet.buffer[0] : header.magic;
+      const wireMagic = packet.protocol.constructor.START_BYTE;
 
       /**
        * 1. Route on the framed header (sysid/compid) before decoding. A

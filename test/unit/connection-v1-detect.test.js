@@ -12,7 +12,8 @@ const { enc } = require('../helpers/v3-config');
  * bug: onPacket read the peer's wire version from packet.header.magic, which
  * node-mavlink's v1 parser never sets (it stays 0), so a v1-only vehicle was
  * never detected as v1 and every outbound frame stayed v2 (0xFD) — which the
- * vehicle silently ignores. onPacket now reads the actual first frame byte.
+ * vehicle silently ignores. onPacket now reads the version from the protocol
+ * instance the parser attaches to every packet.
  *
  * This drives a real parsed v1 frame through the connection (not a literal
  * 0xFE into noteInboundMagic, which is exactly where the bug hid), then asserts

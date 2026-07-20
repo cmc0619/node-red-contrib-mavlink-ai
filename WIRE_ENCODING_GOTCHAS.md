@@ -197,10 +197,9 @@ payloads per subscriber`.
 teardown. Clone per-subscriber data. Bound every queue and write.
 
 ### B4. Protocol-version & framing fidelity
-**What bites:** Mixing up MAVLink v1/v2 changes which fields exist; unsupported
-incompat flags must be rejected, not ignored.
-**Real bugs:** `#162 detect v1 from wire byte, strip v1 extensions`, `#171 reject
-unsupported incompat flags`, `#167 mission NAK/REQUEST_INT/stale-ACK handling`.
+**What bites:** Mixing up MAVLink v1/v2 changes which fields exist.
+**Real bugs:** `#162 detect v1 from wire byte, strip v1 extensions`,
+`#167 mission NAK/REQUEST_INT/stale-ACK handling`.
 **Mitigation:** Detect version from the wire magic byte. Consult the official
 MAVLink spec for framing/ACK rules — don't reconstruct them from memory.
 
