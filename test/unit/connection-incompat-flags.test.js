@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { MavLinkProtocolV2, x25crc } = require('node-mavlink');
+const { MavLinkProtocolV2, minimal, x25crc } = require('node-mavlink');
 const { MockRED } = require('../helpers/mock-red');
 const { nextEvent } = require('../helpers/next-event');
 const { loadDialect, getMessageClass } = require('../../lib/dialects/dialect-loader');
@@ -18,7 +18,13 @@ const { enc } = require('../helpers/v3-config');
  */
 
 const common = loadDialect('common');
-const HB = { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 };
+const HB = {
+  type: minimal.MavType.GCS,
+  autopilot: minimal.MavAutopilot.INVALID,
+  base_mode: 0,
+  custom_mode: 0,
+  system_status: minimal.MavState.ACTIVE
+};
 
 function setup() {
   const RED = new MockRED().loadNodes();

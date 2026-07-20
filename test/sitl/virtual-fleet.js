@@ -2,6 +2,7 @@
 
 const dgram = require('dgram');
 const { EventEmitter } = require('events');
+const { common, minimal } = require('node-mavlink');
 
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MavlinkCodec } = require('../../lib/protocol/mavlink-codec');
@@ -34,18 +35,18 @@ const { globalToNedOffset, nedOffsetToGlobal, offsetLatLon } = require('../../li
 
 // MAV_CMD ids this fleet acts on. Everything else is ACK'd as UNSUPPORTED so a
 // flow never hangs waiting on an ack that will not come.
-const MAV_CMD_NAV_TAKEOFF = 22;
-const MAV_CMD_DO_REPOSITION = 192;
-const MAV_CMD_COMPONENT_ARM_DISARM = 400;
+const MAV_CMD_NAV_TAKEOFF = common.MavCmd.NAV_TAKEOFF;
+const MAV_CMD_DO_REPOSITION = common.MavCmd.DO_REPOSITION;
+const MAV_CMD_COMPONENT_ARM_DISARM = common.MavCmd.COMPONENT_ARM_DISARM;
 
 // MAV_RESULT
-const MAV_RESULT_ACCEPTED = 0;
-const MAV_RESULT_UNSUPPORTED = 3;
-const MAV_RESULT_DENIED = 2;
+const MAV_RESULT_ACCEPTED = common.MavResult.ACCEPTED;
+const MAV_RESULT_UNSUPPORTED = common.MavResult.UNSUPPORTED;
+const MAV_RESULT_DENIED = common.MavResult.DENIED;
 
 // MAV_MODE_FLAG_SAFETY_ARMED — the one base_mode bit a GCS reads to know a
 // vehicle is armed.
-const MODE_FLAG_ARMED = 128;
+const MODE_FLAG_ARMED = minimal.MavModeFlag.SAFETY_ARMED;
 
 // COMMAND_INT "keep current x/y" sentinel; COMMAND_LONG uses NaN in param5/6.
 const INT32_MAX = 2147483647;
@@ -163,11 +164,11 @@ class VirtualDrone {
   /** HEARTBEAT reflecting the current armed state. */
   encodeHeartbeat() {
     return this.encode('HEARTBEAT', {
-      type: 'MAV_TYPE_QUADROTOR',
-      autopilot: 'MAV_AUTOPILOT_ARDUPILOTMEGA',
+      type: minimal.MavType.QUADROTOR,
+      autopilot: minimal.MavAutopilot.ARDUPILOTMEGA,
       base_mode: this.armed ? MODE_FLAG_ARMED : 0,
       custom_mode: 0,
-      system_status: 'MAV_STATE_ACTIVE'
+      system_status: minimal.MavState.ACTIVE
     });
   }
 

@@ -254,10 +254,10 @@ test('await-ack resolves the COMMAND_ACK onto the output for a command verb (#12
   await new Promise((r) => setTimeout(r, 0));
   assert.strictEqual(conn.sent.length, 1, 'command sent once');
   assert.strictEqual(conn.sent[0].name, 'COMMAND_LONG');
-  conn.deliverAck({ command: conn.sent[0].fields.command, result: 0 });
+  conn.deliverAck({ command: conn.sent[0].fields.command, result: common.MavResult.ACCEPTED });
   const { collected } = await injected;
   assert.strictEqual(collected[0].topic, 'command/ack');
-  assert.strictEqual(collected[0].payload.result, 0);
+  assert.strictEqual(collected[0].payload.result, common.MavResult.ACCEPTED);
 });
 
 test('await-ack surfaces a rejected command as a structured error (#129)', async () => {
@@ -268,7 +268,7 @@ test('await-ack surfaces a rejected command as a structured error (#129)', async
   const injected = RED.inject(node, { payload: {} });
   await new Promise((r) => setTimeout(r, 0));
   /** MAV_RESULT_DENIED = 3. */
-  conn.deliverAck({ command: conn.sent[0].fields.command, result: 3 });
+  conn.deliverAck({ command: conn.sent[0].fields.command, result: common.MavResult.UNSUPPORTED });
   const { collected } = await injected;
   assert.strictEqual(collected[0].topic, 'mavlink/error');
   assert.strictEqual(collected[0].payload.code, 'COMMAND_REJECTED');

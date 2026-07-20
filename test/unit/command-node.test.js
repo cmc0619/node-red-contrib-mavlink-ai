@@ -541,7 +541,15 @@ test('await-ack workflow sends carry the node profile id', async () => {
       queueMicrotask(() =>
         deliver({
           topic: 'mavlink/COMMAND_ACK',
-          payload: { name: 'COMMAND_ACK', sysid: 1, compid: 1, fields: { command: 400, result: 0 } }
+          payload: {
+            name: 'COMMAND_ACK',
+            sysid: 1,
+            compid: 1,
+            fields: {
+              command: common.MavCmd.COMPONENT_ARM_DISARM,
+              result: common.MavResult.ACCEPTED
+            }
+          }
         })
       );
       return Promise.resolve();

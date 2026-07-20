@@ -4,6 +4,19 @@ All notable changes to `node-red-contrib-mavlink-ai` are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking (pre-1.0): generated `node-mavlink` mappings are now authoritative
+  for protocol values.** Copied MAVLink assignments, numeric fallbacks, and
+  feature-specific aliases were removed. Friendly enum and ArduPilot mode input
+  must use exact generated member keys; an affected flow now fails instead of
+  being silently translated.
+- Raw numeric custom or dialect-external identifiers remain supported only on
+  explicit generic/advanced interfaces. Codec, transport, routing, and workflow
+  ownership are unchanged.
+
 ## [0.4.0] - 2026-07-15
 
 ### Changed
