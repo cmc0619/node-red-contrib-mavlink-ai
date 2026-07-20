@@ -394,8 +394,18 @@ module.exports = function registerMavlinkAiConnection(RED) {
       node.error(`mavlink-ai-connection '${node.name || node.id}': ${code}: ${message}`);
     }
 
+    // A disabled connection parks in the same DEACTIVATED state a missing
+    // dependency produces. Seed the reason before the own-config checks so their
+    // fatal exits are guarded on `!startInactive`: a disabled node constructs
+    // dark (grey 'disabled' badge, no fatal()/node.error() noise) rather than
+    // no-op'ing on its own bad accept-filter/signing/binding/transport config.
+    // In the enabled path `startInactive` is null here, so all those checks run
+    // unchanged. (A malformed route table still fails loud — it corrupts the
+    // packet router the constructor depends on, so it cannot park dark.)
+    let startInactive = node.disabled ? { code: 'DISABLED', message: 'Connection is disabled.' } : null;
+
     // --- required default profile / identity ---------------------------------
-    if (node._acceptFilterInvalid) {
+    if (!startInactive && node._acceptFilterInvalid) {
       fatal(
         'ACCEPT_FILTER_INVALID',
         `Accepted sysid/compid filter has invalid ids (${node._acceptFilterInvalid.join(', ')}); ` +
@@ -419,16 +429,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * this node, which redeploys it anyway. The first failure wins the recorded
      * reason; the reconcile re-checks everything on each deploy regardless.
      */
-    // A disabled connection parks in the same DEACTIVATED state a missing
-    // dependency produces: seed the reason here so the codec/route-table setup
-    // below (guarded on `!startInactive`) is skipped and the node constructs
-    // dark. With valid config the profile/identity checks below pass without
-    // overwriting this; a genuinely broken config still surfaces its own error.
-    let startInactive = node.disabled ? { code: 'DISABLED', message: 'Connection is disabled.' } : null;
-    // Guarded on `!startInactive` (first-failure-wins, matching the identity
-    // checks below) so a disabled connection stays DISABLED — grey badge, no
-    // fatal()/node.error() noise — instead of a broken profile overwriting it.
-    // In the enabled path `startInactive` is null here, so this runs unchanged.
+    // Guarded on `!startInactive` (first-failure-wins) so a disabled connection
+    // stays DISABLED — grey badge, no fatal()/node.error() noise — instead of a
+    // broken profile overwriting it. In the enabled path `startInactive` is null
+    // here, so this runs unchanged.
     if (!startInactive) {
       if (!node.profile) {
         fatal('NO_PROFILE', 'Connection has no Vehicle Profile configured.');

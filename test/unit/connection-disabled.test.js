@@ -114,6 +114,20 @@ test('disabled wins over invalid additionalIdentities — grey, not a red error,
   assert.strictEqual(connection.errors.length, 0, 'no ADDITIONAL_IDENTITIES_INVALID error is logged');
 });
 
+test('disabled wins over an invalid accept filter — grey, not a red error, no error log', (t) => {
+  const RED = new MockRED().loadNodes();
+  // Disabled AND a malformed accepted-sysid filter: the ACCEPT_FILTER_INVALID
+  // exit (the first own-config check) must not trip registerNoop — park grey.
+  const { connection } = makeConnection(RED, {
+    disabled: true, acceptedSysids: 'not-an-id'
+  });
+  t.after(() => RED.close(connection));
+
+  assert.strictEqual(connection.statusState, 'disabled');
+  assert.strictEqual(connection._inactiveError.code, 'DISABLED');
+  assert.strictEqual(connection.errors.length, 0, 'no ACCEPT_FILTER_INVALID error is logged');
+});
+
 test('badgeForState maps disabled to a grey badge', () => {
   const badge = badgeForState('disabled', 'disabled');
   assert.strictEqual(badge.fill, 'grey');
