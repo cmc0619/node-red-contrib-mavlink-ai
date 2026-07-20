@@ -5,7 +5,7 @@ const { makeFail } = require('../lib/util/node-errors');
 const { firstDefined, toInt, toNum, toBool, parseJsonObjectConfig } = require('../lib/util/validation');
 const { registerEditorApi } = require('../lib/editor-api');
 const { resolveInEnum } = require('../lib/protocol/enum-resolver');
-const { requireEnumMember } = require('../lib/protocol/protocol-values');
+const { bindEnumValues } = require('../lib/protocol/protocol-values');
 const { resolveFlightMode, splitPx4CustomMode } = require('../lib/command/flight-modes');
 const { CommandSend } = require('../lib/command/command-workflow');
 const { degToDegE7 } = require('../lib/util/geo');
@@ -323,6 +323,10 @@ module.exports = function registerMavlinkAiCommand(RED) {
 
       const defaults = node.profile.getDefaults ? node.profile.getDefaults() : {};
       const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
+      const value = bindEnumValues(bundle ? bundle.enums : null, {
+        dialect: bundle ? bundle.name : 'unknown',
+        consumer: 'command'
+      });
 
       // Editor preset fields under runtime payload values (#49): a static
       // editor value (e.g. mode "GUIDED", altitude 15) applies unless the
@@ -470,8 +474,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
        */
       if (defaults.firmware === 'px4') {
         try {
-          const context = { dialect: bundle ? bundle.name : 'unknown', consumer: 'command' };
-          const setModeCommand = requireEnumMember(bundle ? bundle.enums : null, 'MavCmd', 'DO_SET_MODE', context);
+          const setModeCommand = value('MavCmd', 'DO_SET_MODE');
           const command = resolveInEnum(bundle ? bundle.enums : null, 'MavCmd', fields.command);
           if (command === setModeCommand) {
             const split = splitPx4CustomMode(fields.param2);
