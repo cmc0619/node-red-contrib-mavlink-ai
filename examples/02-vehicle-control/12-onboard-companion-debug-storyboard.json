@@ -75,6 +75,7 @@
     "name": "Build command preview",
     "profile": "ai_profile_onboard_preview",
     "command": "arm",
+    "delivery": "build",
     "fields": "",
     "x": 450,
     "y": 160,

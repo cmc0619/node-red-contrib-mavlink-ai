@@ -47,7 +47,24 @@
     defaults: {
       name: { value: '' },
       profile: { value: '', type: 'mavlink-ai-vehicle', required: true },
-      connection: { value: '', type: 'mavlink-ai-connection', required: false },
+      connection: {
+        value: '',
+        type: 'mavlink-ai-connection',
+        required: false,
+        /** Send/Await have nothing to send on without a connection; catch it at edit time, not as a runtime NO_CONNECTION (#154, #207). */
+        validate: function (v) {
+          /**
+           * Read the live select while the dialog is open — `this.delivery`
+           * holds the pre-edit value, so switching to Send/Await and leaving
+           * the connection blank would pass validation until the node is
+           * reopened. Outside the dialog (import/deploy checks) fall back to
+           * the stored value; the command node's validator uses the same pattern.
+           */
+          const $live = $('#node-input-delivery');
+          const mode = $live.length ? $live.val() : this.delivery;
+          return (mode !== 'send' && mode !== 'await') || (v !== '' && v != null);
+        }
+      },
       action: { value: 'camera_photo', required: true },
       /** Blank => the profile's default component; set it for a camera/gimbal on its own component id. */
       targetComponent: { value: '' },
@@ -86,8 +103,8 @@
       /** Default to the non-destructive 'disable'; the operator must consciously pick 'release'. */
       parachuteAction: { value: 'disable' },
       period: { value: '' },
-      /** Optional COMMAND_ACK wait for the command-type verbs (#129). */
-      awaitAck: { value: false },
+      /** Explicit delivery mode (#207): Build only / Send via connection / Send & await result. */
+      delivery: { value: 'build' },
       timeoutMs: { value: '' },
       maxRetries: { value: '' },
       /** Required (non-negative) only for the trigger-by-distance action. */
@@ -105,7 +122,10 @@
       triggerNow: { value: false }
     },
     inputs: 1,
-    outputs: 1,
+    outputs: 2,
+    outputLabels: function (i) {
+      return i === 1 ? 'error' : (this.delivery === 'build' ? 'message' : 'result');
+    },
     icon: 'font-awesome/fa-camera',
     label: function () {
       return this.name || 'payload ' + (this.action || '').replace(/_/g, ' ');
@@ -123,14 +143,16 @@
         });
 
         /**
-         * Await-ack only applies to COMMAND_LONG verbs — message verbs carry no
-         * COMMAND_ACK — so hide the whole section for those, and reveal the
-         * timeout/retry rows only when the wait is enabled.
+         * Delivery controls which rows apply (#207): Send/Await need a
+         * connection to send on; the timeout/retry rows only matter for the
+         * COMMAND_ACK wait, which — like the old await-ack checkbox — only
+         * runs for COMMAND_LONG verbs (message verbs like the gimbal-manager
+         * ones carry no ack and degrade to Send semantics under Await).
          */
+        const delivery = $('#node-input-delivery').val();
+        $('.mav-payload-connection').toggle(delivery === 'send' || delivery === 'await');
         const isCommandVerb = MAV_PAYLOAD_MESSAGE_VERBS.indexOf(action) === -1;
-        $('.mav-payload-ack').toggle(isCommandVerb);
-        const showAckOpts = isCommandVerb && $('#node-input-awaitAck').is(':checked');
-        $('.mav-payload-ack-opts').toggle(showAckOpts);
+        $('.mav-payload-ack').toggle(delivery === 'await' && isCommandVerb);
 
         /**
          * Device-aware Component hint: make the addressing choice deliberate.
@@ -150,7 +172,7 @@
       }
 
       $action.on('change', refresh);
-      $('#node-input-awaitAck').on('change', refresh);
+      $('#node-input-delivery').on('change', refresh);
       refresh();
     }
   });
@@ -166,11 +188,16 @@
     <input type="text" id="node-input-profile">
   </div>
   <div class="form-row">
+    <label for="node-input-delivery"><i class="fa fa-arrow-right"></i> Delivery</label>
+    <select id="node-input-delivery" style="width:70%;">
+      <option value="build">Build only (hand off to MAVLink Out)</option>
+      <option value="send">Send via connection (fire-and-forget)</option>
+      <option value="await">Send &amp; await result (COMMAND_ACK)</option>
+    </select>
+  </div>
+  <div class="form-row mav-payload-connection">
     <label for="node-input-connection">Connection</label>
     <input type="text" id="node-input-connection">
-  </div>
-  <div class="form-tips" style="margin: -6px 0 8px 105px; width: 70%;">
-    Set a Connection to <b>send</b> directly; leave it empty to emit a <code>mavlink/send</code> message for a <b>mavlink-ai-out</b> node.
   </div>
   <div class="form-row">
     <label for="node-input-action">Action</label>
@@ -350,14 +377,10 @@
 
   <hr class="mav-payload-ack">
   <div class="form-row mav-payload-ack">
-    <label for="node-input-awaitAck" title="Wait for COMMAND_ACK and confirm the device accepted the command">Await ack</label>
-    <input type="checkbox" id="node-input-awaitAck" title="Wait for COMMAND_ACK and confirm the device accepted the command" style="width:auto; vertical-align:middle;">
-  </div>
-  <div class="form-row mav-payload-ack-opts">
     <label for="node-input-timeoutMs">Timeout (ms)</label>
     <input type="number" step="1" min="1" id="node-input-timeoutMs" placeholder="3000">
   </div>
-  <div class="form-row mav-payload-ack-opts">
+  <div class="form-row mav-payload-ack">
     <label for="node-input-maxRetries">Max retries</label>
     <input type="number" step="1" min="0" id="node-input-maxRetries" placeholder="3">
   </div>
@@ -365,8 +388,14 @@
 
 <script type="text/html" data-help-name="mavlink-ai-payload">
   <p>Controls onboard <b>payloads and peripherals</b> — camera, gimbal/mount, servo, relay, gripper — building the right <code>COMMAND_LONG</code> without the build node. These verbs are not drone-specific: servos, relays and grippers are just as useful on rovers, boats and submarines (lights, manipulators, sample release) as cameras and gimbals are on copters and survey planes.</p>
-  <h3>Sending</h3>
-  <p>With a <b>Connection</b> the node sends the command directly; without one it emits a <code>mavlink/send</code> message to wire into a <b>mavlink-ai-out</b> node. A <b>Profile</b> is always required for encoding.</p>
+  <h3>Delivery</h3>
+  <p>The <b>Delivery</b> control chooses what the node does with the built command:</p>
+  <ul>
+    <li><b>Build only</b> (default) — no connection needed. Emits the built command as a <code>mavlink/send</code> envelope on <b>port 0</b>, for a downstream <b>MAVLink AI Out</b> node.</li>
+    <li><b>Send via connection</b> — sends the command directly on the selected connection, fire-and-forget, and outputs a structured <code>payload/sent</code> result on <b>port 0</b>.</li>
+    <li><b>Send &amp; await result</b> — sends the command and waits for its <code>COMMAND_ACK</code> (see <i>Await ack</i> below), outputting the ack as <code>command/ack</code> on <b>port 0</b>.</li>
+  </ul>
+  <p>Every mode uses the same two-port contract: <b>port 0</b> is the node's product for that mode, <b>port 1</b> is errors (a structured <code>mavlink/error</code>, or <code>DELIVERY_UNSET</code> if no Delivery mode was ever chosen). <b>Send</b> and <b>Send &amp; await result</b> require a <b>Connection</b>; <b>Build only</b> does not — wire its output into a <b>MAVLink AI Out</b> node that is also in Build only mode. A <b>Profile</b> is always required for encoding.</p>
   <h3>Component</h3>
   <p>Payload devices are often separate MAVLink components, so <b>which</b> component a command is addressed to matters. Leaving <b>Component</b> blank uses the <b>profile's Default target component</b>, which is the <b>autopilot</b> (<code>MAV_COMP_ID_AUTOPILOT1</code> = <code>1</code>) unless the profile has been set otherwise. Defaulting to the autopilot is deliberate, not an accident: on ArduPilot the camera and gimbal are driven by the flight controller itself, so their commands are answered by the autopilot component. (If a profile's Default target component points at a specific device, blank addresses that instead.)</p>
   <p>A <b>standalone MAVLink camera</b> announces itself on <code>MAV_COMP_ID_CAMERA</code> (<code>100</code>) and a <b>standalone gimbal</b> on <code>MAV_COMP_ID_GIMBAL</code> (<code>154</code>). Commands sent to the autopilot component are silently ignored by such a device, so set <b>Component</b> to its id (the field offers these as suggestions, and shows a hint for camera/gimbal actions). Per message, <code>msg.payload.target_component</code> overrides the editor value.</p>
@@ -388,9 +417,9 @@
     <li><b>Parachute</b> — <code>DO_PARACHUTE</code>: enable, disable, or release.</li>
   </ul>
   <h3>Await ack</h3>
-  <p>For the command verbs (everything except the gimbal-manager messages), tick <b>Await ack</b> to wait for the device's <code>COMMAND_ACK</code> and confirm it accepted the command, retransmitting up to <b>Max retries</b> times every <b>Timeout</b> ms. On success the ack rides the output as a <code>command/ack</code> message; a rejection or timeout is emitted as a structured <code>mavlink/error</code>. The gimbal-manager verbs are messages with no ack, so they stay fire-and-forget regardless.</p>
+  <p>For the command verbs (everything except the gimbal-manager messages), <b>Send &amp; await result</b> waits for the device's <code>COMMAND_ACK</code> and confirms it accepted the command, retransmitting up to <b>Max retries</b> times every <b>Timeout</b> ms. On success the ack rides <b>port 0</b> as a <code>command/ack</code> message; a rejection or timeout is emitted as a structured <code>mavlink/error</code> on <b>port 1</b>. The gimbal-manager verbs are messages with no ack, so they degrade to <b>Send via connection</b> semantics (fire-and-forget, <code>payload/sent</code>) even under <b>Send &amp; await result</b>.</p>
   <h3>Inputs</h3>
   <p><code>msg.payload</code> overrides any editor value: <code>action</code>, <code>target_system</code>, <code>target_component</code>, and the per-action fields (<code>interval</code>, <code>count</code>, <code>sequence</code>, <code>stream_id</code>, <code>status_frequency</code>, <code>camera_mode</code>, <code>zoom_type</code>, <code>zoom_value</code>, <code>focus_type</code>, <code>focus_value</code>, <code>distance</code>, <code>trigger_now</code>, <code>pitch</code>, <code>roll</code>, <code>yaw</code>, <code>gimbal_device_id</code>, <code>yaw_lock</code>, <code>instance</code>, <code>pwm</code>, <code>on</code>, <code>grip_action</code>, <code>winch_action</code>, <code>length</code>, <code>rate</code>, <code>parachute_action</code>, <code>period</code>, <code>timeout_ms</code>, <code>max_retries</code>).</p>
   <h3>Output</h3>
-  <p>Without a connection, a <code>mavlink/send</code> message for <b>mavlink-ai-out</b>. Failures are emitted as a structured <code>mavlink/error</code> message on the same output.</p>
+  <p><b>Port 0</b> carries the node's product for the selected Delivery mode (built <code>mavlink/send</code> message, <code>payload/sent</code> confirmation, or <code>command/ack</code> result). <b>Port 1</b> carries errors as a structured <code>mavlink/error</code> message.</p>
 </script>

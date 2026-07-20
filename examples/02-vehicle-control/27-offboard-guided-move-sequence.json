@@ -4,7 +4,7 @@
     "type": "tab",
     "label": "MAVLink AI - 27 Offboard Move Sequence",
     "disabled": false,
-    "info": "The real guided/offboard workflow: start a setpoint stream, switch the vehicle into a setpoint-accepting mode, steer by refreshing the streamed setpoint, and stop cleanly.\n\nOrdering matters on PX4: OFFBOARD refuses to engage (and drops out) unless a setpoint stream of >= ~2 Hz is ALREADY flowing, so step 1 starts the stream before step 2 switches the mode. ArduPilot GUIDED does not need the pre-stream, but the same sequence works there too - just pick GUIDED in step 2.\n\nSteps: 1) start the built-in stream holding zero velocity (the move node resends it at 5 Hz until stopped), 2) set the mode with Await ack so the debug shows the vehicle accepted it, 3) send a discrete position target (one-shot: up 5 m, 10 m North), 4) steer by refreshing the SAME streaming node - the inject overrides velocity via msg.payload and the stream picks it up on its next tick, 5) stop the stream with msg.payload.stream=false (the node also tears the stream down on redeploy/close).\n\nSending: the moves and the mode command send directly through the shared UDP connection (streaming requires a Connection - there is nowhere to stream a build-only message). Point it at your SITL or vehicle; the SITL example's ./test flows use the same 0.0.0.0:14550 bind. Debug nodes show the mode ack and any structured mavlink/error.\n\nAltitude/climb are entered up-positive; the move node maps them to NED's negative z/vz for you. If the profile firmware is ArduPilot or PX4 the node also raises advisory warnings for mask/frame combinations that firmware is known not to honor (force setpoints, PX4 OFFSET frames, ...)."
+    "info": "The real guided/offboard workflow: start a setpoint stream, switch the vehicle into a setpoint-accepting mode, steer by refreshing the streamed setpoint, and stop cleanly.\n\nOrdering matters on PX4: OFFBOARD refuses to engage (and drops out) unless a setpoint stream of >= ~2 Hz is ALREADY flowing, so step 1 starts the stream before step 2 switches the mode. ArduPilot GUIDED does not need the pre-stream, but the same sequence works there too - just pick GUIDED in step 2.\n\nSteps: 1) start the built-in stream holding zero velocity via Delivery: Stream via connection (the move node resends it at 5 Hz until stopped), 2) set the mode with Delivery: Send & await result so the debug shows the vehicle accepted it, 3) send a discrete position target via Delivery: Send via connection (one-shot: up 5 m, 10 m North), 4) steer by refreshing the SAME streaming node - the inject overrides velocity via msg.payload and the stream picks it up on its next tick, 5) stop the stream with msg.payload.stream=false (the node also tears the stream down on redeploy/close).\n\nSending: the moves and the mode command send directly through the shared UDP connection (Stream/Send Delivery requires a Connection - there is nowhere to stream or send a build-only message). Point it at your SITL or vehicle; the SITL example's ./test flows use the same 0.0.0.0:14550 bind. Debug nodes show the mode ack and any structured mavlink/error (port 1 on each node)."
   },
   {
     "id": "ai_profile_copter",
@@ -113,7 +113,7 @@
     "accelUp": "",
     "yaw": "",
     "yawRate": "",
-    "stream": true,
+    "delivery": "stream",
     "streamRateHz": 5,
     "x": 500,
     "y": 130,
@@ -152,7 +152,7 @@
     "connection": "ai_conn_offboard",
     "command": "set_mode",
     "sendAs": "long",
-    "awaitAck": true,
+    "delivery": "await",
     "timeoutMs": 3000,
     "maxRetries": 3,
     "fields": "",
@@ -209,7 +209,7 @@
     "accelUp": "",
     "yaw": "",
     "yawRate": "",
-    "stream": false,
+    "delivery": "send",
     "streamRateHz": 5,
     "x": 490,
     "y": 240,

@@ -64,7 +64,7 @@ test('command node close aborts an in-flight await-ack workflow (#83)', async ()
     profile: 'p1',
     connection: 'conn1',
     command: 'arm',
-    awaitAck: true,
+    delivery: 'await',
     timeoutMs: 60000,
     maxRetries: 3
   });
@@ -152,7 +152,7 @@ test('fanout close aborts the current ACK workflow and skips remaining targets (
     profile: 'p1',
     connection: 'conn1',
     command: 'MAV_CMD_COMPONENT_ARM_DISARM',
-    awaitAck: true,
+    delivery: 'await',
     timeoutMs: 60000,
     maxRetries: 3
   });

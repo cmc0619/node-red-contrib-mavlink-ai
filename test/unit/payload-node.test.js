@@ -66,7 +66,10 @@ function setup(payloadConfig, { withConnection = false, ack = false } = {}) {
   }
   const node = RED.create(
     'mavlink-ai-payload',
-    Object.assign({ id: 'pl1', profile: 'p1', connection: withConnection ? 'conn1' : '' }, payloadConfig)
+    Object.assign(
+      { id: 'pl1', profile: 'p1', delivery: 'build', connection: withConnection ? 'conn1' : '' },
+      payloadConfig
+    )
   );
   return { RED, node, conn };
 }
@@ -89,26 +92,29 @@ test('buildPayload rejects an unknown action and a servo with no PWM', () => {
 test('take photo build-only emits COMMAND_LONG for IMAGE_START_CAPTURE', async () => {
   const { RED, node } = setup({ action: 'camera_photo', count: '3', targetComponent: '100' });
   const { collected } = await RED.inject(node, { payload: {} });
-  const out = collected[0].payload;
-  assert.strictEqual(collected[0].topic, 'mavlink/send');
+  const out = collected[0][0].payload;
+  assert.strictEqual(collected[0][0].topic, 'mavlink/send');
   assert.strictEqual(out.name, 'COMMAND_LONG');
   assert.strictEqual(out.fields.param3, 3);
   assert.strictEqual(out.target_component, 100);
+  assert.ok(!collected.map((o) => o[1]).find(Boolean), 'no error on port 1');
 });
 
 test('servo action sends directly through a connection', async () => {
-  const { RED, node, conn } = setup({ action: 'servo', instance: '9', pwm: '1900' }, { withConnection: true });
+  const { RED, node, conn } = setup({ action: 'servo', delivery: 'send', instance: '9', pwm: '1900' }, { withConnection: true });
   const { collected } = await RED.inject(node, { payload: {} });
-  assert.strictEqual(collected.length, 0);
   assert.strictEqual(conn.sent.length, 1);
   assert.strictEqual(conn.sent[0].fields.param1, 9);
   assert.strictEqual(conn.sent[0].fields.param2, 1900);
+  const out = collected.map((o) => o[0]).find(Boolean);
+  assert.strictEqual(out.topic, 'payload/sent');
+  assert.strictEqual(out.payload.sent, true);
 });
 
 test('gimbal aim sets pitch/roll/yaw params in degrees', async () => {
   const { RED, node } = setup({ action: 'gimbal_aim', pitch: '-30', yaw: '90' });
   const { collected } = await RED.inject(node, { payload: {} });
-  const out = collected[0].payload;
+  const out = collected[0][0].payload;
   assert.strictEqual(out.fields.param1, -30);
   assert.strictEqual(out.fields.param3, 90);
 });
@@ -116,7 +122,7 @@ test('gimbal aim sets pitch/roll/yaw params in degrees', async () => {
 test('relay on/off maps to param2 1/0 and payload overrides the editor', async () => {
   const { RED, node } = setup({ action: 'relay', instance: '0', on: false });
   const { collected } = await RED.inject(node, { payload: { on: true } });
-  assert.strictEqual(collected[0].payload.fields.param2, 1);
+  assert.strictEqual(collected[0][0].payload.fields.param2, 1);
 });
 
 test('gimbal_manager_aim builds a GIMBAL_MANAGER_SET_PITCHYAW message in radians', () => {
@@ -132,17 +138,18 @@ test('gimbal_manager_aim builds a GIMBAL_MANAGER_SET_PITCHYAW message in radians
 });
 
 test('gimbal manager aim sends the message (not a COMMAND_LONG) through a connection', async () => {
-  const { RED, node, conn } = setup({ action: 'gimbal_manager_aim', pitch: '-45', yaw: '0' }, { withConnection: true });
+  const { RED, node, conn } = setup({ action: 'gimbal_manager_aim', delivery: 'send', pitch: '-45', yaw: '0' }, { withConnection: true });
   const { collected } = await RED.inject(node, { payload: {} });
-  assert.strictEqual(collected.length, 0);
   assert.strictEqual(conn.sent[0].name, 'GIMBAL_MANAGER_SET_PITCHYAW');
   assert.ok(Math.abs(conn.sent[0].fields.pitch - -Math.PI / 4) < 1e-9);
+  const out = collected.map((o) => o[0]).find(Boolean);
+  assert.strictEqual(out.topic, 'payload/sent');
 });
 
 test('camera_mode maps friendly names to the CAMERA_MODE value', async () => {
   const { RED, node } = setup({ action: 'camera_mode', cameraMode: 'survey' });
   const { collected } = await RED.inject(node, { payload: {} });
-  const out = collected[0].payload;
+  const out = collected[0][0].payload;
   assert.strictEqual(out.name, 'COMMAND_LONG');
   assert.strictEqual(out.fields.param2, 2);
 });
@@ -150,12 +157,12 @@ test('camera_mode maps friendly names to the CAMERA_MODE value', async () => {
 test('cam_trigger_distance sets the distance and rejects a negative value', async () => {
   const { RED, node } = setup({ action: 'cam_trigger_distance', distance: '25' });
   const ok = await RED.inject(node, { payload: {} });
-  assert.strictEqual(ok.collected[0].payload.fields.param1, 25);
+  assert.strictEqual(ok.collected[0][0].payload.fields.param1, 25);
 
   const { RED: RED2, node: n2 } = setup({ action: 'cam_trigger_distance', distance: '' });
   const bad = await RED2.inject(n2, { payload: { distance: -5 } });
-  assert.strictEqual(bad.collected[0].topic, 'mavlink/error');
-  assert.strictEqual(bad.collected[0].payload.code, 'BAD_TRIGGER_DISTANCE');
+  assert.strictEqual(bad.collected[0][1].topic, 'mavlink/error');
+  assert.strictEqual(bad.collected[0][1].payload.code, 'BAD_TRIGGER_DISTANCE');
 });
 
 test('gimbal_manager_attitude builds a quaternion GIMBAL_MANAGER_SET_ATTITUDE with NaN rates (#129)', () => {
@@ -218,9 +225,9 @@ test('repeat_servo pulses count/period and rejects a missing PWM; repeat_relay o
   assert.strictEqual(relay.fields.param3, 1);
 });
 
-test('await-ack resolves the COMMAND_ACK onto the output for a command verb (#129)', async () => {
+test('await on a COMMAND_LONG action resolves the COMMAND_ACK onto port 0 (#129)', async () => {
   const { RED, node, conn } = setup(
-    { action: 'gripper', instance: '1', gripAction: 'grab', awaitAck: true, timeoutMs: '50', maxRetries: '1' },
+    { action: 'gripper', instance: '1', gripAction: 'grab', delivery: 'await', timeoutMs: '50', maxRetries: '1' },
     { withConnection: true, ack: true }
   );
   const injected = RED.inject(node, { payload: {} });
@@ -229,13 +236,14 @@ test('await-ack resolves the COMMAND_ACK onto the output for a command verb (#12
   assert.strictEqual(conn.sent[0].name, 'COMMAND_LONG');
   conn.deliverAck({ command: conn.sent[0].fields.command, result: 0 });
   const { collected } = await injected;
-  assert.strictEqual(collected[0].topic, 'command/ack');
-  assert.strictEqual(collected[0].payload.result, 0);
+  const out = collected.map((o) => o[0]).find(Boolean);
+  assert.strictEqual(out.topic, 'command/ack');
+  assert.strictEqual(out.payload.result, 0);
 });
 
 test('await-ack surfaces a rejected command as a structured error (#129)', async () => {
   const { RED, node, conn } = setup(
-    { action: 'gripper', gripAction: 'grab', awaitAck: true, timeoutMs: '50', maxRetries: '0' },
+    { action: 'gripper', gripAction: 'grab', delivery: 'await', timeoutMs: '50', maxRetries: '0' },
     { withConnection: true, ack: true }
   );
   const injected = RED.inject(node, { payload: {} });
@@ -243,37 +251,40 @@ test('await-ack surfaces a rejected command as a structured error (#129)', async
   /** MAV_RESULT_DENIED = 3. */
   conn.deliverAck({ command: conn.sent[0].fields.command, result: 3 });
   const { collected } = await injected;
-  assert.strictEqual(collected[0].topic, 'mavlink/error');
-  assert.strictEqual(collected[0].payload.code, 'COMMAND_REJECTED');
+  assert.strictEqual(collected[0][1].topic, 'mavlink/error');
+  assert.strictEqual(collected[0][1].payload.code, 'COMMAND_REJECTED');
 });
 
-test('await-ack without a connection is a structured NO_CONNECTION error, not fire-and-forget (#129)', async () => {
-  const { RED, node } = setup({ action: 'gripper', gripAction: 'grab', awaitAck: true });
+test('await without a connection is a structured NO_CONNECTION error, not fire-and-forget (#129)', async () => {
+  const { RED, node } = setup({ action: 'gripper', gripAction: 'grab', delivery: 'await' });
   const { collected } = await RED.inject(node, { payload: {} });
-  assert.strictEqual(collected[0].topic, 'mavlink/error');
-  assert.strictEqual(collected[0].payload.code, 'NO_CONNECTION');
+  assert.strictEqual(collected[0][1].topic, 'mavlink/error');
+  assert.strictEqual(collected[0][1].payload.code, 'NO_CONNECTION');
 });
 
-test('await-ack on a broadcast (target_system 0) is a structured BROADCAST_NO_ACK error (#129)', async () => {
-  const { RED, node } = setup({ action: 'gripper', gripAction: 'grab', awaitAck: true }, { withConnection: true, ack: true });
+test('await on a broadcast (target_system 0) is a structured BROADCAST_NO_ACK error (#129)', async () => {
+  const { RED, node } = setup({ action: 'gripper', gripAction: 'grab', delivery: 'await' }, { withConnection: true, ack: true });
   const { collected } = await RED.inject(node, { payload: { target_system: 0 } });
-  assert.strictEqual(collected[0].topic, 'mavlink/error');
-  assert.strictEqual(collected[0].payload.code, 'BROADCAST_NO_ACK');
+  assert.strictEqual(collected[0][1].topic, 'mavlink/error');
+  assert.strictEqual(collected[0][1].payload.code, 'BROADCAST_NO_ACK');
 });
 
-test('await-ack is skipped for a message verb (gimbal-manager stays fire-and-forget) (#129)', async () => {
-  const { RED, node, conn } = setup(
-    { action: 'gimbal_manager_aim', pitch: '-45', awaitAck: true },
+test('await is skipped for a message verb (gimbal-manager degrades to a send) (#129)', async (t) => {
+  const { RED, conn, node } = setup(
+    { action: 'gimbal_manager_aim', delivery: 'await', pitch: '-45' },
     { withConnection: true, ack: true }
   );
+  t.after(() => RED.close(node));
   const { collected } = await RED.inject(node, { payload: {} });
-  assert.strictEqual(collected.length, 0, 'no ack awaited for a non-COMMAND_LONG verb');
+  assert.strictEqual(conn.sent.length, 1, 'no ack awaited for a non-COMMAND_LONG verb — sent directly instead');
   assert.strictEqual(conn.sent[0].name, 'GIMBAL_MANAGER_SET_PITCHYAW');
+  const out = collected.map((o) => o[0]).find(Boolean);
+  assert.strictEqual(out.topic, 'payload/sent');
 });
 
 test('await-ack emits nothing and clears workflows when the node closes mid-flight (#129)', async () => {
   const { RED, node } = setup(
-    { action: 'gripper', gripAction: 'grab', awaitAck: true, timeoutMs: '5000', maxRetries: '0' },
+    { action: 'gripper', gripAction: 'grab', delivery: 'await', timeoutMs: '5000', maxRetries: '0' },
     { withConnection: true, ack: true }
   );
   const injected = RED.inject(node, { payload: {} });
@@ -290,8 +301,109 @@ test('await-ack emits nothing and clears workflows when the node closes mid-flig
 
 test('missing profile emits MISSING_PROFILE', async () => {
   const RED = new MockRED().loadNodes();
-  const node = RED.create('mavlink-ai-payload', { id: 'pl2', action: 'camera_photo' });
+  const node = RED.create('mavlink-ai-payload', { id: 'pl2', action: 'camera_photo', delivery: 'build' });
   const { collected } = await RED.inject(node, { payload: {} });
-  assert.strictEqual(collected[0].topic, 'mavlink/error');
-  assert.strictEqual(collected[0].payload.code, 'MISSING_PROFILE');
+  assert.strictEqual(collected[0][1].topic, 'mavlink/error');
+  assert.strictEqual(collected[0][1].payload.code, 'MISSING_PROFILE');
+});
+
+// --- Delivery modes (#207) ---------------------------------------------------
+
+test('payload Build only emits mavlink/send on port 0, nothing on error', async (t) => {
+  const { RED, node } = setup({ delivery: 'build', action: 'camera_photo' });
+  t.after(() => RED.close(node));
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected[0][0].topic, 'mavlink/send');
+  assert.strictEqual(collected[0][0].payload.name, 'COMMAND_LONG');
+  assert.ok(!collected.map((o) => o[1]).find(Boolean), 'no error on port 1');
+});
+
+test('payload Send via connection emits payload/sent on port 0 (observable fire-and-forget)', async (t) => {
+  const { RED, conn, node } = setup({ delivery: 'send', action: 'camera_photo' }, { withConnection: true });
+  t.after(() => RED.close(node));
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(conn.sent.length, 1, 'sent directly');
+  const out = collected.map((o) => o[0]).find(Boolean);
+  assert.strictEqual(out.topic, 'payload/sent');
+  assert.strictEqual(out.payload.sent, true);
+});
+
+test('payload with no delivery set fails closed on the error port', async (t) => {
+  const { RED, node } = setup({ action: 'camera_photo', delivery: undefined }); // no delivery
+  t.after(() => RED.close(node));
+  const { collected } = await RED.inject(node, { payload: {} });
+  const err = collected.map((o) => o[1]).find(Boolean);
+  assert.strictEqual(err.payload.code, 'DELIVERY_UNSET');
+});
+
+/**
+ * Both Codex and Greptile flagged the same gap (#308): before this, a node
+ * saved without a `delivery` value only failed at the first input, so it
+ * looked healthy right after deploy. resolveDeliveryMode is now also called
+ * at construct time, so the red badge appears immediately.
+ */
+test('payload node badges a construct-time DELIVERY_UNSET before any input (#308)', () => {
+  const { node } = setup({ action: 'camera_photo', delivery: undefined }); // no delivery
+  assert.ok(node._configError, 'node._configError set at construct time');
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
+});
+
+/**
+ * #308 review finding G1: the construct-time DELIVERY_UNSET badge above must
+ * survive a `flows:started` refresh (e.g. an unrelated config-node redeploy)
+ * instead of watchConfigBadge's own refresh silently clearing it to idle.
+ */
+test('payload node keeps the DELIVERY_UNSET badge across a flows:started refresh (#308 G1)', () => {
+  const { RED, node } = setup({ action: 'camera_photo', delivery: undefined }); // no delivery
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
+
+  RED.events.emit('flows:started');
+
+  assert.ok(node._configError, 'node._configError remains set after refresh');
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
+});
+
+/**
+ * #308 review finding G2: the Send (fire-and-forget) path awaits
+ * connection.send() and, before this fix, emitted payload/sent unconditionally
+ * once it resolved — even if the node closed mid-flight. Mirrors the
+ * await-ack path's own close guard above.
+ */
+test('payload Send via connection emits nothing if the node closes before the in-flight send resolves (#308 G2)', async () => {
+  const { RED, conn, node } = setup({ delivery: 'send', action: 'camera_photo' }, { withConnection: true });
+  let resolveSend;
+  conn.send = () => new Promise((resolve) => {
+    resolveSend = resolve;
+  });
+  const injected = RED.inject(node, { payload: {} });
+  await new Promise((r) => setTimeout(r, 0));
+  const closed = RED.close(node);
+  resolveSend();
+  const [{ collected }] = await Promise.all([injected, closed]);
+  const sentOutput = collected.map((o) => o[0]).find(Boolean);
+  assert.strictEqual(sentOutput, undefined, 'no payload/sent output from a closed node');
+});
+
+test('payload Send & await result emits command/ack on port 0 for a COMMAND_LONG action', async (t) => {
+  const { RED, conn, node } = setup(
+    { delivery: 'await', action: 'gripper', gripAction: 'grab', timeoutMs: '50', maxRetries: '1' },
+    { withConnection: true, ack: true }
+  );
+  t.after(() => RED.close(node));
+  const injected = RED.inject(node, { payload: {} });
+  await new Promise((r) => setTimeout(r, 0));
+  conn.deliverAck({ command: conn.sent[0].fields.command, result: 0 });
+  const { collected } = await injected;
+  const out = collected.map((o) => o[0]).find(Boolean);
+  assert.strictEqual(out.topic, 'command/ack');
+});
+
+test('payload await on a non-COMMAND_LONG verb degrades to a send-confirm', async (t) => {
+  const { RED, conn, node } = setup({ delivery: 'await', connection: 'conn1', action: 'gimbal_manager_aim', pitch: 10, yaw: 0 }, { withConnection: true, ack: true });
+  t.after(() => RED.close(node));
+  const sends = [];
+  conn.send = (e) => { sends.push(e); return Promise.resolve(); };
+  const { collected } = await RED.inject(node, { payload: { pitch: 10, yaw: 0 } });
+  assert.strictEqual(sends.length, 1);
+  assert.strictEqual(collected.map((o) => o[0]).find(Boolean).topic, 'payload/sent');
 });
