@@ -348,6 +348,42 @@ test('payload node badges a construct-time DELIVERY_UNSET before any input (#308
   assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
 });
 
+/**
+ * #308 review finding G1: the construct-time DELIVERY_UNSET badge above must
+ * survive a `flows:started` refresh (e.g. an unrelated config-node redeploy)
+ * instead of watchConfigBadge's own refresh silently clearing it to idle.
+ */
+test('payload node keeps the DELIVERY_UNSET badge across a flows:started refresh (#308 G1)', () => {
+  const { RED, node } = setup({ action: 'camera_photo', delivery: undefined }); // no delivery
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
+
+  RED.events.emit('flows:started');
+
+  assert.ok(node._configError, 'node._configError remains set after refresh');
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
+});
+
+/**
+ * #308 review finding G2: the Send (fire-and-forget) path awaits
+ * connection.send() and, before this fix, emitted payload/sent unconditionally
+ * once it resolved — even if the node closed mid-flight. Mirrors the
+ * await-ack path's own close guard above.
+ */
+test('payload Send via connection emits nothing if the node closes before the in-flight send resolves (#308 G2)', async () => {
+  const { RED, conn, node } = setup({ delivery: 'send', action: 'camera_photo' }, { withConnection: true });
+  let resolveSend;
+  conn.send = () => new Promise((resolve) => {
+    resolveSend = resolve;
+  });
+  const injected = RED.inject(node, { payload: {} });
+  await new Promise((r) => setTimeout(r, 0));
+  const closed = RED.close(node);
+  resolveSend();
+  const [{ collected }] = await Promise.all([injected, closed]);
+  const sentOutput = collected.map((o) => o[0]).find(Boolean);
+  assert.strictEqual(sentOutput, undefined, 'no payload/sent output from a closed node');
+});
+
 test('payload Send & await result emits command/ack on port 0 for a COMMAND_LONG action', async (t) => {
   const { RED, conn, node } = setup(
     { delivery: 'await', action: 'gripper', gripAction: 'grab', timeoutMs: '50', maxRetries: '1' },

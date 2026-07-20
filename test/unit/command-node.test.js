@@ -650,6 +650,30 @@ test('command node badges a construct-time DELIVERY_UNSET before any input (#308
   assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
 });
 
+/**
+ * #308 review finding G1: the construct-time DELIVERY_UNSET badge above must
+ * survive a `flows:started` refresh — e.g. a config-node redeploy elsewhere
+ * in the flow — instead of watchConfigBadge's own refresh silently clearing
+ * it back to idle because it sees no *required* connection (an unset
+ * Delivery needs none). Without the fix this node would look healthy again
+ * until the next input, defeating the deploy-time feedback for an imported
+ * or pre-upgrade node.
+ */
+test('command node keeps the DELIVERY_UNSET badge across a flows:started refresh (#308 G1)', () => {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  const node = RED.create('mavlink-ai-command', { id: 'c6', profile: 'p1', command: 'arm' }); // no delivery
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
+
+  RED.events.emit('flows:started');
+
+  assert.ok(node._configError, 'node._configError remains set after refresh');
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
+});
+
 // --- Delivery modes (#207) ---------------------------------------------------
 
 test('command Build only emits mavlink/send on port 0, nothing on error', async (t) => {
@@ -716,4 +740,28 @@ test('command Send & await result emits command/ack on port 0', async (t) => {
   const { collected } = await RED.inject(node, {});
   const out = collected.map((o) => o[0]).find(Boolean);
   assert.strictEqual(out.topic, 'command/ack');
+});
+
+/**
+ * #308 review finding G2: the Send (fire-and-forget) path awaits
+ * connection.send() and, before this fix, emitted command/sent unconditionally
+ * once it resolved. A close/redeploy that lands while that send is still
+ * in flight must suppress the output — mirroring the Await path's existing
+ * `if (closed) return done();` guard — so a slow/queued send doesn't drive
+ * downstream logic from an obsolete node.
+ */
+test('command Send via connection emits nothing if the node closes before the in-flight send resolves (#308 G2)', async () => {
+  const { RED, conn, node } = setupWithConnection({ delivery: 'send', command: 'arm' });
+  let resolveSend;
+  conn.send = () => new Promise((resolve) => {
+    resolveSend = resolve;
+  });
+  const injected = RED.inject(node, {});
+  // Let the input handler run up to its `await connection.send(...)` before closing.
+  await new Promise((r) => setTimeout(r, 0));
+  const closed = RED.close(node);
+  resolveSend();
+  const [{ collected }] = await Promise.all([injected, closed]);
+  const sentOutput = collected.map((o) => o[0]).find(Boolean);
+  assert.strictEqual(sentOutput, undefined, 'no command/sent output from a closed node');
 });

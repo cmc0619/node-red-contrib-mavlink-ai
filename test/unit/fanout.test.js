@@ -746,3 +746,50 @@ test('fanout node badges a construct-time DELIVERY_UNSET before any input (#308)
   assert.ok(node._configError, 'node._configError set at construct time');
   assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
 });
+
+/**
+ * #308 review finding G1: the construct-time DELIVERY_UNSET badge above must
+ * survive a `flows:started` refresh (e.g. an unrelated config-node redeploy)
+ * instead of watchConfigBadge's own refresh silently clearing it to idle.
+ */
+test('fanout node keeps the DELIVERY_UNSET badge across a flows:started refresh (#308 G1)', () => {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  const node = RED.create('mavlink-ai-fanout', { id: 'f3', profile: 'p1', command: 'MAV_CMD_NAV_LAND' }); // no delivery
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
+
+  RED.events.emit('flows:started');
+
+  assert.ok(node._configError, 'node._configError remains set after refresh');
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
+});
+
+/**
+ * #308 review finding G2: unlike command/move/payload's single fire-and-
+ * forget send, fanout's SEND delivery dispatches per-target sends and only
+ * aggregates + emits `swarm/sent` after they all settle — but that aggregate
+ * emission must still be suppressed if the node closed while targets were
+ * still in flight, so a slow/queued send from a redeployed-away fanout can't
+ * drive downstream logic with a stale aggregate.
+ */
+test('fanout Send via connection emits no swarm/sent aggregate if the node closes mid-flight (#308 G2)', async () => {
+  const { RED, node, conn } = setup({ command: 'MAV_CMD_COMPONENT_ARM_DISARM', delivery: 'send' });
+  const resolvers = [];
+  conn.send = (message) => {
+    conn.sent.push(message);
+    return new Promise((resolve) => resolvers.push(resolve));
+  };
+  const injected = RED.inject(node, { payload: { sysids: [1, 2] } });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(resolvers.length >= 1, 'at least one send is in flight before close');
+  const closed = RED.close(node);
+  for (const resolve of resolvers) {
+    resolve();
+  }
+  const [{ collected }] = await Promise.all([injected, closed]);
+  const out = collected.map((o) => o[0]).find(Boolean);
+  assert.strictEqual(out, undefined, 'no swarm/sent aggregate from a closed node');
+});

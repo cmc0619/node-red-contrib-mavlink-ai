@@ -55,9 +55,10 @@ module.exports = function registerMavlinkAiMove(RED) {
      * so this only adds deploy-time feedback. "invalid profile" is the more
      * fundamental problem and watchConfigBadge already painted that badge
      * above, so this only paints over it when the profile itself resolved
-     * fine, and it never competes with watchConfigBadge's own idle-badge
-     * refresh on `flows:started` (which knows nothing of delivery). Move has
-     * no "await" mode — setpoints carry no ack.
+     * fine; watchConfigBadge's own `flows:started` refresh also checks
+     * `node._configError` (#308 G1), so the badge is re-asserted — not
+     * cleared — on every later redeploy too, for as long as delivery stays
+     * unset. Move has no "await" mode — setpoints carry no ack.
      */
     let deliveryConfigError = null;
     try {
@@ -121,6 +122,13 @@ module.exports = function registerMavlinkAiMove(RED) {
      * (possibly from an already-closed node).
      */
     node._streamGen = 0;
+    /**
+     * Set once the node is closing (#308 G2), so the Send (fire-and-forget)
+     * path can suppress its `move/sent` output if `connection.send(...)`
+     * settles after a close/redeploy landed while it was in flight — mirroring
+     * the payload node's `node._closed` guard.
+     */
+    node._closed = false;
 
     /**
      * Stop-on-redeploy guard for the config-only case (#128): when the referenced
@@ -353,6 +361,14 @@ module.exports = function registerMavlinkAiMove(RED) {
         } catch (err) {
           return fail(err, 'SEND_FAILED');
         }
+        /**
+         * Close/redeploy during the await above (#308 G2): a slow or queued
+         * in-flight send that resolves after this node closed must not drive
+         * downstream logic with a `move/sent` from an obsolete node.
+         */
+        if (node._closed) {
+          return done();
+        }
         node.status({ fill: 'green', shape: 'dot', text: `sent ${labelFor(built.name)}` });
         msg.topic = 'move/sent';
         msg.payload = {
@@ -393,6 +409,7 @@ module.exports = function registerMavlinkAiMove(RED) {
      * with no node in control. Tear the timer down synchronously on close.
      */
     node.on('close', function closeMove(done) {
+      node._closed = true;
       stopStream(node);
       done();
     });

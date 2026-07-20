@@ -65,8 +65,10 @@ module.exports = function registerMavlinkAiPayload(RED) {
      * so this only adds deploy-time feedback. "invalid profile" is the more
      * fundamental problem and watchConfigBadge already painted that badge
      * above, so this only paints over it when the profile itself resolved
-     * fine, and it never competes with watchConfigBadge's own idle-badge
-     * refresh on `flows:started` (which knows nothing of delivery).
+     * fine; watchConfigBadge's own `flows:started` refresh also checks
+     * `node._configError` (#308 G1), so the badge is re-asserted — not
+     * cleared — on every later redeploy too, for as long as delivery stays
+     * unset.
      */
     let deliveryConfigError = null;
     try {
@@ -296,6 +298,15 @@ module.exports = function registerMavlinkAiPayload(RED) {
           );
         } catch (err) {
           return fail(err, 'SEND_FAILED');
+        }
+        /**
+         * Close/redeploy during the await above (#308 G2): mirrors
+         * runWithAck's own `node._closed` guard, so a slow or queued
+         * in-flight send that resolves after this node closed can't drive
+         * downstream logic with a `payload/sent` from an obsolete node.
+         */
+        if (node._closed) {
+          return done();
         }
         node.status({ fill: 'green', shape: 'dot', text: `sent ${action}` });
         msg.topic = 'payload/sent';

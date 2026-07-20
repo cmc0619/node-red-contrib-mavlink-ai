@@ -440,15 +440,60 @@ test('move node badges a construct-time DELIVERY_UNSET before any input (#308)',
 });
 
 /**
+ * #308 review finding G1: the construct-time DELIVERY_UNSET badge above must
+ * survive a `flows:started` refresh (e.g. an unrelated config-node redeploy)
+ * instead of watchConfigBadge's own refresh silently clearing it to idle.
+ */
+test('move node keeps the DELIVERY_UNSET badge across a flows:started refresh (#308 G1)', () => {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  const node = RED.create('mavlink-ai-move', { id: 'm5', profile: 'p1', coordinate: 'local', preset: 'position' }); // no delivery
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
+
+  RED.events.emit('flows:started');
+
+  assert.ok(node._configError, 'node._configError remains set after refresh');
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
+});
+
+/**
+ * #308 review finding G2: the Send (fire-and-forget) path awaits
+ * connection.send() and, before this fix, emitted move/sent unconditionally
+ * once it resolved — even if the node closed mid-flight.
+ */
+test('move Send via connection emits nothing if the node closes before the in-flight send resolves (#308 G2)', async () => {
+  const { RED, node, conn } = setup(
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0.5', delivery: 'send' },
+    { withConnection: true }
+  );
+  let resolveSend;
+  conn.send = () => new Promise((resolve) => {
+    resolveSend = resolve;
+  });
+  const injected = RED.inject(node, { payload: {} });
+  await new Promise((r) => setTimeout(r, 0));
+  const closed = RED.close(node);
+  resolveSend();
+  const [{ collected }] = await Promise.all([injected, closed]);
+  const sentOutput = collected.map((o) => o[0]).find(Boolean);
+  assert.strictEqual(sentOutput, undefined, 'no move/sent output from a closed node');
+});
+
+/**
  * Node-RED leaves this node in place when only the referenced profile config
  * node changed, so its constructor never re-runs. Before the fix, a profile
  * fixed after deploy left a stale "invalid profile" badge (and node.profile
  * pointing at the destroyed old profile). watchConfigBadge re-resolves and
- * refreshes on flows:started.
+ * refreshes on flows:started. `delivery: 'build'` keeps this test isolated to
+ * the profile badge — an unset Delivery would otherwise (correctly, #308 G1)
+ * surface its own "invalid config" badge once the profile resolves.
  */
 test('move node clears a stale "invalid profile" badge when the profile is fixed on redeploy', () => {
   const RED = new MockRED().loadNodes();
-  const node = RED.create('mavlink-ai-move', { id: 'm1', profile: 'p1', connection: '' });
+  const node = RED.create('mavlink-ai-move', { id: 'm1', profile: 'p1', connection: '', delivery: 'build' });
   assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid profile' });
   assert.ok(!node.profile);
 
