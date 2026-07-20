@@ -99,6 +99,21 @@ test('disabled wins over an invalid transport config — grey, not a red error, 
   assert.strictEqual(connection.errors.length, 0, 'no TRANSPORT_CONFIG_INVALID error is logged');
 });
 
+test('disabled wins over invalid additionalIdentities — grey, not a red error, no error log', (t) => {
+  const RED = new MockRED().loadNodes();
+  // Disabled AND malformed additionalIdentities JSON: the go-live gate never
+  // runs, so parseIdentityBindings' throw must not trip registerNoop and log
+  // ADDITIONAL_IDENTITIES_INVALID — the node parks grey.
+  const { connection } = makeConnection(RED, {
+    disabled: true, additionalIdentities: '{ not valid json'
+  });
+  t.after(() => RED.close(connection));
+
+  assert.strictEqual(connection.statusState, 'disabled');
+  assert.strictEqual(connection._inactiveError.code, 'DISABLED');
+  assert.strictEqual(connection.errors.length, 0, 'no ADDITIONAL_IDENTITIES_INVALID error is logged');
+});
+
 test('badgeForState maps disabled to a grey badge', () => {
   const badge = badgeForState('disabled', 'disabled');
   assert.strictEqual(badge.fill, 'grey');

@@ -545,9 +545,11 @@ module.exports = function registerMavlinkAiConnection(RED) {
     try {
       node._identityBindings = parseIdentityBindings(config.additionalIdentities);
     } catch (err) {
-      fatal('ADDITIONAL_IDENTITIES_INVALID', err.message);
-      registerNoop(node);
-      return;
+      if (!startInactive) {
+        fatal('ADDITIONAL_IDENTITIES_INVALID', err.message);
+        registerNoop(node);
+        return;
+      }
     }
     if (node._identityBindings.length && !node.allowMultipleIdentities) {
       node.warn(
