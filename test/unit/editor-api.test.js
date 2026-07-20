@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { ardupilotmega } = require('node-mavlink');
 const { registerEditorApi } = require('../../lib/editor-api');
 
 // Minimal RED.httpAdmin capture so we can invoke the route handlers directly.
@@ -95,35 +96,62 @@ test('dialects endpoint lists all loader dialects (dynamic discovery, #4)', asyn
 });
 
 test('modes endpoint serves firmware/vehicle-aware flight-mode names (#49)', async () => {
-  const copter = await invoke(routes['/mavlink-ai/modes'], { firmware: 'ardupilot', vehicleType: 'copter' });
+  const copter = await invoke(routes['/mavlink-ai/modes'], {
+    firmware: 'ardupilot',
+    vehicleType: 'copter',
+    dialect: 'ardupilotmega'
+  });
   assert.strictEqual(copter.body.ok, true);
   assert.ok(copter.body.modes.includes('GUIDED'));
   assert.ok(copter.body.modes.includes('LOITER'));
-  const plane = await invoke(routes['/mavlink-ai/modes'], { firmware: 'ardupilot', vehicleType: 'plane' });
-  assert.ok(plane.body.modes.includes('FBWA'));
-  const px4 = await invoke(routes['/mavlink-ai/modes'], { firmware: 'px4' });
+  const plane = await invoke(routes['/mavlink-ai/modes'], {
+    firmware: 'ardupilot',
+    vehicleType: 'plane',
+    dialect: 'ardupilotmega'
+  });
+  assert.ok(plane.body.modes.includes('FLY_BY_WIRE_A'));
+  assert.ok(plane.body.modes.includes('INITIALIZING'));
+  assert.ok(!plane.body.modes.includes('FBWA'));
+  const px4 = await invoke(routes['/mavlink-ai/modes'], { firmware: 'px4', dialect: 'ardupilotmega' });
   assert.ok(px4.body.modes.includes('OFFBOARD'));
   // Unsupported combination: empty list, so the editor falls back to numerics.
-  const generic = await invoke(routes['/mavlink-ai/modes'], { firmware: 'generic' });
+  const generic = await invoke(routes['/mavlink-ai/modes'], { firmware: 'generic', dialect: 'ardupilotmega' });
   assert.deepStrictEqual(generic.body.modes, []);
+});
+
+test('modes endpoint fails without a valid active dialect', async () => {
+  const missing = await invoke(routes['/mavlink-ai/modes'], { firmware: 'ardupilot', vehicleType: 'copter' });
+  assert.strictEqual(missing.body.ok, false);
+  assert.ok(missing.body.error);
+  const invalid = await invoke(routes['/mavlink-ai/modes'], {
+    firmware: 'ardupilot',
+    vehicleType: 'copter',
+    dialect: 'not-a-dialect'
+  });
+  assert.strictEqual(invalid.body.ok, false);
+  assert.ok(invalid.body.error);
 });
 
 test('param-choices endpoint resolves Copter vs Plane modes (GUIDED 4 vs 15) (#97)', async () => {
   const copter = await invoke(routes['/mavlink-ai/param-choices'], {
     resolver: 'profile-flight-mode',
     firmware: 'ardupilot',
-    vehicleType: 'copter'
+    vehicleType: 'copter',
+    dialect: 'ardupilotmega'
   });
   assert.strictEqual(copter.body.ok, true);
   assert.strictEqual(copter.body.scope, 'profile');
   assert.strictEqual(copter.body.generic, false);
-  assert.strictEqual(copter.body.choices.find((c) => c.name === 'GUIDED').value, 4);
+  assert.strictEqual(copter.body.choices.find((c) => c.name === 'GUIDED').value, ardupilotmega.CopterMode.GUIDED);
   const plane = await invoke(routes['/mavlink-ai/param-choices'], {
     resolver: 'profile-flight-mode',
     firmware: 'ardupilot',
-    vehicleType: 'plane'
+    vehicleType: 'plane',
+    dialect: 'ardupilotmega'
   });
-  assert.strictEqual(plane.body.choices.find((c) => c.name === 'GUIDED').value, 15);
+  assert.strictEqual(plane.body.choices.find((c) => c.name === 'GUIDED').value, ardupilotmega.PlaneMode.GUIDED);
+  assert.ok(plane.body.choices.some((c) => c.name === 'FLY_BY_WIRE_A'));
+  assert.ok(!plane.body.choices.some((c) => c.name === 'FBWA'));
 });
 
 test('param-choices endpoint resolves component-specific choices from the dialect (#97)', async () => {

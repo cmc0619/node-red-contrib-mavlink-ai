@@ -302,8 +302,17 @@
         const p = RED.nodes.node($('#node-input-profile').val());
         const firmware = (p && p.firmware) || 'generic';
         const vehicleType = (p && p.vehicleFamily) || '';
+        const dialect = currentDialect();
+        const query = {
+          firmware: firmware,
+          vehicleType: vehicleType,
+          dialect: dialect.dialect
+        };
+        if (dialect.customDialectPath) {
+          query.customDialectPath = dialect.customDialectPath;
+        }
         const requestId = ++modesRequestId;
-        $.getJSON('mavlink-ai/modes', { firmware: firmware, vehicleType: vehicleType })
+        $.getJSON('mavlink-ai/modes', query)
           .done(function (data) {
             if (requestId !== modesRequestId || !$select.closest('body').length) {
               return;

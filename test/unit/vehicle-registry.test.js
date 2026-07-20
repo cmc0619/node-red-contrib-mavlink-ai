@@ -5,7 +5,8 @@ const assert = require('node:assert');
 const { VehicleRegistry } = require('../../lib/swarm/vehicle-registry');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 
-const ENUMS = loadDialect('ardupilotmega').enums;
+const ARDU_BUNDLE = loadDialect('ardupilotmega');
+const ENUMS = ARDU_BUNDLE.enums;
 
 /** Manual clock so stale/expiry is deterministic. */
 function makeClock(start = 1000000) {
@@ -28,7 +29,7 @@ function heartbeat(sysid, extra = {}) {
 
 test('HEARTBEAT discovers vehicles with readable type/status/mode names (#46)', () => {
   const clock = makeClock();
-  const reg = new VehicleRegistry({ enums: ENUMS, now: clock.now });
+  const reg = new VehicleRegistry({ enums: ENUMS, dialect: ARDU_BUNDLE.name, now: clock.now });
   const { added } = reg.ingest(heartbeat(1));
   assert.strictEqual(added, true);
   const [v] = reg.vehicles();
@@ -93,7 +94,7 @@ test('vehicles go stale after staleMs and expire after expireMs (#46)', () => {
 });
 
 test('filters select by sysids, type, and armed state (#46)', () => {
-  const reg = new VehicleRegistry({ enums: ENUMS, now: makeClock().now });
+  const reg = new VehicleRegistry({ enums: ENUMS, dialect: ARDU_BUNDLE.name, now: makeClock().now });
   reg.ingest(heartbeat(1)); // quad, disarmed
   reg.ingest(heartbeat(2, { base_mode: 81 | 128 })); // quad, armed
   reg.ingest(heartbeat(3, { type: 10 })); // rover
@@ -118,7 +119,7 @@ test('sysids filter accepts arrays, single ids, and comma strings; rejects garba
 });
 
 test('named groups resolve to vehicles: sysid lists and filters (#46)', () => {
-  const reg = new VehicleRegistry({ enums: ENUMS, now: makeClock().now });
+  const reg = new VehicleRegistry({ enums: ENUMS, dialect: ARDU_BUNDLE.name, now: makeClock().now });
   reg.setGroups({
     scouts: [1, 2],
     rovers: { type: 'MAV_TYPE_GROUND_ROVER' }
@@ -147,7 +148,7 @@ test('one system with several heartbeating components is tracked per compid (#46
  * (custom_mode 4 = copter GUIDED).
  */
 test('VTOL and high-rotor vehicle types resolve mode names in snapshots (#155)', () => {
-  const reg = new VehicleRegistry({ enums: ENUMS, now: makeClock().now });
+  const reg = new VehicleRegistry({ enums: ENUMS, dialect: ARDU_BUNDLE.name, now: makeClock().now });
   reg.ingest(heartbeat(20, { type: 20, custom_mode: 15 }));
   reg.ingest(heartbeat(29, { type: 29, custom_mode: 4 }));
   reg.ingest(heartbeat(35, { type: 35, custom_mode: 4 }));

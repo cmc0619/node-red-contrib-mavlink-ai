@@ -2,13 +2,21 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { minimal, ardupilotmega } = require('node-mavlink');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { CommandSend } = require('../../lib/command/command-workflow');
 const { resolveFlightMode, knownModes, modeNameForCustomMode } = require('../../lib/command/flight-modes');
 const { LockManager } = require('../../lib/runtime/lock-manager');
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
-const ENUMS = loadDialect('ardupilotmega').enums;
+const ARDU_BUNDLE = loadDialect('ardupilotmega');
+const ENUMS = ARDU_BUNDLE.enums;
+const modeContext = (firmware, vehicleType) => ({
+  firmware,
+  vehicleType,
+  enums: ARDU_BUNDLE.enums,
+  dialect: ARDU_BUNDLE.name
+});
 
 /** Minimal connection stand-in (same shape as the mission/param test fakes). */
 class FakeConnection {
@@ -56,6 +64,7 @@ function opts(conn, extra = {}) {
       targetSystem: 1,
       targetComponent: 1,
       enums: ENUMS,
+      dialect: ARDU_BUNDLE.name,
       command: 'MAV_CMD_COMPONENT_ARM_DISARM',
       fields: { param1: 1 },
       timeoutMs: 30,
@@ -260,20 +269,56 @@ test('CommandSend fails fast on an unresolvable command name', () => {
 });
 
 test('resolveFlightMode maps ArduPilot modes per vehicle type (#20)', () => {
-  assert.deepStrictEqual(resolveFlightMode('ardupilot', 'copter', 'GUIDED'), { base_mode: 1, custom_mode: 4 });
-  assert.deepStrictEqual(resolveFlightMode('ardupilot', 'plane', 'GUIDED'), { base_mode: 1, custom_mode: 15 });
-  assert.deepStrictEqual(resolveFlightMode('ardupilot', 'rover', 'AUTO'), { base_mode: 1, custom_mode: 10 });
-  assert.deepStrictEqual(resolveFlightMode('ardupilot', 'boat', 'AUTO'), { base_mode: 1, custom_mode: 10 });
-  // Case/spacing tolerant.
-  assert.deepStrictEqual(resolveFlightMode('ardupilot', 'copter', 'alt hold'), { base_mode: 1, custom_mode: 2 });
+  const base_mode = minimal.MavModeFlag.CUSTOM_MODE_ENABLED;
+  assert.deepStrictEqual(resolveFlightMode(modeContext('ardupilot', 'copter'), 'GUIDED'), {
+    base_mode,
+    custom_mode: ardupilotmega.CopterMode.GUIDED
+  });
+  assert.deepStrictEqual(resolveFlightMode(modeContext('ardupilot', 'plane'), 'GUIDED'), {
+    base_mode,
+    custom_mode: ardupilotmega.PlaneMode.GUIDED
+  });
+  assert.deepStrictEqual(resolveFlightMode(modeContext('ardupilot', 'rover'), 'AUTO'), {
+    base_mode,
+    custom_mode: ardupilotmega.RoverMode.AUTO
+  });
+  assert.deepStrictEqual(resolveFlightMode(modeContext('ardupilot', 'boat'), 'AUTO'), {
+    base_mode,
+    custom_mode: ardupilotmega.RoverMode.AUTO
+  });
 });
 
-/** Recent ArduPilot modes added in #155: ArduCopter TURTLE (28), ArduPlane AUTOLAND (26). */
-test('resolveFlightMode maps recently-added ArduPilot modes and reverse-looks-up (#155)', () => {
-  assert.deepStrictEqual(resolveFlightMode('ardupilot', 'copter', 'TURTLE'), { base_mode: 1, custom_mode: 28 });
-  assert.deepStrictEqual(resolveFlightMode('ardupilot', 'plane', 'AUTOLAND'), { base_mode: 1, custom_mode: 26 });
-  assert.strictEqual(modeNameForCustomMode('ardupilot', 'copter', 28), 'TURTLE');
-  assert.strictEqual(modeNameForCustomMode('ardupilot', 'plane', 26), 'AUTOLAND');
+test('ArduPilot modes expose generated additions and reverse-look-up generated values', () => {
+  const plane = modeContext('ardupilot', 'plane');
+  const rover = modeContext('ardupilot', 'rover');
+  const sub = modeContext('ardupilot', 'sub');
+  assert.ok(knownModes(plane).includes('INITIALIZING'));
+  assert.ok(knownModes(rover).includes('INITIALIZING'));
+  assert.ok(knownModes(sub).includes('SURFTRAK'));
+  assert.deepStrictEqual(resolveFlightMode(plane, 'FLY_BY_WIRE_A'), {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED,
+    custom_mode: ardupilotmega.PlaneMode.FLY_BY_WIRE_A
+  });
+  assert.deepStrictEqual(resolveFlightMode(sub, 'MOTORDETECT'), {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED,
+    custom_mode: ardupilotmega.SubMode.MOTORDETECT
+  });
+  assert.strictEqual(modeNameForCustomMode(sub, ardupilotmega.SubMode.SURFTRAK), 'SURFTRAK');
+  assert.strictEqual(modeNameForCustomMode(plane, ardupilotmega.PlaneMode.INITIALIZING), 'INITIALIZING');
+});
+
+test('ArduPilot mode resolution rejects aliases, normalization, and wrong case', () => {
+  const cases = [
+    [modeContext('ardupilot', 'plane'), 'FBWA'],
+    [modeContext('ardupilot', 'plane'), 'FBWB'],
+    [modeContext('ardupilot', 'sub'), 'MOTOR_DETECT'],
+    [modeContext('ardupilot', 'antenna-tracker'), 'INITIALISING'],
+    [modeContext('ardupilot', 'copter'), 'guided'],
+    [modeContext('ardupilot', 'copter'), 'alt hold']
+  ];
+  for (const [context, name] of cases) {
+    assert.throws(() => resolveFlightMode(context, name), (err) => err.code === 'UNKNOWN_MODE');
+  }
 });
 
 /**
@@ -283,23 +328,24 @@ test('resolveFlightMode maps recently-added ArduPilot modes and reverse-looks-up
  * RETURN -> AUTO(4).RTL(5); OFFBOARD(6) is what a packed param2 would truncate to 0.
  */
 test('resolveFlightMode maps PX4 main/sub modes as separate DO_SET_MODE params (#20, #136)', () => {
-  assert.deepStrictEqual(resolveFlightMode('px4', 'copter', 'POSITION'), {
-    base_mode: 1,
+  const px4 = modeContext('px4', 'copter');
+  assert.deepStrictEqual(resolveFlightMode(px4, 'POSITION'), {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED,
     custom_mode: 3,
     custom_submode: 0
   });
-  assert.deepStrictEqual(resolveFlightMode('px4', 'copter', 'MISSION'), {
-    base_mode: 1,
+  assert.deepStrictEqual(resolveFlightMode(px4, 'MISSION'), {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED,
     custom_mode: 4,
     custom_submode: 4
   });
-  assert.deepStrictEqual(resolveFlightMode('px4', 'copter', 'RETURN'), {
-    base_mode: 1,
+  assert.deepStrictEqual(resolveFlightMode(px4, 'RETURN'), {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED,
     custom_mode: 4,
     custom_submode: 5
   });
-  assert.deepStrictEqual(resolveFlightMode('px4', 'copter', 'OFFBOARD'), {
-    base_mode: 1,
+  assert.deepStrictEqual(resolveFlightMode(px4, 'OFFBOARD'), {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED,
     custom_mode: 6,
     custom_submode: 0
   });
@@ -315,11 +361,11 @@ test('splitPx4CustomMode splits packed values and passes bare main modes through
 });
 
 test('resolveFlightMode fails loudly for unknown modes/firmware (#20)', () => {
-  assert.throws(() => resolveFlightMode('ardupilot', 'copter', 'WARP_SPEED'), (e) => e.code === 'UNKNOWN_MODE');
-  assert.throws(() => resolveFlightMode('generic', 'copter', 'GUIDED'), (e) => e.code === 'UNKNOWN_MODE');
-  assert.ok(knownModes('ardupilot', 'copter').includes('GUIDED'));
-  assert.ok(knownModes('px4').includes('OFFBOARD'));
-  assert.deepStrictEqual(knownModes('generic', 'copter'), []);
+  assert.throws(() => resolveFlightMode(modeContext('ardupilot', 'copter'), 'WARP_SPEED'), (e) => e.code === 'UNKNOWN_MODE');
+  assert.throws(() => resolveFlightMode(modeContext('generic', 'copter'), 'GUIDED'), (e) => e.code === 'UNKNOWN_MODE');
+  assert.ok(knownModes(modeContext('ardupilot', 'copter')).includes('GUIDED'));
+  assert.ok(knownModes(modeContext('px4')).includes('OFFBOARD'));
+  assert.deepStrictEqual(knownModes(modeContext('generic', 'copter')), []);
 });
 
 test('CommandSend ignores acks from a different component on the same system', async () => {

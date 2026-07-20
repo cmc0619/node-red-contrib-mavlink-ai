@@ -320,6 +320,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
       }
 
       const defaults = node.profile.getDefaults ? node.profile.getDefaults() : {};
+      const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
 
       // Editor preset fields under runtime payload values (#49): a static
       // editor value (e.g. mode "GUIDED", altitude 15) applies unless the
@@ -333,11 +334,12 @@ module.exports = function registerMavlinkAiCommand(RED) {
       const params = Object.assign({}, merged);
       if (selected === 'set_mode' && merged.mode !== undefined) {
         try {
-          const resolved = resolveFlightMode(
-            defaults.firmware,
-            firstDefined(merged.vehicle_type, defaults.vehicleFamily),
-            merged.mode
-          );
+          const resolved = resolveFlightMode({
+            firmware: defaults.firmware,
+            vehicleType: firstDefined(merged.vehicle_type, defaults.vehicleFamily),
+            enums: bundle ? bundle.enums : null,
+            dialect: bundle ? bundle.name : 'unknown'
+          }, merged.mode);
           params.base_mode = firstDefined(merged.base_mode, resolved.base_mode);
           params.custom_mode = firstDefined(merged.custom_mode, resolved.custom_mode);
           params.custom_submode = firstDefined(merged.custom_submode, resolved.custom_submode);
@@ -541,7 +543,6 @@ module.exports = function registerMavlinkAiCommand(RED) {
           return fail(new MavlinkError('BROADCAST_NO_ACK',
             'Broadcast (target_system 0) cannot confirm a COMMAND_ACK — use the fan-out node for per-vehicle acks, or disable await ack.'));
         }
-        const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
         // The Local Identity this workflow transmits as (#228): the explicit
         // payload request when present (which must be attached and permitted on
         // the connection), else the connection's default. Never derived from
