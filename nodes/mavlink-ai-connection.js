@@ -2193,9 +2193,18 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * that opted in — additional heartbeats are opt-in per binding and require
      * multi-identity transmission to be enabled.
      *
+     * Warnings about skipped additional identities are start-phrased ("cannot
+     * start heartbeat…") and belong to the actual (re)start path only. This
+     * function is also called from `setAdvertisedHealth`'s eligibility probe,
+     * which is not a start — that caller omits `warnSkips` so the probe stays
+     * silent instead of re-warning on every health assertion (#225 follow-up).
+     *
+     * @param {object} [options]
+     * @param {boolean} [options.warnSkips=false]  emit the skip warnings (start path only)
      * @returns {Array<{identity: object, intervalMs: number}>}
      */
-    function heartbeatSpecs() {
+    function heartbeatSpecs(options) {
+      const warnSkips = Boolean(options && options.warnSkips);
       const specs = [];
       // Only schedule the default identity when one actually resolved: in the
       // fail-closed inactive state (default Local Identity missing/deleted)
@@ -2215,17 +2224,21 @@ module.exports = function registerMavlinkAiConnection(RED) {
           try {
             identity = node.resolveLocalIdentity(spec.identity);
           } catch (err) {
-            node.warn(
-              `mavlink-ai-connection '${node.name || node.id}': cannot start heartbeat for additional ` +
-                `Local Identity '${spec.identity}': ${err.message}`
-            );
+            if (warnSkips) {
+              node.warn(
+                `mavlink-ai-connection '${node.name || node.id}': cannot start heartbeat for additional ` +
+                  `Local Identity '${spec.identity}': ${err.message}`
+              );
+            }
             continue;
           }
           if (spec.allowOutbound === false) {
-            node.warn(
-              `mavlink-ai-connection '${node.name || node.id}': additional Local Identity ` +
-                `'${identity.describe()}' has heartbeat enabled but outbound disabled; not sending its heartbeats.`
-            );
+            if (warnSkips) {
+              node.warn(
+                `mavlink-ai-connection '${node.name || node.id}': additional Local Identity ` +
+                  `'${identity.describe()}' has heartbeat enabled but outbound disabled; not sending its heartbeats.`
+              );
+            }
             continue;
           }
           if (node.localIdentity && identity.id === node.localIdentity.id) {
@@ -2413,7 +2426,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * @returns {void}
      */
     function startHeartbeats() {
-      const specs = heartbeatSpecs();
+      const specs = heartbeatSpecs({ warnSkips: true });
       if (!specs.length) {
         return;
       }
