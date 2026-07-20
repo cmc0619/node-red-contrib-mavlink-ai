@@ -56,19 +56,65 @@ function read(file) {
   return fs.readFileSync(path.join(NODES_DIR, file), 'utf8');
 }
 
-/** Extract and evaluate the inline mavlinkNumericBounds() factory from an editor. */
-function extractBounds(html) {
-  const match = /function mavlinkNumericBounds\(\)\s*\{[\s\S]*?\n {2}\}/.exec(html);
-  assert.ok(match, 'expected the editor to inline mavlinkNumericBounds()');
-  return new Function(`${match[0]}; return mavlinkNumericBounds();`)();
+/**
+ * Return the `{ ... }` block starting at the first `{` at or after `from`,
+ * matched by brace depth. Brace-matching (rather than an indentation- or
+ * one-liner-anchored regex) keeps the extraction robust to reformatting and
+ * to multi-line/early-return function bodies (Greptile #310 P2). The editor
+ * code this scans contains no braces inside string/regex literals, so a plain
+ * depth counter is sufficient.
+ *
+ * @param {string} src
+ * @param {number} from  index to begin searching for the opening brace
+ * @param {string} what  label for the assertion message
+ * @returns {string} the balanced `{ ... }` substring (inclusive)
+ */
+function sliceBalancedBraces(src, from, what) {
+  const open = src.indexOf('{', from);
+  assert.ok(open !== -1, `expected an opening brace for ${what}`);
+  let depth = 0;
+  for (let i = open; i < src.length; i += 1) {
+    if (src[i] === '{') {
+      depth += 1;
+    } else if (src[i] === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return src.slice(open, i + 1);
+      }
+    }
+  }
+  assert.fail(`unbalanced braces while extracting ${what}`);
+  return '';
 }
 
-/** Extract a field's validate function from the editor's defaults block. */
+/** Extract and evaluate the inline mavlinkNumericBounds() factory from an editor. */
+function extractBounds(html) {
+  const at = html.indexOf('function mavlinkNumericBounds()');
+  assert.ok(at !== -1, 'expected the editor to inline a function named exactly mavlinkNumericBounds()');
+  const body = sliceBalancedBraces(html, at, 'mavlinkNumericBounds() body');
+  return new Function(`return (function mavlinkNumericBounds() ${body})();`)();
+}
+
+/**
+ * Extract a field's `validate` function from the editor's defaults block. The
+ * validators here are one-liners, but this scans by brace depth so a future
+ * multi-line or early-return validator still extracts correctly and fails
+ * loudly with a specific message if the field/validate is missing.
+ *
+ * @param {string} html
+ * @param {string} field  the defaults key (e.g. 'timeoutMs')
+ * @returns {Function} a factory taking `mavlinkNumericBounds` → the validate fn
+ */
 function extractFieldValidate(html, field) {
-  const re = new RegExp(`${field}:\\s*\\{[^}]*?validate:\\s*(function \\(v\\) \\{ return [^}]*?\\})`);
-  const match = re.exec(html);
-  assert.ok(match, `expected ${field} to have an inline validate function`);
-  return new Function('mavlinkNumericBounds', `return (${match[1]});`);
+  const fieldAt = new RegExp(`\\b${field}:\\s*\\{`).exec(html);
+  assert.ok(fieldAt, `expected the editor to define a '${field}' defaults field`);
+  const fieldObj = sliceBalancedBraces(html, fieldAt.index, `${field} defaults object`);
+  const vAt = fieldObj.indexOf('validate:');
+  assert.ok(vAt !== -1, `expected the '${field}' field to have a validate function`);
+  const fnAt = fieldObj.indexOf('function', vAt);
+  assert.ok(fnAt !== -1, `expected '${field}'.validate to be a function expression`);
+  const fnBody = sliceBalancedBraces(fieldObj, fnAt, `${field}.validate body`);
+  return new Function('mavlinkNumericBounds', `return (function (v) ${fnBody});`);
 }
 
 test('each editor inlines mavlinkNumericBounds() matching the module', () => {
