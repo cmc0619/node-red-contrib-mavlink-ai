@@ -698,6 +698,16 @@ module.exports = function registerMavlinkAiCommand(RED) {
             { priority }
           );
         } catch (err) {
+          /**
+           * Close/redeploy during the await above (#308 R3): mirrors the
+           * success path's own `if (closed) return done();` guard below and
+           * the await-ack path's catch, so a slow or queued in-flight send
+           * that REJECTS after this node closed can't emit a `SEND_FAILED`
+           * mavlink/error from an obsolete node.
+           */
+          if (closed) {
+            return done();
+          }
           return fail(err, 'SEND_FAILED');
         }
         /**

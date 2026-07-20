@@ -297,6 +297,15 @@ module.exports = function registerMavlinkAiPayload(RED) {
             { msg, priority: commandPriorityFor(bundle ? bundle.enums : null, built.fields.command) }
           );
         } catch (err) {
+          /**
+           * Close/redeploy during the await above (#308 R3): mirrors the
+           * success-path close guard below, so a slow or queued in-flight
+           * send that REJECTS after this node closed can't emit a
+           * `SEND_FAILED` mavlink/error from an obsolete node.
+           */
+          if (node._closed) {
+            return done();
+          }
           return fail(err, 'SEND_FAILED');
         }
         /**

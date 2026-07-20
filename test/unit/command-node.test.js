@@ -765,3 +765,29 @@ test('command Send via connection emits nothing if the node closes before the in
   const sentOutput = collected.map((o) => o[0]).find(Boolean);
   assert.strictEqual(sentOutput, undefined, 'no command/sent output from a closed node');
 });
+
+/**
+ * #308 review finding F1: the mirror of the test above for the Send path's
+ * catch. Before this fix, a connection.send() that REJECTS after the node
+ * closed still called fail() and emitted a SEND_FAILED mavlink/error on port
+ * 1 from an obsolete node — the success path's close guard didn't have a
+ * matching guard on the failure path. Now the catch checks `closed` first,
+ * mirroring the Await path's catch and the success path just above.
+ */
+test('command Send via connection emits nothing if the node closes before the in-flight send rejects (#308 F1)', async () => {
+  const { RED, conn, node } = setupWithConnection({ delivery: 'send', command: 'arm' });
+  let rejectSend;
+  conn.send = () => new Promise((_resolve, reject) => {
+    rejectSend = reject;
+  });
+  const injected = RED.inject(node, {});
+  // Let the input handler run up to its `await connection.send(...)` before closing.
+  await new Promise((r) => setTimeout(r, 0));
+  const closed = RED.close(node);
+  rejectSend(new Error('boom'));
+  const [{ collected }] = await Promise.all([injected, closed]);
+  const errOutput = collected.map((o) => o[1]).find(Boolean);
+  const sentOutput = collected.map((o) => o[0]).find(Boolean);
+  assert.strictEqual(errOutput, undefined, 'no mavlink/error output from a closed node');
+  assert.strictEqual(sentOutput, undefined, 'no command/sent output from a closed node');
+});
