@@ -180,6 +180,7 @@ module.exports = function registerMavlinkAiMove(RED) {
           typeMask: firstDefined(payload.type_mask, node.typeMask),
           frame: frameName,
           enums: bundle ? bundle.enums : null,
+          dialect: bundle ? bundle.name : 'unknown',
           north: toNum(firstDefined(payload.north, node.north), undefined),
           east: toNum(firstDefined(payload.east, node.east), undefined),
           altitude: toNum(firstDefined(payload.altitude, node.altitude), undefined),
@@ -522,7 +523,7 @@ function stopStream(node) {
  * @returns {string} MAV_FRAME name
  */
 function defaultFrame(coordinate) {
-  return coordinate === 'global' ? 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT' : 'MAV_FRAME_LOCAL_NED';
+  return coordinate === 'global' ? 'GLOBAL_RELATIVE_ALT_INT' : 'LOCAL_NED';
 }
 
 /**
