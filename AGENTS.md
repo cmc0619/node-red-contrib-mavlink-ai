@@ -51,6 +51,31 @@ Follow `DESIGN.md` first. Do not recreate the old coupled architecture.
     defs via `coreEnumValues`; that is not a fallback but the correct source for
     values every dialect shares.)
 
+## Review & design discipline
+
+Lessons that keep recurring — read these before reacting to a review or adding a
+guard:
+
+1. **Review bots are advisory, not authoritative.** CodeRabbit / Codex /
+   Greptile apply generic heuristics that do not know this repo's invariants.
+   Weigh each finding against these rules and the code's own guarantees before
+   acting. Several bots flagging the same thing is one heuristic repeated, not
+   independent confirmation. When a bot's fix conflicts with a rule here — e.g.
+   "add a null guard" for a state Rule 10 says can't occur — decline it and say
+   why on the PR; do not implement on reflex.
+2. **A broken flow is a deploy error, not a runtime input.** Do not add runtime
+   handling (guards, structured errors, fallbacks) for config the operator
+   broke — a deleted profile, a dangling connection ref. That is Rule 10. Trust
+   the invariant and let it crash; the crash is the honest signal. Only genuine
+   runtime inputs (a `msg`'s contents, wire bytes, user XML) get validated.
+3. **Apply an invariant uniformly; don't carve out edge exceptions.** If
+   "profile is valid at runtime" holds on the send path, it holds on the observe
+   path too. An edge-case exception ("tolerate null *here* because…") is usually
+   the same impossible-state defense wearing a new hat. Resist the reflex to
+   hunt for one more thing to guard.
+4. **Prefer deletions.** The best fix is usually less code. If a change adds
+   branches, re-check whether it is defending a state that can actually happen.
+
 ## Architecture
 
 ```text
