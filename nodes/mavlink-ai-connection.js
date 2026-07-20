@@ -132,6 +132,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node.serialPath = config.serialPath || '';
     node.serialBaud = toInt(config.serialBaud, 57600);
     node.reconnect = toBool(config.reconnect, true);
+    // Deploy-time kill switch (config-node analog of Node-RED's node-disable):
+    // when set, the connection parks in the existing DEACTIVATED state — no
+    // transport, no heartbeat, sends rejected — until unticked and redeployed.
+    node.disabled = toBool(config.disabled, false);
     node.heartbeatEnabled = toBool(config.heartbeat, false);
     // Clamp the interval to a safe minimum so an imported/edited flow can't
     // silently configure an aggressive HEARTBEAT rate (e.g. 100 ms / 10 Hz).
@@ -415,7 +419,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * this node, which redeploys it anyway. The first failure wins the recorded
      * reason; the reconcile re-checks everything on each deploy regardless.
      */
-    let startInactive = null;
+    // A disabled connection parks in the same DEACTIVATED state a missing
+    // dependency produces: seed the reason here so the codec/route-table setup
+    // below (guarded on `!startInactive`) is skipped and the node constructs
+    // dark. With valid config the profile/identity checks below pass without
+    // overwriting this; a genuinely broken config still surfaces its own error.
+    let startInactive = node.disabled ? { code: 'DISABLED', message: 'Connection is disabled.' } : null;
     if (!node.profile) {
       fatal('NO_PROFILE', 'Connection has no Vehicle Profile configured.');
       startInactive = { code: 'NO_PROFILE', message: 'Connection has no Vehicle Profile configured.' };
@@ -1397,6 +1406,12 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * @returns {void}
      */
     function reconcileRequiredConfig() {
+      // A disabled connection stays parked regardless of dependency state — a
+      // flows:started reconcile must never reactivate it (nor re-badge it as a
+      // dependency error). `disabled` is deploy-time immutable per instance.
+      if (node.disabled) {
+        return;
+      }
       const resolvedProfile = RED.nodes.getNode(config.profile);
       const profileOk = isProfileNode(resolvedProfile) && resolvedProfile.isValid && resolvedProfile.isValid();
       if (!profileOk) {
@@ -2705,7 +2720,9 @@ module.exports = function registerMavlinkAiConnection(RED) {
        */
       node._active = false;
       node._inactiveError = new MavlinkError(startInactive.code, startInactive.message);
-      setStatus('error', startInactive.message);
+      // A deliberately disabled connection is not an error: badge it grey
+      // ("disabled"), not red, so downstream nodes show it's intentionally off.
+      setStatus(startInactive.code === 'DISABLED' ? 'disabled' : 'error', startInactive.message);
     } else {
       /**
        * Construction succeeded: the connection is live. Set this before starting

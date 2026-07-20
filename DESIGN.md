@@ -1478,6 +1478,19 @@ let currentVehicle;
 
 Everything must be scoped to a config node instance.
 
+### Disabled (deploy-time kill switch)
+
+Node-RED's node enable/disable does not apply to config nodes, so the Connection
+carries a **Disabled** checkbox — the config-node analog. When set, the
+connection constructs into the same DEACTIVATED state a missing/invalid
+dependency produces (`startInactive`): no transport is created, no socket binds,
+no heartbeat is scheduled, and sends reject via the `_active` guard with a
+structured `DISABLED` (`Connection is disabled`) error. It emits a distinct grey
+`disabled` status (not red — it is intentional, not broken), which the nodes
+that reference it badge automatically. It is deploy-time only: `flows:started`
+reconciliation never reactivates a disabled connection. Untick and redeploy to
+bring it back.
+
 ## 20. Subscription Model
 
 Regular nodes should subscribe to a connection instead of every node decoding packets independently.
