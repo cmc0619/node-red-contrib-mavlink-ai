@@ -1,14 +1,10 @@
 'use strict';
 
 const { MavlinkError } = require('../lib/util/errors');
-const { coreEnumMember } = require('../lib/protocol/protocol-values');
-
-const MISSIONPLANNER_COMPONENT = coreEnumMember('MavComponent', 'MISSIONPLANNER', {
-  consumer: 'local-identity'
-});
-const ONBOARD_COMPUTER_COMPONENT = coreEnumMember('MavComponent', 'ONBOARD_COMPUTER', {
-  consumer: 'local-identity'
-});
+const { coreEnumValues } = require('../lib/protocol/protocol-values');
+const coreValue = coreEnumValues({ consumer: 'local-identity' });
+const MISSIONPLANNER_COMPONENT = coreValue('MavComponent', 'MISSIONPLANNER');
+const ONBOARD_COMPUTER_COMPONENT = coreValue('MavComponent', 'ONBOARD_COMPUTER');
 
 /**
  * mavlink-ai-local-identity (issue #228).

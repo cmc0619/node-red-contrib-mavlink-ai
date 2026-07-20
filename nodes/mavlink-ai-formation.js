@@ -7,7 +7,7 @@ const { makeFail } = require('../lib/util/node-errors');
 const { toInt, toNum, toBool, firstDefined, parseJsonObjectConfig } = require('../lib/util/validation');
 const { badgeForState } = require('../lib/util/status');
 const { safeDetach } = require('../lib/util/node-lifecycle');
-const { coreEnumMember } = require('../lib/protocol/protocol-values');
+const { coreEnumValues } = require('../lib/protocol/protocol-values');
 
 /**
  * Registry messages the follow-leader mode subscribes to: HEARTBEAT discovers
@@ -15,6 +15,7 @@ const { coreEnumMember } = require('../lib/protocol/protocol-values');
  * follower slots are computed from.
  */
 const FOLLOW_MESSAGES = ['HEARTBEAT', 'GLOBAL_POSITION_INT'];
+const REPOSITION_COMMAND = coreEnumValues({ consumer: 'formation' })('MavCmd', 'DO_REPOSITION');
 
 /**
  * Fallback tick so leader staleness / succession is evaluated even when the
@@ -88,7 +89,6 @@ module.exports = function registerMavlinkAiFormation(RED) {
     }
 
     /** MAV_CMD_DO_REPOSITION in exact source-name or explicit numeric form. */
-    const REPOSITION_COMMAND = coreEnumMember('MavCmd', 'DO_REPOSITION', { consumer: 'formation' });
     function isRepositionCommand(cmd) {
       if (cmd === 'MAV_CMD_DO_REPOSITION') {
         return true;
