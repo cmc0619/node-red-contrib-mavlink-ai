@@ -388,8 +388,14 @@
 
 <script type="text/html" data-help-name="mavlink-ai-payload">
   <p>Controls onboard <b>payloads and peripherals</b> — camera, gimbal/mount, servo, relay, gripper — building the right <code>COMMAND_LONG</code> without the build node. These verbs are not drone-specific: servos, relays and grippers are just as useful on rovers, boats and submarines (lights, manipulators, sample release) as cameras and gimbals are on copters and survey planes.</p>
-  <h3>Sending</h3>
-  <p>With a <b>Connection</b> the node sends the command directly; without one it emits a <code>mavlink/send</code> message to wire into a <b>mavlink-ai-out</b> node. A <b>Profile</b> is always required for encoding.</p>
+  <h3>Delivery</h3>
+  <p>The <b>Delivery</b> control chooses what the node does with the built command:</p>
+  <ul>
+    <li><b>Build only</b> (default) — no connection needed. Emits the built command as a <code>mavlink/send</code> envelope on <b>port 0</b>, for a downstream <b>MAVLink AI Out</b> node.</li>
+    <li><b>Send via connection</b> — sends the command directly on the selected connection, fire-and-forget, and outputs a structured <code>payload/sent</code> result on <b>port 0</b>.</li>
+    <li><b>Send &amp; await result</b> — sends the command and waits for its <code>COMMAND_ACK</code> (see <i>Await ack</i> below), outputting the ack as <code>command/ack</code> on <b>port 0</b>.</li>
+  </ul>
+  <p>Every mode uses the same two-port contract: <b>port 0</b> is the node's product for that mode, <b>port 1</b> is errors (a structured <code>mavlink/error</code>, or <code>DELIVERY_UNSET</code> if no Delivery mode was ever chosen). <b>Send</b> and <b>Send &amp; await result</b> require a <b>Connection</b>; <b>Build only</b> does not — wire its output into a <b>MAVLink AI Out</b> node that is also in Build only mode. A <b>Profile</b> is always required for encoding.</p>
   <h3>Component</h3>
   <p>Payload devices are often separate MAVLink components, so <b>which</b> component a command is addressed to matters. Leaving <b>Component</b> blank uses the <b>profile's Default target component</b>, which is the <b>autopilot</b> (<code>MAV_COMP_ID_AUTOPILOT1</code> = <code>1</code>) unless the profile has been set otherwise. Defaulting to the autopilot is deliberate, not an accident: on ArduPilot the camera and gimbal are driven by the flight controller itself, so their commands are answered by the autopilot component. (If a profile's Default target component points at a specific device, blank addresses that instead.)</p>
   <p>A <b>standalone MAVLink camera</b> announces itself on <code>MAV_COMP_ID_CAMERA</code> (<code>100</code>) and a <b>standalone gimbal</b> on <code>MAV_COMP_ID_GIMBAL</code> (<code>154</code>). Commands sent to the autopilot component are silently ignored by such a device, so set <b>Component</b> to its id (the field offers these as suggestions, and shows a hint for camera/gimbal actions). Per message, <code>msg.payload.target_component</code> overrides the editor value.</p>
@@ -411,9 +417,9 @@
     <li><b>Parachute</b> — <code>DO_PARACHUTE</code>: enable, disable, or release.</li>
   </ul>
   <h3>Await ack</h3>
-  <p>For the command verbs (everything except the gimbal-manager messages), tick <b>Await ack</b> to wait for the device's <code>COMMAND_ACK</code> and confirm it accepted the command, retransmitting up to <b>Max retries</b> times every <b>Timeout</b> ms. On success the ack rides the output as a <code>command/ack</code> message; a rejection or timeout is emitted as a structured <code>mavlink/error</code>. The gimbal-manager verbs are messages with no ack, so they stay fire-and-forget regardless.</p>
+  <p>For the command verbs (everything except the gimbal-manager messages), <b>Send &amp; await result</b> waits for the device's <code>COMMAND_ACK</code> and confirms it accepted the command, retransmitting up to <b>Max retries</b> times every <b>Timeout</b> ms. On success the ack rides <b>port 0</b> as a <code>command/ack</code> message; a rejection or timeout is emitted as a structured <code>mavlink/error</code> on <b>port 1</b>. The gimbal-manager verbs are messages with no ack, so they degrade to <b>Send via connection</b> semantics (fire-and-forget, <code>payload/sent</code>) even under <b>Send &amp; await result</b>.</p>
   <h3>Inputs</h3>
   <p><code>msg.payload</code> overrides any editor value: <code>action</code>, <code>target_system</code>, <code>target_component</code>, and the per-action fields (<code>interval</code>, <code>count</code>, <code>sequence</code>, <code>stream_id</code>, <code>status_frequency</code>, <code>camera_mode</code>, <code>zoom_type</code>, <code>zoom_value</code>, <code>focus_type</code>, <code>focus_value</code>, <code>distance</code>, <code>trigger_now</code>, <code>pitch</code>, <code>roll</code>, <code>yaw</code>, <code>gimbal_device_id</code>, <code>yaw_lock</code>, <code>instance</code>, <code>pwm</code>, <code>on</code>, <code>grip_action</code>, <code>winch_action</code>, <code>length</code>, <code>rate</code>, <code>parachute_action</code>, <code>period</code>, <code>timeout_ms</code>, <code>max_retries</code>).</p>
   <h3>Output</h3>
-  <p>Without a connection, a <code>mavlink/send</code> message for <b>mavlink-ai-out</b>. Failures are emitted as a structured <code>mavlink/error</code> message on the same output.</p>
+  <p><b>Port 0</b> carries the node's product for the selected Delivery mode (built <code>mavlink/send</code> message, <code>payload/sent</code> confirmation, or <code>command/ack</code> result). <b>Port 1</b> carries errors as a structured <code>mavlink/error</code> message.</p>
 </script>

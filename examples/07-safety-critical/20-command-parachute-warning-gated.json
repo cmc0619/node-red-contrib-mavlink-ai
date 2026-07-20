@@ -97,7 +97,7 @@
     "profile": "ai_profile_copter",
     "command": "MAV_CMD_DO_PARACHUTE",
     "sendAs": "long",
-    "awaitAck": false,
+    "delivery": "build",
     "timeoutMs": 3000,
     "maxRetries": 3,
     "fields": "",

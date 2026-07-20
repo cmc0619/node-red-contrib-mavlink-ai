@@ -332,8 +332,14 @@
   <code>SET_POSITION_TARGET_GLOBAL_INT</code> — without the build node. It hides
   the two things that are easy to get wrong by hand: the inverted
   <code>type_mask</code> and NED's down-positive vertical axis.</p>
-  <h3>Sending</h3>
-  <p>With a <b>Connection</b> the node sends the setpoint directly (fire-and-forget — setpoints carry no ack). Without one it emits a <code>mavlink/send</code> message to wire into a <b>mavlink-ai-out</b> node. A <b>Profile</b> is always required for encoding.</p>
+  <h3>Delivery</h3>
+  <p>The <b>Delivery</b> control chooses what the node does with the setpoint (setpoints carry no ack, so Move has no "await" mode, unlike Command/Payload/Fanout):</p>
+  <ul>
+    <li><b>Build only</b> (default) — no connection needed. Emits the built setpoint as a <code>mavlink/send</code> envelope on <b>port 0</b>, for a downstream <b>MAVLink AI Out</b> node.</li>
+    <li><b>Send via connection</b> — sends the setpoint directly on the selected connection, fire-and-forget, and outputs a structured <code>move/sent</code> result on <b>port 0</b>.</li>
+    <li><b>Stream via connection</b> — runs the continuous retransmit engine (see <i>Streaming</i> below), emitting <code>move/stream</code> status on <b>port 0</b>.</li>
+  </ul>
+  <p>Every mode uses the same two-port contract: <b>port 0</b> is the node's product for that mode, <b>port 1</b> is errors (a structured <code>mavlink/error</code>, or <code>DELIVERY_UNSET</code> if no Delivery mode was ever chosen). <b>Send</b> and <b>Stream</b> require a <b>Connection</b>; <b>Build only</b> does not — wire its output into a <b>MAVLink AI Out</b> node that is also in Build only mode. A <b>Profile</b> is always required for encoding.</p>
   <h3>Setpoint presets</h3>
   <p>The <b>Setpoint</b> selector builds the correct <code>type_mask</code> for you. Because a set mask bit means <i>ignore</i> that dimension, "Position" is encoded as "ignore everything except position". <b>Acceleration</b> drives the <code>af</code> vector as an acceleration; <b>Force</b> sends the same <code>af</code> inputs but sets the force bit (bit 9) so the autopilot treats them as a force. Pick <b>Custom</b> to enter a raw 0..65535 mask.</p>
   <h3>Frames &amp; axes</h3>
@@ -348,5 +354,5 @@
   <h3>Inputs</h3>
   <p><code>msg.payload</code> may override any editor value: <code>coordinate</code>, <code>preset</code>, <code>frame</code>, <code>type_mask</code>, <code>north</code>, <code>east</code>, <code>altitude</code>, <code>lat</code>, <code>lon</code>, <code>velNorth</code>, <code>velEast</code>, <code>climb</code>, <code>accelNorth</code>, <code>accelEast</code>, <code>accelUp</code>, <code>yaw</code>, <code>yawRate</code>, <code>target_system</code>, <code>target_component</code>, and <code>time_boot_ms</code>. <code>stream</code> (<code>true</code>/<code>false</code>) starts/stops continuous streaming for that message.</p>
   <h3>Output</h3>
-  <p>Without a connection, a <code>mavlink/send</code> message for <b>mavlink-ai-out</b>. Failures are emitted as a structured <code>mavlink/error</code> message on the same output.</p>
+  <p><b>Port 0</b> carries the node's product for the selected Delivery mode (built <code>mavlink/send</code> message, <code>move/sent</code> confirmation, or <code>move/stream</code> status). <b>Port 1</b> carries errors as a structured <code>mavlink/error</code> message.</p>
 </script>

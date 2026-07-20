@@ -211,7 +211,7 @@ module.exports = function registerMavlinkAiFanout(RED) {
         }
         if (broadcast) {
           return fail(new MavlinkError('BROADCAST_NO_ACK',
-            'Broadcast (target_system 0) cannot collect per-vehicle ACKs — use fan-out mode, or disable await acks.'));
+            'Broadcast (target_system 0) cannot collect per-vehicle ACKs — use fan-out mode, or use a non-await Delivery mode.'));
         }
         const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
         // The Local Identity these workflows transmit as (#228): the explicit
