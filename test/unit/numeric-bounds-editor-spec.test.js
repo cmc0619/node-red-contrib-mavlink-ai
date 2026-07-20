@@ -22,7 +22,9 @@ const EDITOR_FILES = [
   'mavlink-ai-mission.html',
   'mavlink-ai-fanout.html',
   'mavlink-ai-swarm.html',
-  'mavlink-ai-connection.html'
+  'mavlink-ai-connection.html',
+  'mavlink-ai-formation.html',
+  'mavlink-ai-vehicle-state.html'
 ];
 
 // (file, field, module rule evaluated against nb)
@@ -38,7 +40,13 @@ const FIELD_RULES = [
   ['mavlink-ai-swarm.html', 'staleMs', (v) => nb.acceptsPositive(v)],
   ['mavlink-ai-swarm.html', 'expireMs', (v) => nb.acceptsNonNegative(v)],
   ['mavlink-ai-swarm.html', 'intervalMs', (v) => nb.acceptsNonNegative(v)],
-  ['mavlink-ai-connection.html', 'heartbeatIntervalMs', (v) => nb.acceptsAtLeast(1000)(v)]
+  ['mavlink-ai-connection.html', 'heartbeatIntervalMs', (v) => nb.acceptsAtLeast(1000)(v)],
+  // Same runtime clamps as swarm, one node over (VehicleRegistry / engine).
+  ['mavlink-ai-formation.html', 'staleMs', (v) => nb.acceptsPositive(v)],
+  ['mavlink-ai-formation.html', 'expireMs', (v) => nb.acceptsNonNegative(v)],
+  ['mavlink-ai-vehicle-state.html', 'staleMs', (v) => nb.acceptsPositive(v)],
+  ['mavlink-ai-vehicle-state.html', 'statustextBuffer', (v) => nb.acceptsPositive(v)],
+  ['mavlink-ai-vehicle-state.html', 'intervalSeconds', (v) => nb.acceptsNonNegative(v)]
 ];
 
 // Values exercised at every field to prove editor == module.

@@ -1,4 +1,16 @@
 <script type="text/javascript">
+  // #210: browser mirror of lib/util/numeric-bounds.js. Kept in sync by
+  // test/unit/numeric-bounds-editor-spec.test.js — edit both together.
+  function mavlinkNumericBounds() {
+    function isBlank(v) { return v === undefined || v === null || String(v).trim() === ''; }
+    return {
+      positive: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n > 0; },
+      nonNegativeInteger: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return Number.isInteger(n) && n >= 0; },
+      nonNegative: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n >= 0; },
+      atLeast: function (min) { return function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n >= min; }; },
+      integerAtLeast: function (min) { return function (v) { if (isBlank(v)) { return true; } var n = Number(v); return Number.isInteger(n) && n >= min; }; }
+    };
+  }
   RED.nodes.registerType('mavlink-ai-vehicle-state', {
     category: 'MAVLink AI',
     paletteLabel: 'MAVLink Vehicle State',
@@ -7,9 +19,9 @@
       name: { value: '' },
       connection: { value: '', type: 'mavlink-ai-connection', required: true },
       sysids: { value: '' },
-      intervalSeconds: { value: 0, validate: RED.validators.number(true) },
-      staleMs: { value: 5000, validate: RED.validators.number() },
-      statustextBuffer: { value: 20, validate: RED.validators.number() }
+      intervalSeconds: { value: 0, validate: function (v) { return mavlinkNumericBounds().nonNegative(v); } },
+      staleMs: { value: 5000, validate: function (v) { return mavlinkNumericBounds().positive(v); } },
+      statustextBuffer: { value: 20, validate: function (v) { return mavlinkNumericBounds().positive(v); } }
     },
     inputs: 1,
     outputs: 3,
