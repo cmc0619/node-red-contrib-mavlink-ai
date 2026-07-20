@@ -147,6 +147,102 @@ test('coalesceKey drops a superseded queued item and resolves it', async () => {
   assert.deepStrictEqual(written, [1, 11]);
 });
 
+test('dropCoalesced removes matching queued items and resolves their promises (#225)', async () => {
+  /**
+   * Added for #225: the connection's health-driven heartbeat tick must be
+   * able to evict an already-queued heartbeat for an identity that has just
+   * gone fatal, without enqueuing a replacement (unlike the enqueue-time
+   * `_dropSuperseded` this reuses). Dropped items resolve, not reject — the
+   * caller decided the item should no longer be sent, not that it failed.
+   */
+  let release;
+  const gate = new Promise((r) => (release = r));
+  let calls = 0;
+  const queue = new OutboundQueue(() => {
+    calls += 1;
+    return calls === 1 ? gate : Promise.resolve();
+  });
+
+  /** In-flight (blocked) item, plus two queued items sharing a coalesce key and one unrelated queued item. */
+  const inflight = queue.enqueue(Buffer.from([1]));
+  const hb1 = queue.enqueue(Buffer.from([10]), 3, undefined, { coalesceKey: 'heartbeat:id-a' });
+  const other = queue.enqueue(Buffer.from([2]), 2, undefined, { coalesceKey: 'unrelated' });
+
+  const dropped = queue.dropCoalesced('heartbeat:id-a');
+
+  assert.strictEqual(dropped, 1, 'reports how many items were dropped');
+  assert.strictEqual(queue.length, 1, 'only the matching-key item is removed; the unrelated item stays queued');
+  await hb1; // resolves (not rejects) despite never being written
+
+  /** A second call with no matches is a safe no-op. */
+  assert.strictEqual(queue.dropCoalesced('heartbeat:id-a'), 0);
+
+  release();
+  await Promise.all([inflight, other]);
+});
+
+test('dropCoalescedMatching removes every item whose coalesce key satisfies the predicate (#225)', async () => {
+  /**
+   * Added for #225 review: the mixed v1/v2 broadcast path (#199) re-keys a
+   * coalesced heartbeat per wire version (`heartbeat:<id>:v1` /
+   * `heartbeat:<id>:v2`), so evicting only the bare `heartbeat:<id>` key
+   * (dropCoalesced) misses those queued frames. dropCoalescedMatching lets a
+   * caller evict a base key and every `:`-suffixed variant with one call,
+   * sharing the same removal path (_removeMatching) dropCoalesced uses.
+   */
+  let release;
+  const gate = new Promise((r) => (release = r));
+  let calls = 0;
+  const queue = new OutboundQueue(() => {
+    calls += 1;
+    return calls === 1 ? gate : Promise.resolve();
+  });
+
+  const inflight = queue.enqueue(Buffer.from([1]));
+  const base = queue.enqueue(Buffer.from([10]), 3, undefined, { coalesceKey: 'heartbeat:id-a' });
+  const v1 = queue.enqueue(Buffer.from([11]), 3, undefined, { coalesceKey: 'heartbeat:id-a:v1' });
+  const v2 = queue.enqueue(Buffer.from([12]), 3, undefined, { coalesceKey: 'heartbeat:id-a:v2' });
+  const unrelated = queue.enqueue(Buffer.from([2]), 2, undefined, { coalesceKey: 'unrelated' });
+
+  const matchBase = 'heartbeat:id-a';
+  const predicate = (k) => typeof k === 'string' && (k === matchBase || k.startsWith(`${matchBase}:`));
+  const dropped = queue.dropCoalescedMatching(predicate);
+
+  assert.strictEqual(dropped, 3, 'drops the base key plus both version-suffixed variants');
+  assert.strictEqual(queue.length, 1, 'only the unrelated item remains queued');
+  await Promise.all([base, v1, v2]); // all resolve (not reject) despite never being written
+
+  release();
+  await Promise.all([inflight, unrelated]);
+});
+
+test('dropCoalescedMatching with a base-key predicate does not false-match a longer sysid (#225)', async () => {
+  /**
+   * Guards the anchoring in the `=== base || startsWith(base + ':')` form:
+   * base `heartbeat:1` must not evict `heartbeat:10` or `heartbeat:12` —
+   * plain-substring matching would wrongly conflate a different identity
+   * whose id happens to share a numeric prefix.
+   */
+  const queue = new OutboundQueue(() => new Promise(() => {}));
+  const inflight = queue.enqueue(Buffer.from([0]));
+  const idOneQueued = queue.enqueue(Buffer.from([1]), 3, undefined, { coalesceKey: 'heartbeat:1' });
+  const idTenQueued = queue.enqueue(Buffer.from([10]), 3, undefined, { coalesceKey: 'heartbeat:10' });
+  const idTwelveQueued = queue.enqueue(Buffer.from([12]), 3, undefined, { coalesceKey: 'heartbeat:12' });
+
+  const matchBase = 'heartbeat:1';
+  const predicate = (k) => typeof k === 'string' && (k === matchBase || k.startsWith(`${matchBase}:`));
+  const dropped = queue.dropCoalescedMatching(predicate);
+
+  assert.strictEqual(dropped, 1, 'only the exact base key matches; the longer sysids must survive');
+  assert.strictEqual(queue.length, 2, 'heartbeat:10 and heartbeat:12 stay queued');
+
+  idOneQueued.catch(() => {});
+  idTenQueued.catch(() => {});
+  idTwelveQueued.catch(() => {});
+  inflight.catch(() => {});
+  queue.clear();
+});
+
 test('onWrite fires only for actually-written buffers, never for coalesced drops', async () => {
   const onWrote = [];
   let release;

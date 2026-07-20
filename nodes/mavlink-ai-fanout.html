@@ -1,4 +1,16 @@
 <script type="text/javascript">
+  // #210: browser mirror of lib/util/numeric-bounds.js. Kept in sync by
+  // test/unit/numeric-bounds-editor-spec.test.js — edit both together.
+  function mavlinkNumericBounds() {
+    function isBlank(v) { return v === undefined || v === null || String(v).trim() === ''; }
+    return {
+      positive: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n > 0; },
+      nonNegativeInteger: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return Number.isInteger(n) && n >= 0; },
+      nonNegative: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n >= 0; },
+      atLeast: function (min) { return function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n >= min; }; },
+      integerAtLeast: function (min) { return function (v) { if (isBlank(v)) { return true; } var n = Number(v); return Number.isInteger(n) && n >= min; }; }
+    };
+  }
   RED.nodes.registerType('mavlink-ai-fanout', {
     category: 'MAVLink AI',
     paletteLabel: 'MAVLink Fanout',
@@ -10,33 +22,37 @@
         value: '',
         type: 'mavlink-ai-connection',
         required: false,
-        // Await-acks has nothing to send on without a connection; catch that at
-        // edit time instead of a runtime NO_CONNECTION error.
+        // Send/Await have nothing to send on without a connection; catch that
+        // at edit time instead of a runtime NO_CONNECTION error (#207).
         validate: function (v) {
           /**
-           * Read the live checkbox while the dialog is open — `this.awaitAck`
-           * holds the pre-edit value, so ticking Await acks and leaving the
-           * connection blank would pass validation until the node is reopened.
+           * Read the live select while the dialog is open — `this.delivery`
+           * holds the pre-edit value, so switching to Send/Await and leaving
+           * the connection blank would pass validation until the node is
+           * reopened.
            */
-          const $live = $('#node-input-awaitAck');
-          const awaitAck = $live.length ? $live.is(':checked') : this.awaitAck;
-          return !awaitAck || (v !== '' && v != null);
+          const $live = $('#node-input-delivery');
+          const mode = $live.length ? $live.val() : this.delivery;
+          return (mode !== 'send' && mode !== 'await') || (v !== '' && v != null);
         }
       },
       mode: { value: 'fanout' },
       command: { value: '' },
       sendAs: { value: 'long' },
-      awaitAck: { value: false },
-      timeoutMs: { value: 3000, validate: RED.validators.number() },
-      maxRetries: { value: 3, validate: RED.validators.number() },
-      spacingMs: { value: 0, validate: RED.validators.number() },
+      delivery: { value: 'build' },
+      timeoutMs: { value: 3000, validate: function (v) { return mavlinkNumericBounds().positive(v); } },
+      maxRetries: { value: 3, validate: function (v) { return mavlinkNumericBounds().nonNegativeInteger(v); } },
+      spacingMs: { value: 0, validate: function (v) { return mavlinkNumericBounds().nonNegative(v); } },
       stopOnError: { value: false },
-      concurrency: { value: 1, validate: RED.validators.number() },
+      concurrency: { value: 1, validate: function (v) { return mavlinkNumericBounds().integerAtLeast(1)(v); } },
       dryRun: { value: false },
       fields: { value: '' }
     },
     inputs: 1,
-    outputs: 1,
+    outputs: 2,
+    outputLabels: function (i) {
+      return i === 1 ? 'error' : (this.delivery === 'build' ? 'message' : 'result');
+    },
     icon: 'font-awesome/fa-share-alt',
     label: function () {
       const prefix = this.mode === 'broadcast' ? 'broadcast' : 'fan-out';
@@ -55,18 +71,25 @@
               '(usually) its own coordinates. This is what formation movement needs.'
         );
         // Broadcast cannot collect per-vehicle ACKs.
-        if (broadcast) {
-          $('#node-input-awaitAck').prop('checked', false);
+        const $delivery = $('#node-input-delivery');
+        if (broadcast && $delivery.val() === 'await') {
+          $delivery.val('build');
         }
-        $('#node-input-awaitAck').prop('disabled', broadcast);
-        refreshAckRows();
+        $delivery.find('option[value="await"]').prop('disabled', broadcast);
+        refreshDeliveryRows();
       }
-      function refreshAckRows() {
-        const on = $('#node-input-awaitAck').is(':checked');
-        $('.mav-fanout-ack').toggle(on);
+      /**
+       * Delivery controls which rows apply (#207): Send/Await need a
+       * connection to send on; only Await runs the retry/timeout protocol.
+       */
+      function refreshDeliveryRows() {
+        const mode = $('#node-input-delivery').val();
+        $('.mav-fanout-connection').toggle(mode === 'send' || mode === 'await');
+        $('.mav-fanout-ack').toggle(mode === 'await');
+        $('.mav-fanout-dispatch').toggle(mode === 'send' || mode === 'await');
       }
       $('#node-input-mode').on('change', refreshMode);
-      $('#node-input-awaitAck').on('change', refreshAckRows);
+      $('#node-input-delivery').on('change', refreshDeliveryRows);
       refreshMode();
     }
   });
@@ -113,10 +136,14 @@
     <input type="checkbox" id="node-input-dryRun" title="Output the built messages instead of sending/queueing them" style="display: inline-block; width: auto; vertical-align: top;">
   </div>
   <div class="form-row">
-    <label for="node-input-awaitAck" title="Send via the connection and aggregate per-vehicle COMMAND_ACKs">Await acks</label>
-    <input type="checkbox" id="node-input-awaitAck" title="Send via the connection and aggregate per-vehicle COMMAND_ACKs" style="width:auto; vertical-align:middle;">
+    <label for="node-input-delivery"><i class="fa fa-arrow-right"></i> Delivery</label>
+    <select id="node-input-delivery" style="width:70%;">
+      <option value="build">Build only (hand off to MAVLink Out)</option>
+      <option value="send">Send via connection (fire-and-forget)</option>
+      <option value="await">Send &amp; await result (COMMAND_ACK)</option>
+    </select>
   </div>
-  <div class="form-row mav-fanout-ack">
+  <div class="form-row mav-fanout-connection">
     <label for="node-input-connection">Connection</label>
     <input type="text" id="node-input-connection">
   </div>
@@ -128,15 +155,15 @@
     <label for="node-input-maxRetries">Retries</label>
     <input type="number" id="node-input-maxRetries">
   </div>
-  <div class="form-row mav-fanout-ack">
+  <div class="form-row mav-fanout-dispatch">
     <label for="node-input-stopOnError" title="Abort remaining vehicles after the first failure">Stop on error</label>
     <input type="checkbox" id="node-input-stopOnError" title="Abort remaining vehicles after the first failure" style="display: inline-block; width: auto; vertical-align: top;">
   </div>
-  <div class="form-row mav-fanout-ack">
-    <label for="node-input-concurrency" title="How many vehicles to await-ack in parallel">Concurrency</label>
+  <div class="form-row mav-fanout-dispatch">
+    <label for="node-input-concurrency" title="How many vehicles to send/await-ack in parallel">Concurrency</label>
     <input type="number" id="node-input-concurrency" min="1" placeholder="1 = one vehicle at a time">
   </div>
-  <div class="form-tips mav-fanout-ack" style="margin: -6px 0 8px 105px; width: 70%;">
+  <div class="form-tips mav-fanout-dispatch" style="margin: -6px 0 8px 105px; width: 70%;">
     <b>1</b> (default) commands vehicles one at a time. Raise it so a &#34;simultaneous&#34; formation command reaches several vehicles at once — a slow or timing-out straggler then can&#39;t delay the rest by timeout&times;retries. <b>Spacing ms</b> still paces successive launches.
   </div>
 </script>
@@ -144,8 +171,16 @@
 <script type="text/html" data-help-name="mavlink-ai-fanout">
   <p>Expands one logical command into <b>one message per target vehicle</b> with <code>target_system</code> filled in (fan-out), or — explicitly, in broadcast mode — a single identical message to <code>target_system</code> 0. These are different things: formation movement needs fan-out, because each vehicle gets its own target position.</p>
   <p><b>Targets</b> come from <code>msg.payload.targets</code> (sysid numbers and/or objects like <code>{"sysid": 2, "lat": 39.1, "lon": -75.1, "alt": 40}</code>), <code>msg.payload.sysids</code>, or a <b>MAVLink AI Swarm</b> registry output (<code>payload.vehicles</code>) wired straight in. Per-target objects may override <code>param1..7</code>, <code>lat/lon/alt</code>, raw <code>x/y/z</code>, <code>frame</code>, and <code>target_component</code>.</p>
-  <p><b>Meter offsets</b>: give <code>msg.payload.origin</code> (<code>{lat, lon, alt}</code>) and per-target <code>north/east/up</code> (or <code>down</code>) in meters — the node converts to global lat/lon/alt (and degE7 for COMMAND_INT) so you never add meters to degrees by hand. Set <b>Dry-run</b> (or <code>msg.payload.dry_run</code>) to see exactly what would be sent (<code>swarm/dryrun</code>).</p>
-  <p><b>Without Await acks</b> the node emits normalized <code>mavlink/send</code> messages for a downstream <b>MAVLink AI Out</b> node, optionally paced by <b>Spacing ms</b>. <b>With Await acks</b> it sends each command on the connection, runs the full COMMAND_ACK workflow per vehicle (retries, timeout), and outputs one <code>swarm/ack</code> aggregation: <code>{ accepted: [1,2], failed: [4], timedOut: [5], skipped: [], results: { "1": {...} } }</code>. Partial failure is normal in swarm operations and is reported, not hidden.</p>
-  <p><b>Concurrency</b> (await-acks only) sets how many vehicles are commanded in parallel. The default <code>1</code> is strictly sequential — each vehicle's ack (or timeout) is awaited before the next is sent — so one unresponsive vehicle delays the whole swarm by its full <code>timeout×retries</code>. Raise it for a genuinely simultaneous formation command; <b>Spacing ms</b> still paces successive launches, and <b>Stop on error</b> stops dispatching new vehicles after the first failure (vehicles already in flight finish, and undispatched ones are reported as <code>skipped</code>).</p>
+  <p><b>Meter offsets</b>: give <code>msg.payload.origin</code> (<code>{lat, lon, alt}</code>) and per-target <code>north/east/up</code> (or <code>down</code>) in meters — the node converts to global lat/lon/alt (and degE7 for COMMAND_INT) so you never add meters to degrees by hand.</p>
+  <h3>Delivery</h3>
+  <p>The <b>Delivery</b> control chooses what the node does with the expanded per-vehicle commands (Fan-out now offers direct Send, like Command):</p>
+  <ul>
+    <li><b>Build only</b> (default) — no connection needed. Emits one normalized <code>mavlink/send</code> message per target on <b>port 0</b>, for a downstream <b>MAVLink AI Out</b> node, optionally paced by <b>Spacing ms</b>.</li>
+    <li><b>Send via connection</b> — sends each command on the connection, fire-and-forget, and outputs a structured <code>swarm/sent</code> result on <b>port 0</b>.</li>
+    <li><b>Send &amp; await result</b> — sends each command on the connection, runs the full <code>COMMAND_ACK</code> workflow per vehicle (retries, timeout), and outputs one <code>swarm/ack</code> aggregation on <b>port 0</b>: <code>{ accepted: [1,2], failed: [4], timedOut: [5], skipped: [], results: { "1": {...} } }</code>. Partial failure is normal in swarm operations and is reported, not hidden.</li>
+  </ul>
+  <p>Separately, the <b>Dry-run</b> checkbox (or <code>msg.payload.dry_run</code>) previews exactly what would be built for every target without sending or queueing anything, emitting <code>swarm/dryrun</code> on <b>port 0</b> regardless of the selected Delivery mode.</p>
+  <p>Every mode uses the same two-port contract: <b>port 0</b> is the node's product for that mode, <b>port 1</b> is errors (a structured <code>mavlink/error</code>, or <code>DELIVERY_UNSET</code> if no Delivery mode was ever chosen). <b>Send</b> and <b>Send &amp; await result</b> require a <b>Connection</b>; <b>Build only</b> does not — wire its output into a <b>MAVLink AI Out</b> node that is also in Build only mode. Broadcast mode (<code>target_system</code> 0) cannot collect per-vehicle acks, so it is rejected under <b>Send &amp; await result</b> — use fan-out mode, or a non-await Delivery mode.</p>
+  <p><b>Concurrency</b> (<b>Send via connection</b> and <b>Send &amp; await result</b> modes) sets how many vehicles are dispatched in parallel — both modes share the same dispatcher. The default <code>1</code> is strictly sequential — each vehicle's send (or, under <b>Send &amp; await result</b>, its ack or timeout) is awaited before the next is sent — so one unresponsive vehicle delays the whole swarm by its full send time or <code>timeout×retries</code>. Raise it for a genuinely simultaneous formation command; <b>Spacing ms</b> still paces successive launches, and <b>Stop on error</b> stops dispatching new vehicles after the first failure (vehicles already in flight finish, and undispatched ones are reported as <code>skipped</code>).</p>
   <p><b>Safety gates</b> belong upstream: filter the swarm registry output (e.g. <code>{"armed": true, "includeStale": false}</code> or a group) so only vehicles with a recent heartbeat and the expected state are targeted.</p>
 </script>

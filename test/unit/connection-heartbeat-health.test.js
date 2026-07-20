@@ -1,0 +1,487 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert');
+const { MockRED } = require('../helpers/mock-red');
+
+/**
+ * setAdvertisedHealth (#225). A minimal `{ id: 'c1' }` config never reaches
+ * setAdvertisedHealth's definition — an invalid/missing transport config
+ * trips the deploy-time TRANSPORT_CONFIG_INVALID no-op path (see
+ * connection-transport-validation.test.js) before the local-identity helpers
+ * are installed. So, mirroring the profile/identity/transport scaffolding
+ * from connection-status-detail.test.js, these tests build a fully-active
+ * connection (real UDP transport, ephemeral bind, no reconnect/heartbeat)
+ * and then stub `resolveLocalIdentity`/`localIdentity` as the task brief's
+ * tests do, to drive `setAdvertisedHealth` deterministically without
+ * depending on identity-binding config.
+ */
+
+/**
+ * Minimal identity stand-in with the methods the connection calls.
+ *
+ * @param {string} id
+ * @param {boolean} [healthDriven=true]
+ * @returns {object} identity stub
+ */
+function identity(id, healthDriven = true) {
+  return { id, describe: () => id, getHeartbeatFields: () => ({ type: 'MAV_TYPE_ONBOARD_CONTROLLER', autopilot: 'MAV_AUTOPILOT_INVALID', base_mode: 0, custom_mode: 0, system_status: 'MAV_STATE_ACTIVE', mavlink_version: 3 }), healthDriven };
+}
+
+/**
+ * Build a fully-active connection node with the profile/identity/transport
+ * scaffolding the config requires to construct past deploy-time validation.
+ *
+ * @param {MockRED} RED  the mock runtime
+ * @returns {object} the connection node
+ */
+function connection(RED) {
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  RED.create('mavlink-ai-local-identity', {
+    id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
+  });
+  const conn = RED.create('mavlink-ai-connection', {
+    id: 'c1', name: 'Conn', profile: 'p1', localIdentity: 'id1', transport: 'udp',
+    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
+  });
+  RED.events.emit('flows:started');
+  return conn;
+}
+
+/**
+ * #225 follow-up: `heartbeatSpecs()` emits start-phrased warnings ("cannot
+ * start heartbeat…", "outbound disabled…") for additional identities it skips.
+ * That function is now also called from `setAdvertisedHealth`'s eligibility
+ * probe, which is not a start — so those warnings must NOT fire on the probe
+ * path (otherwise every health assertion re-warns). They stay gated to the
+ * actual (re)start path via `warnSkips`.
+ */
+test('setAdvertisedHealth probe does not emit start-phrased heartbeat warnings (#225 follow-up)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-default');
+  conn.localIdentity = def;
+  conn.heartbeatEnabled = true;
+  conn.allowMultipleIdentities = true;
+  // An additional binding heartbeatSpecs() would skip-and-warn about (heartbeat
+  // on, outbound disabled). The probe walks the same specs to check eligibility.
+  const extra = identity('id-extra');
+  conn._identityBindings = [{ identity: 'id-extra', heartbeat: true, allowOutbound: false, heartbeatIntervalMs: 1000 }];
+  conn.resolveLocalIdentity = (ref) => {
+    if (ref == null || ref === def.id) return def;
+    if (ref === 'id-extra') return extra;
+    const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e;
+  };
+  conn.warnings.length = 0;
+  conn.setAdvertisedHealth(undefined, { health: 'degraded', ttl_s: 10 });
+  assert.ok(
+    !conn.warnings.some((w) => /cannot start heartbeat|outbound disabled/.test(w)),
+    `the eligibility probe must not warn about skipped identities, got: ${JSON.stringify(conn.warnings)}`
+  );
+});
+
+test('the heartbeat start path still warns about a skipped additional identity (#225 follow-up)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  // Default identity absent so no live default timer is scheduled; only the
+  // outbound-disabled additional binding is present, which the start path skips.
+  conn.localIdentity = null;
+  conn.heartbeatEnabled = true;
+  conn.allowMultipleIdentities = true;
+  const extra = identity('id-extra');
+  conn._identityBindings = [{ identity: 'id-extra', heartbeat: true, allowOutbound: false, heartbeatIntervalMs: 1000 }];
+  conn.resolveLocalIdentity = (ref) => (ref === 'id-extra'
+    ? extra
+    : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+  conn.warnings.length = 0;
+  // Drive the real start path: transport 'listening' → startHeartbeats() →
+  // heartbeatSpecs({ warnSkips: true }).
+  conn._transport.emit('listening', {});
+  assert.ok(
+    conn.warnings.some((w) => /outbound disabled/.test(w)),
+    `the start path must still warn about the skipped identity, got: ${JSON.stringify(conn.warnings)}`
+  );
+});
+
+test('setAdvertisedHealth stores a normalized record for the default identity', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-default');
+  conn.localIdentity = def;
+  // heartbeatSpecs() must schedule this identity for setAdvertisedHealth to
+  // accept its assertion (#225 review: IDENTITY_NOT_HEALTH_DRIVEN). Set the
+  // flag directly rather than via config so no live setInterval starts —
+  // startHeartbeats() already ran (with heartbeating off) during
+  // construction; heartbeatSpecs() re-reads this property live on every call.
+  conn.heartbeatEnabled = true;
+  conn.resolveLocalIdentity = (ref) => (ref == null || ref === def.id ? def : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+  const rec = conn.setAdvertisedHealth(undefined, { health: 'degraded', ttl_s: 10, note: 'watchdog' });
+  assert.strictEqual(rec.state, 'degraded');
+  assert.strictEqual(conn._advertisedHealth.get('id-default').state, 'degraded');
+});
+
+test('setAdvertisedHealth rejects an unknown identity ref', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  conn.localIdentity = identity('id-default');
+  conn.resolveLocalIdentity = () => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; };
+  assert.throws(() => conn.setAdvertisedHealth('ghost', { health: 'nominal', ttl_s: 5 }), (e) => e.code === 'UNKNOWN_IDENTITY');
+});
+
+test('setAdvertisedHealth propagates the INVALID_HEALTH validation error', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-default');
+  conn.localIdentity = def;
+  conn.resolveLocalIdentity = () => def;
+  // Deliberately NOT scheduled/health-driven here: normalizeAssertion runs
+  // before the eligibility check, so a malformed assertion must still fail
+  // INVALID_HEALTH first regardless of whether this identity is scheduled.
+  assert.throws(() => conn.setAdvertisedHealth(undefined, { health: 'nominal' }), (e) => e.code === 'INVALID_HEALTH');
+});
+
+test('setAdvertisedHealth rejects an identity that is not health-driven and heartbeat-scheduled', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-default');
+  conn.localIdentity = def;
+  conn.resolveLocalIdentity = (ref) => (ref == null || ref === def.id ? def : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+
+  // Case 1: healthDriven but never scheduled (heartbeatEnabled left off, and
+  // this identity has no additional binding) — heartbeatSpecs() is empty, so
+  // no tick will ever read the record.
+  assert.throws(
+    () => conn.setAdvertisedHealth(undefined, { health: 'degraded', ttl_s: 10 }),
+    (e) => e.code === 'IDENTITY_NOT_HEALTH_DRIVEN',
+    'not scheduled -> IDENTITY_NOT_HEALTH_DRIVEN'
+  );
+  assert.strictEqual(conn._advertisedHealth.has(def.id), false, 'a rejected assertion must not be stored');
+
+  // Case 2: scheduled but healthDriven: false — the tick would ignore the
+  // record even though a tick runs for this identity.
+  conn.heartbeatEnabled = true;
+  const notDriven = identity('id-static', false);
+  conn.localIdentity = notDriven;
+  conn.resolveLocalIdentity = (ref) => (ref == null || ref === notDriven.id ? notDriven : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+  assert.throws(
+    () => conn.setAdvertisedHealth(undefined, { health: 'degraded', ttl_s: 10 }),
+    (e) => e.code === 'IDENTITY_NOT_HEALTH_DRIVEN',
+    'scheduled but not healthDriven -> IDENTITY_NOT_HEALTH_DRIVEN'
+  );
+  assert.strictEqual(conn._advertisedHealth.has(notDriven.id), false, 'a rejected assertion must not be stored');
+});
+
+/**
+ * #307 review (Codex P2): when the connection is in the fail-closed inactive
+ * state — its default Local Identity is missing/deleted, so `node.localIdentity`
+ * is null — but the heartbeat toggle is still on, a health assertion naming an
+ * explicit identity must still surface a *structured* eligibility error, not a
+ * raw TypeError. Previously `heartbeatSpecs()` emitted a `{ identity: null }`
+ * default spec, and the eligibility check's `spec.identity.id` deref threw
+ * `TypeError` (which the vehicle-state node then mislabels INVALID_HEALTH).
+ */
+test('setAdvertisedHealth surfaces a structured error, not a TypeError, when the default identity is missing but heartbeating is on (#307 review)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  conn.localIdentity = null;      // default identity missing → fail-closed inactive
+  conn.heartbeatEnabled = true;   // yet the heartbeat toggle is on
+  const companion = identity('id-companion');
+  conn.resolveLocalIdentity = (ref) => (ref === 'id-companion'
+    ? companion
+    : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+
+  assert.throws(
+    () => conn.setAdvertisedHealth('id-companion', { health: 'degraded', ttl_s: 10 }),
+    (e) => e.code === 'IDENTITY_NOT_HEALTH_DRIVEN' && !(e instanceof TypeError),
+    'a missing default identity must not turn the eligibility check into a raw TypeError'
+  );
+});
+
+/**
+ * #307 review (Codex P2, follow-on): the same missing-default hazard one branch
+ * deeper. With the default identity absent but `allowMultipleIdentities` on and
+ * an additional binding heartbeating, `heartbeatSpecs()` enters the additional
+ * loop and its duplicate-default check dereferenced `node.localIdentity.id` —
+ * a raw TypeError. A health assertion for that additional identity must instead
+ * be accepted (it *is* scheduled) via a structured path, never crash.
+ */
+test('an additional heartbeat identity is schedulable with the default identity absent (#307 review)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  conn.localIdentity = null;              // default missing → fail-closed inactive
+  conn.allowMultipleIdentities = true;
+  const companion = identity('id-companion');
+  conn._identityBindings = [{ identity: 'id-companion', heartbeat: true, allowOutbound: true, heartbeatIntervalMs: 1000 }];
+  conn.resolveLocalIdentity = (ref) => (ref === 'id-companion'
+    ? companion
+    : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+
+  // Must not throw a TypeError from the duplicate-default check; the additional
+  // identity is health-driven and scheduled, so the assertion is accepted.
+  const rec = conn.setAdvertisedHealth('id-companion', { health: 'degraded', ttl_s: 10 });
+  assert.strictEqual(rec.state, 'degraded');
+  assert.strictEqual(conn._advertisedHealth.get('id-companion').state, 'degraded');
+});
+
+/**
+ * The heartbeat tick's health-driven decision (#225), tested via the
+ * `_heartbeatFieldsFor` seam rather than driving a live setInterval tick —
+ * see the tick refactor in nodes/mavlink-ai-connection.js. Covers the three
+ * required outcomes for a health-driven identity: no assertion -> STANDBY,
+ * degraded -> CRITICAL, fatal -> no-send (null fields).
+ */
+test('a health-driven identity stamps the mapped system_status and stops on fatal', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-default');
+  conn.localIdentity = def;
+  conn.heartbeatEnabled = true;
+  conn.resolveLocalIdentity = (ref) => (ref == null || ref === def.id ? def : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+
+  // 1. no assertion -> MAV_STATE_STANDBY
+  let fields = conn._heartbeatFieldsFor(def, Date.now());
+  assert.strictEqual(fields.system_status, 'MAV_STATE_STANDBY');
+
+  // 2. degraded assertion -> MAV_STATE_CRITICAL
+  conn.setAdvertisedHealth(undefined, { health: 'degraded', ttl_s: 10 });
+  fields = conn._heartbeatFieldsFor(def, Date.now());
+  assert.strictEqual(fields.system_status, 'MAV_STATE_CRITICAL');
+
+  // 3. fatal assertion -> no frame this tick
+  conn.setAdvertisedHealth(undefined, { health: 'fatal' });
+  fields = conn._heartbeatFieldsFor(def, Date.now());
+  assert.strictEqual(fields, null);
+});
+
+test('a non-health-driven identity still yields the static MAV_STATE_ACTIVE (regression guard)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const gcs = identity('id-gcs', false);
+  const fields = conn._heartbeatFieldsFor(gcs, Date.now());
+  assert.strictEqual(fields.system_status, 'MAV_STATE_ACTIVE');
+});
+
+/**
+ * Review finding (#225 review): a fatal assertion must not permanently wedge
+ * a health-driven identity's heartbeat — a fresh non-fatal assertion after a
+ * fatal one must resume sending with a mapped `system_status`. This is the
+ * highlighted failure mode: `_heartbeatFieldsFor` is pure (no `node.status`
+ * side effect) and must recompute cleanly from the latest stored record on
+ * every call, not latch on the earlier `null`.
+ */
+test('a non-fatal assertion after fatal recovers the heartbeat (no permanent stop)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-default');
+  conn.localIdentity = def;
+  conn.heartbeatEnabled = true;
+  conn.resolveLocalIdentity = (ref) => (ref == null || ref === def.id ? def : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+
+  conn.setAdvertisedHealth(undefined, { health: 'fatal' });
+  assert.strictEqual(conn._heartbeatFieldsFor(def, Date.now()), null);
+
+  conn.setAdvertisedHealth(undefined, { health: 'nominal', ttl_s: 10 });
+  const fields = conn._heartbeatFieldsFor(def, Date.now());
+  assert.notStrictEqual(fields, null);
+  assert.strictEqual(fields.system_status, 'MAV_STATE_ACTIVE');
+});
+
+/**
+ * Expiry through the tick seam (#225 review): a non-fatal assertion whose
+ * `ttl_s` has elapsed by the tick's `now` must fall back to
+ * `MAV_STATE_CRITICAL` — an expired lease must never keep reporting the
+ * asserted (possibly stale) state as if it were still current.
+ */
+test('an expired non-fatal assertion reports MAV_STATE_CRITICAL', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-default');
+  conn.localIdentity = def;
+  conn.heartbeatEnabled = true;
+  conn.resolveLocalIdentity = (ref) => (ref == null || ref === def.id ? def : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+
+  conn.setAdvertisedHealth(undefined, { health: 'nominal', ttl_s: 1 });
+  const past = Date.now() + 5000;
+  const fields = conn._heartbeatFieldsFor(def, past);
+  assert.strictEqual(fields.system_status, 'MAV_STATE_CRITICAL');
+});
+
+/**
+ * Edge-triggered warn (#225 review): the tick surfaces the fatal-stop and its
+ * recovery via `node.warn` — not `node.status(...)`, since this config node
+ * has no canvas badge — exactly once per transition, never once per tick.
+ * Driven directly at the `node._handleHeartbeatHealthEdge(identity, fields)`
+ * seam the tick calls with its `_heartbeatFieldsFor` result, avoiding a flaky
+ * dependency on the live `setInterval` tick.
+ */
+test('_handleHeartbeatHealthEdge warns once entering fatal and once on recovery, not per tick', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-default');
+
+  // Three consecutive fatal ticks -> exactly one "asserted FATAL" warning.
+  conn._handleHeartbeatHealthEdge(def, null);
+  conn._handleHeartbeatHealthEdge(def, null);
+  conn._handleHeartbeatHealthEdge(def, null);
+  assert.strictEqual(conn.warnings.length, 1);
+  assert.match(conn.warnings[0], /FATAL health/);
+
+  // Three consecutive recovered ticks -> exactly one "recovered" warning.
+  const recoveredFields = { system_status: 'MAV_STATE_ACTIVE' };
+  conn._handleHeartbeatHealthEdge(def, recoveredFields);
+  conn._handleHeartbeatHealthEdge(def, recoveredFields);
+  conn._handleHeartbeatHealthEdge(def, recoveredFields);
+  assert.strictEqual(conn.warnings.length, 2);
+  assert.match(conn.warnings[1], /recovered/);
+
+  // A second fatal transition re-warns (the edge fires again on re-entry).
+  conn._handleHeartbeatHealthEdge(def, null);
+  assert.strictEqual(conn.warnings.length, 3);
+  assert.match(conn.warnings[2], /FATAL health/);
+});
+
+/**
+ * Queued-heartbeat eviction on fatal (#225 review, refined): the tick's
+ * `send()` call (and the enqueue-time coalesce-drop inside it) is skipped
+ * entirely once `_heartbeatFieldsFor` returns null for a fatal identity — so
+ * a heartbeat from a *prior*, pre-fatal tick that is still sitting in the
+ * outbound queue (e.g. backlogged behind a stalled transport) would
+ * otherwise survive fatal and still be flushed. `node._heartbeatTick` must
+ * evict it via the shared `node._evictQueuedHeartbeats` helper before
+ * returning. The helper now drops via `dropCoalescedMatching` (not the
+ * exact-key `dropCoalesced`) so it also catches the mixed v1/v2 broadcast
+ * path's version-suffixed coalesce keys (#199) — see the two eviction tests
+ * below. Driven at the `node._heartbeatTick(identity)` seam (mirroring
+ * `_heartbeatFieldsFor` / `_handleHeartbeatHealthEdge` above) rather than a
+ * live `setInterval`, and spying on `_evictQueuedHeartbeats` rather than
+ * exercising a real `send()` keeps this deterministic and avoids a real
+ * transport write.
+ */
+test('a fatal tick evicts any already-queued heartbeat for that identity (#225 review)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-default');
+  conn.localIdentity = def;
+  conn.heartbeatEnabled = true;
+  conn.resolveLocalIdentity = (ref) => (ref == null || ref === def.id ? def : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+
+  const evictCalls = [];
+  conn._evictQueuedHeartbeats = (identityId) => {
+    evictCalls.push(identityId);
+  };
+
+  conn.setAdvertisedHealth(undefined, { health: 'fatal' });
+  // setAdvertisedHealth itself evicts synchronously on fatal (Finding 1) —
+  // clear that call so the assertion below isolates the tick's own eviction.
+  evictCalls.length = 0;
+
+  conn._heartbeatTick(def);
+
+  assert.deepStrictEqual(
+    evictCalls,
+    [def.id],
+    'a fatal tick must evict any queued heartbeat for this identity via the shared eviction helper'
+  );
+});
+
+/**
+ * Finding 1 (#225 review): storing a `fatal` assertion must evict queued
+ * heartbeats for that identity *synchronously*, inside `setAdvertisedHealth`
+ * itself — not only on the next tick (up to one heartbeat interval later).
+ * Otherwise a frame enqueued by a tick just before the fatal assertion could
+ * still drain from the outbound queue during the inter-tick window.
+ */
+test('setAdvertisedHealth synchronously evicts queued heartbeats when the assertion is fatal (#225 review)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-default');
+  conn.localIdentity = def;
+  conn.heartbeatEnabled = true;
+  conn.resolveLocalIdentity = (ref) => (ref == null || ref === def.id ? def : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+
+  const evictCalls = [];
+  conn._evictQueuedHeartbeats = (identityId) => {
+    evictCalls.push(identityId);
+  };
+
+  // Non-fatal assertions must not trigger eviction.
+  conn.setAdvertisedHealth(undefined, { health: 'degraded', ttl_s: 10 });
+  assert.deepStrictEqual(evictCalls, [], 'a non-fatal assertion must not evict queued heartbeats');
+
+  conn.setAdvertisedHealth(undefined, { health: 'fatal' });
+  assert.deepStrictEqual(evictCalls, [def.id], 'a fatal assertion must synchronously evict queued heartbeats');
+});
+
+/**
+ * Finding 1 + 2 combined, exercised against the real `OutboundQueue` (no
+ * spying): storing a `fatal` assertion evicts every heartbeat coalesce key
+ * variant for that identity — the bare `heartbeat:<id>` key and any
+ * `:`-suffixed mixed-version variant (`heartbeat:<id>:v1` /
+ * `heartbeat:<id>:v2`, from the #199 mixed-broadcast re-key) — while leaving
+ * a different identity's queued heartbeat, and an unrelated coalesce key,
+ * untouched. Also guards against a false-match on a longer shared-prefix
+ * sysid (id-1 vs id-10).
+ */
+test('a fatal assertion evicts base and mixed-version heartbeat coalesce keys, sparing other identities (#225 review)', async (t) => {
+  const RED = new MockRED().loadNodes();
+  const conn = connection(RED);
+  t.after(() => RED.close(conn));
+  const def = identity('id-1');
+  conn.localIdentity = def;
+  conn.heartbeatEnabled = true;
+  conn.resolveLocalIdentity = (ref) => (ref == null || ref === def.id ? def : (() => { const e = new Error('no'); e.code = 'UNKNOWN_IDENTITY'; throw e; })());
+
+  // Stall the queue's writer so enqueued items stay queued, not drained.
+  conn._queue._writer = () => new Promise(() => {});
+
+  const settled = [];
+  const track = (label) => (p) => p.then(() => settled.push({ label, outcome: 'resolved' })).catch(() => settled.push({ label, outcome: 'rejected' }));
+
+  // Filler occupies the in-flight slot (the drain loop shifts it out and
+  // blocks on the stalled writer) so the heartbeat items below stay in
+  // `_queue` — eviction only touches still-queued items, never an in-flight
+  // write, mirroring dropCoalesced/_dropSuperseded's own contract.
+  const filler = conn._queue.enqueue(Buffer.from([0]), 2);
+  track('filler')(filler);
+
+  const base = conn._queue.enqueue(Buffer.from([1]), 3, undefined, { coalesceKey: `heartbeat:${def.id}` });
+  const v1 = conn._queue.enqueue(Buffer.from([2]), 3, undefined, { coalesceKey: `heartbeat:${def.id}:v1` });
+  const v2 = conn._queue.enqueue(Buffer.from([3]), 3, undefined, { coalesceKey: `heartbeat:${def.id}:v2` });
+  // A different identity sharing a numeric prefix (id-1 vs id-10) must survive.
+  const otherIdentityHb = conn._queue.enqueue(Buffer.from([4]), 3, undefined, { coalesceKey: 'heartbeat:id-10' });
+  const unrelated = conn._queue.enqueue(Buffer.from([5]), 2, undefined, { coalesceKey: 'unrelated' });
+
+  track('base')(base);
+  track('v1')(v1);
+  track('v2')(v2);
+  track('other')(otherIdentityHb);
+  track('unrelated')(unrelated);
+
+  conn.setAdvertisedHealth(undefined, { health: 'fatal' });
+
+  await new Promise((r) => setImmediate(r));
+
+  const resolvedLabels = settled.filter((s) => s.outcome === 'resolved').map((s) => s.label).sort();
+  assert.deepStrictEqual(resolvedLabels, ['base', 'v1', 'v2'], 'exactly the base and version-suffixed keys for this identity are evicted (resolved)');
+  assert.strictEqual(conn._queue.length, 2, 'the other identity\'s heartbeat and the unrelated item stay queued (filler is in-flight, not counted)');
+
+  conn._queue.clear();
+});

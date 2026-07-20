@@ -123,7 +123,7 @@
     "mode": "fanout",
     "command": "MAV_CMD_DO_REPOSITION",
     "sendAs": "int",
-    "awaitAck": false,
+    "delivery": "build",
     "timeoutMs": 3000,
     "maxRetries": 3,
     "spacingMs": 100,

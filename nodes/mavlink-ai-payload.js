@@ -6,6 +6,8 @@ const { CommandSend } = require('../lib/command/command-workflow');
 const { toNum, toBool, firstDefined } = require('../lib/util/validation');
 const { MavlinkError } = require('../lib/util/errors');
 const { makeFail } = require('../lib/util/node-errors');
+const { truncateStatus } = require('../lib/util/status');
+const { DELIVERY, resolveDeliveryMode } = require('../lib/util/delivery');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { watchConfigBadge } = require('../lib/util/node-lifecycle');
 const { PRIORITY, commandPriorityFor } = require('../lib/runtime/send-priority');
@@ -23,9 +25,12 @@ const { PRIORITY, commandPriorityFor } = require('../lib/runtime/send-priority')
  * `MAV_COMP_ID_CAMERA`, a gimbal, ...), so the target component is first-class
  * here rather than an afterthought.
  *
- * Like the command node, a Connection is optional: with one the node sends the
- * command directly; without one it emits a `mavlink/send` message for a
- * mavlink-ai-out node.
+ * Like the command node, delivery is explicit (#207): "Build only" hands the
+ * built message to a downstream mavlink-ai-out node; "Send via connection"
+ * sends it directly and fire-and-forgets; "Send & await result" sends it and
+ * waits for the COMMAND_ACK (COMMAND_LONG verbs only — a gimbal-manager
+ * message carries no ack, so Await degrades to Send semantics for it). Every
+ * mode emits on port 0 (product) with errors on port 1.
  */
 module.exports = function registerMavlinkAiPayload(RED) {
   function MavlinkAiPayloadNode(config) {
@@ -39,14 +44,48 @@ module.exports = function registerMavlinkAiPayload(RED) {
      * config node changed, so a Connection re-created on a later deploy would
      * otherwise leave the direct-send/await-ack path pointing at the destroyed
      * old object (the in/out/swarm nodes re-resolve the same way, #164). The
-     * connection is optional — without one the node emits mavlink/send — so the
-     * "missing connection" badge only shows when await-ack actually needs it.
+     * connection is only needed for Send/Await delivery (#207) — Build only
+     * hands mavlink/send to a downstream Out node — so the "missing connection"
+     * badge only shows when the selected delivery mode actually needs one.
      */
     watchConfigBadge(RED, node, config, {
       profile: 'required',
       connection: 'optional',
-      connectionRequiredWhen: () => toBool(config.awaitAck, false)
+      connectionRequiredWhen: () => config.delivery === DELIVERY.SEND || config.delivery === DELIVERY.AWAIT
     });
+
+    /**
+     * A missing/invalid Delivery selection (#207, #308) is a construct-time
+     * config error too, not just an input-time one: a pre-upgrade node (or one
+     * created via import/API without a `delivery` value) must show a red badge
+     * at deploy time instead of looking healthy until the first message. This
+     * node has no other construct-time config-error source (unlike command's/
+     * fanout's static `fields` JSON), so `node._configError` is introduced here
+     * for delivery alone — the input handler still fails closed on every
+     * message via its own `resolveDeliveryMode` call regardless of this flag,
+     * so this only adds deploy-time feedback. "invalid profile" is the more
+     * fundamental problem and watchConfigBadge already painted that badge
+     * above, so this only paints over it when the profile itself resolved
+     * fine; watchConfigBadge's own `flows:started` refresh also checks
+     * `node._configError` (#308 G1), so the badge is re-asserted — not
+     * cleared — on every later redeploy too, for as long as delivery stays
+     * unset.
+     */
+    let deliveryConfigError = null;
+    try {
+      resolveDeliveryMode(config, { allow: [DELIVERY.BUILD, DELIVERY.SEND, DELIVERY.AWAIT] });
+    } catch (err) {
+      if (err.code !== 'DELIVERY_UNSET') {
+        throw err;
+      }
+      deliveryConfigError = err.message;
+    }
+    node._configError = deliveryConfigError;
+    const profileOk = !!(node.profile && typeof node.profile.isValid === 'function' && node.profile.isValid());
+    if (node._configError && profileOk) {
+      node.status({ fill: 'red', shape: 'ring', text: 'invalid config' });
+    }
+
     node.action = config.action || 'camera_photo';
     node.targetComponent = config.targetComponent;
     node.interval = config.interval;
@@ -75,8 +114,6 @@ module.exports = function registerMavlinkAiPayload(RED) {
     node.rate = config.rate;
     node.parachuteAction = config.parachuteAction;
     node.period = config.period;
-    /** Optional COMMAND_ACK wait for the command-type verbs (#129). */
-    node.awaitAck = toBool(config.awaitAck, false);
     node.timeoutMs = config.timeoutMs;
     node.maxRetries = config.maxRetries;
     /** In-flight await-ack workflows, aborted on close so a redeploy can't leak them. */
@@ -105,11 +142,24 @@ module.exports = function registerMavlinkAiPayload(RED) {
         msg,
         send,
         done,
+        outputs: 2,
+        errorIndex: 1,
         connectionName: () => {
           const c = sentOn || node.connection;
           return c && c.name;
         }
       });
+      /**
+       * Delivery is explicit (#207): a node saved before this change (or
+       * imported/API-created without a delivery value) fails closed instead
+       * of silently picking a behavior.
+       */
+      let mode;
+      try {
+        mode = resolveDeliveryMode(config, { allow: [DELIVERY.BUILD, DELIVERY.SEND, DELIVERY.AWAIT] });
+      } catch (err) {
+        return fail(err);
+      }
       const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
 
       if (!node.profile || !node.profile.isValid || !node.profile.isValid()) {
@@ -182,58 +232,60 @@ module.exports = function registerMavlinkAiPayload(RED) {
       }
 
       /**
-       * Await-ack needs a Connection to receive the COMMAND_ACK. Without one the
-       * request would silently fall through to the fire-and-forget `mavlink/send`
-       * path below, giving the operator no ack and no error — so reject loudly
-       * instead (only for the COMMAND_LONG verbs that can be acked).
+       * Send and Await both need a Connection to send on; Build only hands the
+       * built message to a downstream mavlink-ai-out node instead (#207).
        */
-      if (node.awaitAck && built.name === 'COMMAND_LONG' && !node.connection) {
-        return fail(new MavlinkError('NO_CONNECTION', 'Await-ack requires a Connection to receive the COMMAND_ACK.'));
+      if ((mode === DELIVERY.SEND || mode === DELIVERY.AWAIT) && !node.connection) {
+        return fail(new MavlinkError('NO_CONNECTION',
+          mode === DELIVERY.AWAIT
+            ? 'Send & await result requires a Connection to send on (and, for COMMAND_LONG verbs, to receive the COMMAND_ACK).'
+            : 'Send via connection requires a Connection to send on.'));
       }
 
       /**
-       * Await-ack can't work on a broadcast (target_system 0): CommandSend
-       * matches the ACK on the target sysid, but responders reply from their own
-       * nonzero sysid, so the ack is never observed and the workflow just retries
-       * to a timeout. Reject loudly — mirroring the fan-out node — rather than
-       * report a false failure. (Broadcast is fine for fire-and-forget verbs.)
+       * Await can't confirm a broadcast (target_system 0): CommandSend matches
+       * the ACK on the target sysid, but responders reply from their own
+       * nonzero sysid, so the ack is never observed and the workflow just
+       * retries to a timeout. Reject loudly — mirroring the fan-out node —
+       * rather than report a false failure. Only the COMMAND_LONG await path
+       * runs this protocol; a message verb degrades to a plain send, which is
+       * fine on a broadcast.
        */
-      if (node.awaitAck && built.name === 'COMMAND_LONG' && Number(targetSystem) === 0) {
-        return fail(new MavlinkError('BROADCAST_NO_ACK', 'Broadcast (target_system 0) cannot collect a COMMAND_ACK — address a specific system, or disable await-ack.'));
+      if (mode === DELIVERY.AWAIT && built.name === 'COMMAND_LONG' && Number(targetSystem) === 0) {
+        return fail(new MavlinkError('BROADCAST_NO_ACK', 'Broadcast (target_system 0) cannot collect a COMMAND_ACK — address a specific system, or switch delivery to Send or Build only.'));
       }
 
       /**
-       * With a connection the node sends the command directly; without one it
-       * hands the built COMMAND_LONG to a downstream mavlink-ai-out node. The
-       * connection is captured before any await: the live flows:started refresh
-       * (#238) can null or replace node.connection while a send/ack workflow is
-       * pending, and the catch paths must name the connection actually used —
-       * not TypeError on a stale null and leave done() uncalled.
+       * The connection is captured before any await: the live flows:started
+       * refresh (#238) can null or replace node.connection while a send/ack
+       * workflow is pending, and the catch paths must name the connection
+       * actually used — not TypeError on a stale null and leave done() uncalled.
        */
       const connection = node.connection;
       sentOn = connection;
-      if (connection) {
-        /**
-         * Optional await-ack (#129): confirm the device accepted a command
-         * instead of fire-and-forget. Only COMMAND_LONG verbs get a COMMAND_ACK
-         * — the gimbal-manager messages don't — so message verbs stay
-         * fire-and-forget even when await-ack is on.
-         */
-        if (node.awaitAck && built.name === 'COMMAND_LONG') {
-          sentOn = node.connection;
-          return runWithAck(node, msg, send, done, {
-            fail,
-            connection,
-            built,
-            action,
-            targetSystem,
-            targetComponent,
-            enums: bundle ? bundle.enums : null,
-            dialect: bundle ? bundle.name : 'unknown',
-            defaults,
-            payload
-          });
-        }
+      /**
+       * Send & await result (#129, #207): confirm the device accepted a
+       * command instead of fire-and-forget. Only COMMAND_LONG verbs get a
+       * COMMAND_ACK — the gimbal-manager messages don't — so a message verb
+       * DEGRADES to send semantics even under Await: hanging for an ack that
+       * will never come would just burn the timeout for nothing.
+       */
+      if (mode === DELIVERY.AWAIT && built.name === 'COMMAND_LONG') {
+        return runWithAck(node, msg, send, done, {
+          fail,
+          connection,
+          built,
+          action,
+          targetSystem,
+          targetComponent,
+          enums: bundle ? bundle.enums : null,
+          dialect: bundle ? bundle.name : 'unknown',
+          defaults,
+          payload
+        });
+      }
+
+      if (mode === DELIVERY.SEND || mode === DELIVERY.AWAIT) {
         try {
           /** Band from the shared policy (#241): the parachute verb resolves
            * to a CRITICAL MAV_CMD; camera/gimbal/servo verbs ride NORMAL. */
@@ -246,13 +298,35 @@ module.exports = function registerMavlinkAiPayload(RED) {
             },
             { msg, priority: commandPriorityFor(bundle ? bundle.enums : null, built.fields.command) }
           );
-          node.status({ fill: 'green', shape: 'dot', text: `sent ${action}` });
-          return done();
         } catch (err) {
+          /**
+           * Close/redeploy during the await above (#308 R3): mirrors the
+           * success-path close guard below, so a slow or queued in-flight
+           * send that REJECTS after this node closed can't emit a
+           * `SEND_FAILED` mavlink/error from an obsolete node.
+           */
+          if (node._closed) {
+            return done();
+          }
           return fail(err, 'SEND_FAILED');
         }
+        /**
+         * Close/redeploy during the await above (#308 G2): mirrors
+         * runWithAck's own `node._closed` guard, so a slow or queued
+         * in-flight send that resolves after this node closed can't drive
+         * downstream logic with a `payload/sent` from an obsolete node.
+         */
+        if (node._closed) {
+          return done();
+        }
+        node.status({ fill: 'green', shape: 'dot', text: truncateStatus(`sent ${action}`) });
+        msg.topic = 'payload/sent';
+        msg.payload = { name: built.name, target_system: targetSystem, target_component: targetComponent, sent: true };
+        send([msg, null]);
+        return done();
       }
 
+      // --- build-only mode (default): hand off to mavlink-ai-out -------------
       msg.topic = 'mavlink/send';
       msg.payload = {
         name: built.name,
@@ -277,8 +351,8 @@ module.exports = function registerMavlinkAiPayload(RED) {
           msg.priority = priority;
         }
       }
-      node.status({ fill: 'green', shape: 'dot', text: action });
-      send(msg);
+      node.status({ fill: 'green', shape: 'dot', text: truncateStatus(action) });
+      send([msg, null]);
       done();
     });
 
@@ -311,7 +385,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
  * @param {object} msg
  * @param {function} send
  * @param {function} done
- * @param {object} ctx  { fail, built, action, targetSystem, targetComponent, enums, defaults, payload } —
+ * @param {object} ctx  { fail, connection, built, action, targetSystem, targetComponent, enums, defaults, payload } —
  *   `fail` is the input handler's #285 error exit, so ack failures deliver
  *   through the same single door
  * @returns {Promise<void>}
@@ -364,10 +438,10 @@ async function runWithAck(node, msg, send, done, ctx) {
     if (node._closed) {
       return done();
     }
-    node.status({ fill: 'green', shape: 'dot', text: `ack ${ctx.action}` });
+    node.status({ fill: 'green', shape: 'dot', text: truncateStatus(`ack ${ctx.action}`) });
     msg.topic = result.topic;
     msg.payload = result.payload;
-    send(msg);
+    send([msg, null]);
     done();
   } catch (err) {
     if (node._closed) {

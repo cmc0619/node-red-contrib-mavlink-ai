@@ -115,3 +115,53 @@ test('watchConfigBadge clears the badge once profile and connection both resolve
   assert.strictEqual(node.profile, validProfile);
   assert.strictEqual(node.connection, RED.nodes.getNode('c1'));
 });
+
+/**
+ * Codex #308 finding G1: a construct-time config error (malformed static
+ * JSON, unset Delivery, ...) recorded on `node._configError` must keep
+ * showing its red badge across a `flows:started` refresh, not just once at
+ * construct time — otherwise a redeploy that touches an unrelated node fires
+ * `flows:started`, this node's optional connection isn't "needed" (Delivery
+ * unset), and the refresh silently clears the badge back to idle even though
+ * the node is still broken.
+ */
+test('watchConfigBadge re-asserts the config-error badge on flows:started while node._configError is set (#308 G1)', () => {
+  const { RED, node, events } = makeHarness({ p1: validProfile });
+  node._configError = 'Delivery mode not set — open the node and choose a Delivery mode.';
+  watchConfigBadge(RED, node, { profile: 'p1' }, {
+    profile: 'required',
+    connection: 'optional',
+    connectionRequiredWhen: () => false
+  });
+  events.emit('flows:started');
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid config' });
+  assert.ok(node._configError, 'node._configError remains set');
+});
+
+/**
+ * "invalid profile" is the more fundamental problem: when both an invalid
+ * profile and a `_configError` are present, the refresh keeps showing the
+ * profile badge instead of masking it with "invalid config" (mirrors the
+ * construct-time precedence in command/payload/move/fanout).
+ */
+test('watchConfigBadge keeps "invalid profile" ahead of a config error on refresh (#308 G1)', () => {
+  const { RED, node, events } = makeHarness({});
+  node._configError = 'some construct-time problem';
+  watchConfigBadge(RED, node, { profile: 'missing' }, { profile: 'required' });
+  events.emit('flows:started');
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'invalid profile' });
+});
+
+/**
+ * A caller that never sets `node._configError` (mission/param/out/
+ * vehicle-state/in) must see no behavior change: the refresh still clears to
+ * idle once profile/connection resolve, exactly as before this fix.
+ */
+test('watchConfigBadge refresh is unaffected when the caller never sets node._configError (#308 G1 no-regression)', () => {
+  const { RED, node, events, registry } = makeHarness({});
+  watchConfigBadge(RED, node, { connection: 'c1' }, { connection: 'required' });
+  assert.deepStrictEqual(node.statusHistory.at(-1), { fill: 'red', shape: 'ring', text: 'missing connection' });
+  registry.c1 = { id: 'c1', name: 'link' };
+  events.emit('flows:started');
+  assert.deepStrictEqual(node.statusHistory.at(-1), {});
+});

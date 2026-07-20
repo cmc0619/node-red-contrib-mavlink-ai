@@ -6,6 +6,7 @@ const { validate } = require('../lib/protocol/message-validator');
 const { toBool, firstDefined, parseJsonObjectConfig } = require('../lib/util/validation');
 const { MavlinkError } = require('../lib/util/errors');
 const { makeFail } = require('../lib/util/node-errors');
+const { truncateStatus } = require('../lib/util/status');
 const { registerEditorApi } = require('../lib/editor-api');
 const { watchConfigBadge } = require('../lib/util/node-lifecycle');
 
@@ -125,7 +126,7 @@ module.exports = function registerMavlinkAiBuild(RED) {
 
       msg.topic = 'mavlink/send';
       msg.payload = out;
-      node.status({ fill: 'green', shape: 'dot', text: clazz.MSG_NAME });
+      node.status({ fill: 'green', shape: 'dot', text: truncateStatus(clazz.MSG_NAME) });
       send(msg);
       done();
     });

@@ -162,6 +162,51 @@ A Vehicle Profile never changes the local identity, and a Connection resolves
 every message to exactly one permitted identity — its default, or an explicitly
 bound additional identity.
 
+## Delivery models
+
+Two delivery families exist, and every action node in the flow-building layer
+falls into one or the other (issue #207).
+
+**Command / Move / Payload / Fanout** — the action nodes that build a
+MAVLink command or setpoint — share one explicit **Delivery** control and a
+uniform **2-port `[out, error]`** contract: **port 0** is the node's product
+for whichever mode is selected, **port 1** is always errors. There is no
+implicit "connection present → send" inference; the dropdown is the only
+thing that decides behavior, and a node deployed before ever choosing a mode
+fails closed with a `DELIVERY_UNSET` error on port 1 rather than guessing.
+
+| Delivery mode | Connection required | Port 0 emits |
+|---|---|---|
+| **Build only** (default) | no | `mavlink/send` — hand off to a downstream `mavlink-ai-out` node |
+| **Send via connection** | yes | a structured `*/sent` result (`command/sent`, `move/sent`, `payload/sent`, `swarm/sent`) — fire-and-forget |
+| **Send & await result** | yes | the transactional result: `command/ack` / `swarm/ack` (`COMMAND_ACK`, with retry/timeout) |
+
+Move's third mode is **Stream via connection** (continuous setpoint
+retransmission, `move/stream` status) instead of an await mode — setpoints
+carry no ack, so there is nothing to await. Fanout additionally keeps a
+separate **Dry-run** checkbox (`swarm/dryrun`), orthogonal to Delivery: it
+previews the expanded per-vehicle messages under any mode without sending or
+queueing them.
+
+Because **Build only** is the only mode that emits `mavlink/send`, and
+`mavlink-ai-out` accepts *only* `mavlink/send`/raw payloads (see
+[`mavlink-ai-out`](#mavlink-ai-out) below), **`mavlink-ai-out` must always
+be wired from an action node in Build only mode.** Wiring a Send/Await/Stream
+output — which emits a result or ack envelope, not a build envelope — into
+`mavlink-ai-out` is rejected with a `NOT_OUTBOUND` error; it is not a valid
+flow shape.
+
+**Mission and Param** are unchanged and out of scope for the Delivery
+control: they are always transactional (a connection is required, there is no
+"build only" mode) and keep their existing multi-output shape — `result`,
+`progress`, `error` — rather than the 2-port contract above.
+
+This is a pre-1.0 clean break, not a migration: Command/Move/Payload/Fanout
+went from a single output to two ports, and the old `awaitAck`/`stream`
+checkboxes were replaced by the `delivery` field. A flow deployed before this
+change reopens with Delivery unset and fails closed (`DELIVERY_UNSET`) until
+a mode is explicitly chosen and the node is redeployed.
+
 ## Node reference
 
 ### `mavlink-ai-local-identity` (config)
@@ -174,6 +219,42 @@ a Connection uses exactly one as its required default.
   the vehicle sysid with CompID `191`)
 - HEARTBEAT identity (`MAV_TYPE`, autopilot)
 - MAVLink 2 signing credential + policy (sign / verify / require)
+
+#### Onboard companion health ([#225](https://github.com/cmc0619/node-red-contrib-mavlink-ai/issues/225))
+
+The **companion / onboard controller** role preset (sysid shared with the
+vehicle, compid `191` `MAV_COMP_ID_ONBOARD_COMPUTER`, `MAV_TYPE_ONBOARD_CONTROLLER`,
+autopilot `MAV_AUTOPILOT_INVALID`) defaults **Health-driven** on. A
+health-driven identity's periodic HEARTBEAT reports `system_status` from the
+flow's own advertised health instead of the fixed `MAV_STATE_ACTIVE` every
+other identity sends:
+
+| Advertised health | HEARTBEAT `system_status` |
+|---|---|
+| never asserted yet | `MAV_STATE_STANDBY` |
+| `nominal` | `MAV_STATE_ACTIVE` |
+| `degraded` | `MAV_STATE_CRITICAL` |
+| `emergency` | `MAV_STATE_EMERGENCY` |
+| `fatal` | **heartbeat stops** — a faulted component must not keep heartbeating as if present; the connection logs a `node.warn` in the Node-RED runtime log (not a status badge — this is a config node, with no canvas status of its own) when the stop begins and again once a fresh non-fatal assertion resumes the heartbeat |
+| assertion expired past its `ttl_s` | `MAV_STATE_CRITICAL` — an expired lease must never look healthy |
+
+A flow advertises its health by sending to the `mavlink-ai-vehicle-state`
+node's input:
+
+```js
+msg.payload = { health: "nominal" | "degraded" | "emergency" | "fatal", ttl_s: 10, note: "planner watchdog ok" };
+```
+
+A non-`fatal` assertion **requires** a positive `ttl_s` (a lease-less or
+expired claim must never look healthy); `fatal` ignores `ttl_s`. Identities
+that are not health-driven (GCS, default/custom roles) are unchanged — still
+static `MAV_STATE_ACTIVE`.
+
+Documented separations: HEARTBEAT is **component presence** — it is not
+command delivery, not setpoint freshness (that's the Move node's stream
+keep-alive, [#216](https://github.com/cmc0619/node-red-contrib-mavlink-ai/issues/216)),
+not sensor health, and not authorization. A companion must not impersonate a
+GCS to mask loss of the operator station.
 
 ### `mavlink-ai-vehicle` — Vehicle Profile (config)
 
@@ -236,6 +317,14 @@ msg.payload = {
 Raw buffers can be sent with `topic: "mavlink/raw"`, but raw sends are
 intentionally not signed or normalized.
 
+`mavlink-ai-out` uses a **positive allowlist**: it encodes only these two
+shapes — `mavlink/send` envelopes and raw/Buffer payloads. Any result/ack/error
+envelope (`command/ack`, `swarm/ack`, `*/sent`, `mission/*`, `param/*`,
+`vehicle/*`, `mavlink/error`, or any unrecognized topic) is rejected with a
+`NOT_OUTBOUND` error via `done(err)` rather than being forwarded to the codec.
+See [Delivery models](#delivery-models) — this node must be wired from an
+action node's **Build only** Delivery mode.
+
 ### `mavlink-ai-build`
 
 Builds a normalized outbound message without sending it — for raw/advanced
@@ -264,9 +353,11 @@ Advanced            Raw MAV_CMD_* escape hatch with metadata-driven parameter he
 
 Features: preset-specific editor fields, profile-aware flight-mode names for
 ArduPilot and PX4, `COMMAND_LONG` and `COMMAND_INT` support, lat/lon float
-degrees converted to degE7 for `COMMAND_INT`, optional await-ACK mode with
-timeout/retry, readable `MAV_RESULT_*` names, and a confirmation gate on
-reboot. Camera and gimbal control live in `mavlink-ai-payload`.
+degrees converted to degE7 for `COMMAND_INT`, a **Delivery** mode with
+Build only / Send / Send & await result (timeout/retry) — see
+[Delivery models](#delivery-models) — readable `MAV_RESULT_*` names, and a
+confirmation gate on reboot. Camera and gimbal control live in
+`mavlink-ai-payload`.
 
 Feature-specific names are exact generated member keys. For example, an
 ArduPlane mode is `FLY_BY_WIRE_A`, not a local abbreviation, and a Move frame
@@ -327,10 +418,12 @@ Acceleration, Force, Yaw only, Yaw-rate only, or a raw custom mask. Local NED
 (including Body NED) and global frames (relative and terrain altitude
 variants), with up-positive altitude/climb inputs mapped to NED `-z`/`-vz`.
 Built-in continuous streaming ([#128](https://github.com/cmc0619/node-red-contrib-mavlink-ai/issues/128)):
-enable **Stream** (or send `msg.payload.stream: true`) and the node resends the
-latest setpoint at the configured rate — the keep-alive PX4 OFFBOARD requires
-(≥ 2 Hz) — until `stream: false`, a redeploy, or the flow stops; each new input
-refreshes the streamed setpoint in place.
+pick **Delivery: Stream via connection** (or send `msg.payload.stream: true`
+under that mode) and the node resends the latest setpoint at the configured
+rate — the keep-alive PX4 OFFBOARD requires (≥ 2 Hz) — until `stream: false`,
+a redeploy, or the flow stops; each new input refreshes the streamed setpoint
+in place. See [Delivery models](#delivery-models) for Move's Build/Send/Stream
+modes.
 
 ### `mavlink-ai-payload`
 
@@ -350,12 +443,25 @@ stale/expired state. Named groups can be static or type-based:
 { "scouts": [1, 2], "all-copters": { "type": "MAV_TYPE_QUADROTOR" } }
 ```
 
+### Vehicle State
+
+`mavlink-ai-vehicle-state` aggregates a connection's telemetry into a versioned
+per-vehicle `vehicle-state/1` contract — connected, armed, mode, landed,
+position, home, GPS, battery, sensor health, components, and recent STATUSTEXT —
+with independent per-section freshness (a fresh HEARTBEAT never refreshes
+position or battery). Three outputs: edge-triggered **transitions**, full
+**snapshots** (interval or on-demand), and a live **statustext** feed. HEARTBEAT
+is treated as component presence only, separate from setpoint freshness and
+sensor health.
+
 ### `mavlink-ai-fanout`
 
 Expands one logical command into one message per target vehicle. Targets come
 from explicit sysids, per-target objects, or swarm registry output; supports
-dry-run, pacing, per-target overrides, await-ACK aggregation, and
-stop-on-first-error or continue-on-error.
+dry-run, pacing, per-target overrides, the same Build/Send/Await **Delivery**
+control as Command (see [Delivery models](#delivery-models)) with per-vehicle
+`swarm/ack` aggregation under Send & await result, and stop-on-first-error or
+continue-on-error.
 
 ```js
 msg.payload = {
@@ -400,9 +506,10 @@ because each vehicle needs its own target position.
 Fan-out understands meters: give an `origin` and per-target `north`/`east`/`up`
 offsets and it converts to global lat/lon/alt (and degE7 for `COMMAND_INT`)
 instead of anyone adding meters to degrees by hand. A dry-run mode shows
-exactly what would be sent, and "await acks" runs the COMMAND_ACK workflow per
-vehicle and aggregates `{ accepted, failed, timedOut, skipped, results }`
-without hiding partial failure.
+exactly what would be sent, and **Send & await result** Delivery runs the
+COMMAND_ACK workflow per vehicle and aggregates
+`{ accepted, failed, timedOut, skipped, results }` without hiding partial
+failure.
 
 Pixhawk/ArduPilot/PX4 remains the flight controller: these are high-level
 MAVLink orchestration helpers, not a motor-control replacement.

@@ -1,0 +1,75 @@
+<script type="text/javascript">
+  // #210: browser mirror of lib/util/numeric-bounds.js. Kept in sync by
+  // test/unit/numeric-bounds-editor-spec.test.js — edit both together.
+  function mavlinkNumericBounds() {
+    function isBlank(v) { return v === undefined || v === null || String(v).trim() === ''; }
+    return {
+      positive: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n > 0; },
+      nonNegativeInteger: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return Number.isInteger(n) && n >= 0; },
+      nonNegative: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n >= 0; },
+      atLeast: function (min) { return function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n >= min; }; },
+      integerAtLeast: function (min) { return function (v) { if (isBlank(v)) { return true; } var n = Number(v); return Number.isInteger(n) && n >= min; }; }
+    };
+  }
+  RED.nodes.registerType('mavlink-ai-vehicle-state', {
+    category: 'MAVLink AI',
+    paletteLabel: 'MAVLink Vehicle State',
+    color: '#B3D9FF',
+    defaults: {
+      name: { value: '' },
+      connection: { value: '', type: 'mavlink-ai-connection', required: true },
+      sysids: { value: '' },
+      intervalSeconds: { value: 0, validate: function (v) { return mavlinkNumericBounds().nonNegative(v); } },
+      staleMs: { value: 5000, validate: function (v) { return mavlinkNumericBounds().positive(v); } },
+      statustextBuffer: { value: 20, validate: function (v) { return mavlinkNumericBounds().positive(v); } }
+    },
+    inputs: 1,
+    outputs: 3,
+    outputLabels: ['transitions', 'snapshots', 'statustext'],
+    icon: 'font-awesome/fa-heartbeat',
+    label: function () {
+      return this.name || 'mavlink ai vehicle state';
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="mavlink-ai-vehicle-state">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="MAVLink Vehicle State">
+  </div>
+  <div class="form-row">
+    <label for="node-input-connection">Connection</label>
+    <input type="text" id="node-input-connection">
+  </div>
+  <div class="form-row">
+    <label for="node-input-sysids">Sysids</label>
+    <input type="text" id="node-input-sysids" placeholder="blank = all">
+  </div>
+  <div class="form-row">
+    <label for="node-input-intervalSeconds">Snapshot (s)</label>
+    <input type="number" id="node-input-intervalSeconds" placeholder="0 = on demand">
+  </div>
+  <div class="form-row">
+    <label for="node-input-staleMs">Stale (ms)</label>
+    <input type="number" id="node-input-staleMs" placeholder="5000">
+  </div>
+  <div class="form-row">
+    <label for="node-input-statustextBuffer">Statustext</label>
+    <input type="number" id="node-input-statustextBuffer" placeholder="20">
+  </div>
+</script>
+
+<script type="text/html" data-help-name="mavlink-ai-vehicle-state">
+  <p>Aggregates per-vehicle MAVLink state on a shared <b>MAVLink AI Connection</b> into a versioned <code>vehicle-state/1</code> contract, so flows consume state instead of raw packets.</p>
+  <h3>Outputs</h3>
+  <ol>
+    <li><b>transitions</b> — one message per edge (connected/lost, armed/disarmed, mode, landed, GPS fix, home set, component appeared/lost, sensor health).</li>
+    <li><b>snapshots</b> — full per-vehicle state on the configured interval or on a <code>{ command: "snapshot" }</code> input (optional <code>sysid</code>).</li>
+    <li><b>statustext</b> — live STATUSTEXT feed with severity names.</li>
+  </ol>
+  <p>Each section (position, GPS, battery, health, …) carries its own freshness: a fresh HEARTBEAT never refreshes another section, and absent sections are <code>null</code>, never zero-filled. HEARTBEAT is component presence — not command delivery, setpoint freshness, sensor health, or authorization.</p>
+  <h3>Health assertions</h3>
+  <p>Sending <code>{ health: "nominal"|"degraded"|"emergency"|"fatal", ttl_s, note }</code> advertises the flow's own onboard health on the connection's companion heartbeat. A non-<code>fatal</code> assertion requires <code>ttl_s</code>; <code>fatal</code> stops the heartbeat until a fresh assertion is sent.</p>
+  <p>The target must be a <b>health-driven</b> Local Identity that this connection actually sends heartbeats for — e.g. the onboard-companion preset (CompID 191), which is health-driven by default. An assertion to a non-health-driven identity is rejected with <code>IDENTITY_NOT_HEALTH_DRIVEN</code>; an unknown identity with <code>UNKNOWN_IDENTITY</code>; and an invalid <code>health</code> value with <code>INVALID_HEALTH</code>. All rejections are reported as a structured error on output 2.</p>
+</script>

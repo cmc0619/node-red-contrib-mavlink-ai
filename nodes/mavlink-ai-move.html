@@ -41,7 +41,26 @@
     defaults: {
       name: { value: '' },
       profile: { value: '', type: 'mavlink-ai-vehicle', required: true },
-      connection: { value: '', type: 'mavlink-ai-connection', required: false },
+      connection: {
+        value: '',
+        type: 'mavlink-ai-connection',
+        required: false,
+        /** Send/Stream have nothing to send on without a connection; catch it at edit time, not as a runtime NO_CONNECTION/STREAM_NEEDS_CONNECTION (#207). */
+        validate: function (v) {
+          /**
+           * Read the live select while the dialog is open — `this.delivery`
+           * holds the pre-edit value, so switching to Send/Stream and leaving
+           * the connection blank would pass validation until the node is
+           * reopened. Outside the dialog (import/deploy checks) fall back to
+           * the stored value; the command node's validator uses the same
+           * pattern.
+           */
+          const $live = $('#node-input-delivery');
+          const mode = $live.length ? $live.val() : this.delivery;
+          return (mode !== 'send' && mode !== 'stream') || (v !== '' && v != null);
+        }
+      },
+      delivery: { value: 'build' },
       coordinate: { value: 'local', required: true },
       preset: { value: 'position', required: true },
       frame: { value: 'LOCAL_NED' },
@@ -70,16 +89,18 @@
       accelUp: { value: '' },
       yaw: { value: '' },
       yawRate: { value: '' },
-      /** Optional continuous streaming (#128); rate only matters when streaming. */
-      stream: { value: false },
       /** Stream TTL (#216): stop this many seconds after the last input; 0 =
-       * unlimited, blank = default. Non-numeric/negative input is outlined. */
+       * unlimited, blank = default. Non-numeric/negative input is outlined.
+       * Only applies to the Stream delivery mode (#207) — the standalone
+       * `stream` checkbox is gone; Stream is now a Delivery option. */
       maxStreamSeconds: {
         value: 300,
         validate: function (v) {
           /** A hidden field must not block deploy: the TTL only applies while
-           * streaming is enabled, like the stream-rate validator below. */
-          if (!$('#node-input-stream').is(':checked')) {
+           * Delivery is Stream, like the stream-rate validator below. */
+          const $live = $('#node-input-delivery');
+          const mode = $live.length ? $live.val() : this.delivery;
+          if (mode !== 'stream') {
             return true;
           }
           if (v === '' || v == null) {
@@ -92,7 +113,9 @@
       streamRateHz: {
         value: 5,
         validate: function (v) {
-          if (!$('#node-input-stream').is(':checked')) {
+          const $live = $('#node-input-delivery');
+          const mode = $live.length ? $live.val() : this.delivery;
+          if (mode !== 'stream') {
             return true;
           }
           const n = Number(String(v == null ? '' : v).trim());
@@ -101,7 +124,10 @@
       }
     },
     inputs: 1,
-    outputs: 1,
+    outputs: 2,
+    outputLabels: function (i) {
+      return i === 1 ? 'error' : (this.delivery === 'build' ? 'message' : 'result');
+    },
     icon: 'font-awesome/fa-location-arrow',
     label: function () {
       return this.name || 'move ' + (this.coordinate === 'global' ? 'global' : 'local');
@@ -151,9 +177,14 @@
         $('#node-input-typeMask').trigger('change');
       }
 
-      /** Show the stream rate only when streaming is enabled. */
-      function refreshStream() {
-        $('.mav-move-streamrate').toggle($('#node-input-stream').is(':checked'));
+      /**
+       * Delivery controls which rows apply (#207): the rate/TTL rows only
+       * matter for Stream, and Connection is only needed for Send/Stream.
+       */
+      function refreshDelivery() {
+        const mode = $('#node-input-delivery').val();
+        $('.mav-move-streamrate').toggle(mode === 'stream');
+        $('.mav-move-connection').toggle(mode === 'send' || mode === 'stream');
         $('#node-input-streamRateHz').trigger('change');
       }
 
@@ -162,10 +193,10 @@
         refresh();
       });
       $preset.on('change', refresh);
-      $('#node-input-stream').on('change', refreshStream);
+      $('#node-input-delivery').on('change', refreshDelivery);
       refreshFrames();
       refresh();
-      refreshStream();
+      refreshDelivery();
     }
   });
 </script>
@@ -180,14 +211,19 @@
     <input type="text" id="node-input-profile">
   </div>
   <div class="form-row">
+    <label for="node-input-delivery"><i class="fa fa-arrow-right"></i> Delivery</label>
+    <select id="node-input-delivery" style="width:70%;">
+      <option value="build">Build only (hand off to MAVLink Out)</option>
+      <option value="send">Send via connection (fire-and-forget)</option>
+      <option value="stream">Stream via connection (continuous setpoints)</option>
+    </select>
+  </div>
+  <div class="form-row mav-move-connection">
     <label for="node-input-connection">Connection</label>
     <input type="text" id="node-input-connection">
   </div>
   <div class="form-tips" style="margin: -6px 0 8px 105px; width: 70%;">
-    Set a Connection to <b>send</b> the setpoint directly; leave it empty to emit a <code>mavlink/send</code> message for a <b>mavlink-ai-out</b> node.
-  </div>
-  <div class="form-row">
-    <label for="node-input-stream" style="width: auto;"><input type="checkbox" id="node-input-stream" style="width: auto; vertical-align: top; margin-right: 6px;"> Stream continuously</label>
+    <b>Build only</b> emits a <code>mavlink/send</code> message for a <b>mavlink-ai-out</b> node. <b>Send</b> and <b>Stream</b> send the setpoint directly on the Connection (fire-and-forget — setpoints carry no ack).
   </div>
   <div class="form-row mav-move-streamrate">
     <label for="node-input-streamRateHz">Rate (Hz)</label>
@@ -198,7 +234,7 @@
     <input type="number" id="node-input-maxStreamSeconds" min="0" step="any" placeholder="300">
   </div>
   <div class="form-tips mav-move-streamrate" style="margin: -6px 0 8px 105px; width: 70%;">
-    Resends the setpoint at this rate until stopped. Needs a Connection. PX4 <b>OFFBOARD</b> requires a setpoint stream (≥ ~2 Hz) <i>before</i> the mode switch. Send <code>msg.payload.stream = false</code> to stop; the stream also stops automatically on redeploy — and expires <b>Max stream</b> seconds after the last input (default 300, <code>0</code> = unlimited), emitting one <code>{ stream: "expired" }</code> message.
+    Resends the setpoint at this rate until stopped. PX4 <b>OFFBOARD</b> requires a setpoint stream (≥ ~2 Hz) <i>before</i> the mode switch. Send <code>msg.payload.stream = false</code> to stop; the stream also stops automatically on redeploy — and expires <b>Max stream</b> seconds after the last input (default 300, <code>0</code> = unlimited), emitting one <code>{ stream: "expired" }</code> message.
   </div>
   <div class="form-row">
     <label for="node-input-coordinate">Coordinate</label>
@@ -296,8 +332,14 @@
   <code>SET_POSITION_TARGET_GLOBAL_INT</code> — without the build node. It hides
   the two things that are easy to get wrong by hand: the inverted
   <code>type_mask</code> and NED's down-positive vertical axis.</p>
-  <h3>Sending</h3>
-  <p>With a <b>Connection</b> the node sends the setpoint directly (fire-and-forget — setpoints carry no ack). Without one it emits a <code>mavlink/send</code> message to wire into a <b>mavlink-ai-out</b> node. A <b>Profile</b> is always required for encoding.</p>
+  <h3>Delivery</h3>
+  <p>The <b>Delivery</b> control chooses what the node does with the setpoint (setpoints carry no ack, so Move has no "await" mode, unlike Command/Payload/Fanout):</p>
+  <ul>
+    <li><b>Build only</b> (default) — no connection needed. Emits the built setpoint as a <code>mavlink/send</code> envelope on <b>port 0</b>, for a downstream <b>MAVLink AI Out</b> node.</li>
+    <li><b>Send via connection</b> — sends the setpoint directly on the selected connection, fire-and-forget, and outputs a structured <code>move/sent</code> result on <b>port 0</b>.</li>
+    <li><b>Stream via connection</b> — runs the continuous retransmit engine (see <i>Streaming</i> below), emitting <code>move/stream</code> status on <b>port 0</b>.</li>
+  </ul>
+  <p>Every mode uses the same two-port contract: <b>port 0</b> is the node's product for that mode, <b>port 1</b> is errors (a structured <code>mavlink/error</code>, or <code>DELIVERY_UNSET</code> if no Delivery mode was ever chosen). <b>Send</b> and <b>Stream</b> require a <b>Connection</b>; <b>Build only</b> does not — wire its output into a <b>MAVLink AI Out</b> node that is also in Build only mode. A <b>Profile</b> is always required for encoding.</p>
   <h3>Setpoint presets</h3>
   <p>The <b>Setpoint</b> selector builds the correct <code>type_mask</code> for you. Because a set mask bit means <i>ignore</i> that dimension, "Position" is encoded as "ignore everything except position". <b>Acceleration</b> drives the <code>af</code> vector as an acceleration; <b>Force</b> sends the same <code>af</code> inputs but sets the force bit (bit 9) so the autopilot treats them as a force. Pick <b>Custom</b> to enter a raw 0..65535 mask.</p>
   <h3>Frames &amp; axes</h3>
@@ -307,11 +349,11 @@
   <h3>Firmware advisories</h3>
   <p>Combinations a firmware won't honor fail <i>silently</i> on the vehicle, so the node raises a Node-RED <b>warning</b> (the setpoint is still sent) when the profile's firmware is ArduPilot or PX4 and the request looks unsupported: <b>Force</b> setpoints (neither firmware honors bit 9), <b>Acceleration</b> on older ArduPilot GUIDED, PX4 with a terrain-altitude target, or PX4 with an OFFSET frame.</p>
   <h3>Streaming</h3>
-  <p>Enable <b>Stream continuously</b> to resend the setpoint at a fixed <b>Rate (Hz)</b> until stopped, instead of once per input. This is required for <b>PX4 OFFBOARD</b>, which won't enter (and drops out of) OFFBOARD unless a setpoint stream of ≥ ~2 Hz is already flowing — so start streaming <i>before</i> the mode switch. Each input refreshes the streamed setpoint; <code>msg.payload.stream = true</code>/<code>false</code> starts/stops it per message. Streaming needs a <b>Connection</b> (there is nowhere to stream a build-only message). The stream is torn down automatically on redeploy/close, so a partial deploy can never leave the vehicle flying an orphaned setpoint. It also expires <b>Max stream (s)</b> seconds after the last input (default 300; <code>0</code> = unlimited): the deadman stops an abandoned flow from commanding the vehicle forever, sets the status to <i>stream expired</i>, and emits one <code>{ stream: "expired" }</code> message on the output so the flow can react. Every fresh input pushes the deadline out. Transient send failures are surfaced once and the stream keeps trying.</p>
+  <p>Set <b>Delivery</b> to <b>Stream via connection</b> to resend the setpoint at a fixed <b>Rate (Hz)</b> until stopped, instead of sending once per input. This is required for <b>PX4 OFFBOARD</b>, which won't enter (and drops out of) OFFBOARD unless a setpoint stream of ≥ ~2 Hz is already flowing — so select Stream <i>before</i> the mode switch. Each input refreshes the streamed setpoint; send <code>msg.payload.stream = false</code> to stop the stream (streaming is turned on by the <b>Delivery</b> mode, not by this flag). Streaming needs a <b>Connection</b> (there is nowhere to stream a build-only message). The stream is torn down automatically on redeploy/close, so a partial deploy can never leave the vehicle flying an orphaned setpoint. It also expires <b>Max stream (s)</b> seconds after the last input (default 300; <code>0</code> = unlimited): the deadman stops an abandoned flow from commanding the vehicle forever, sets the status to <i>stream expired</i>, and emits one <code>{ stream: "expired" }</code> message on the output so the flow can react. Every fresh input pushes the deadline out. Transient send failures are surfaced once and the stream keeps trying.</p>
   <h3>Modes</h3>
   <p>The vehicle must already be in a mode that accepts external setpoints (ArduPilot <b>GUIDED</b>, PX4 <b>OFFBOARD</b>) — switch modes with the <b>mavlink-ai-command</b> node's <i>Set Mode</i>.</p>
   <h3>Inputs</h3>
-  <p><code>msg.payload</code> may override any editor value: <code>coordinate</code>, <code>preset</code>, <code>frame</code>, <code>type_mask</code>, <code>north</code>, <code>east</code>, <code>altitude</code>, <code>lat</code>, <code>lon</code>, <code>velNorth</code>, <code>velEast</code>, <code>climb</code>, <code>accelNorth</code>, <code>accelEast</code>, <code>accelUp</code>, <code>yaw</code>, <code>yawRate</code>, <code>target_system</code>, <code>target_component</code>, and <code>time_boot_ms</code>. <code>stream</code> (<code>true</code>/<code>false</code>) starts/stops continuous streaming for that message.</p>
+  <p><code>msg.payload</code> may override any editor value: <code>coordinate</code>, <code>preset</code>, <code>frame</code>, <code>type_mask</code>, <code>north</code>, <code>east</code>, <code>altitude</code>, <code>lat</code>, <code>lon</code>, <code>velNorth</code>, <code>velEast</code>, <code>climb</code>, <code>accelNorth</code>, <code>accelEast</code>, <code>accelUp</code>, <code>yaw</code>, <code>yawRate</code>, <code>target_system</code>, <code>target_component</code>, and <code>time_boot_ms</code>. <code>stream</code> <code>false</code> stops a running stream for that message (streaming is selected by the <b>Delivery</b> mode, not this flag).</p>
   <h3>Output</h3>
-  <p>Without a connection, a <code>mavlink/send</code> message for <b>mavlink-ai-out</b>. Failures are emitted as a structured <code>mavlink/error</code> message on the same output.</p>
+  <p><b>Port 0</b> carries the node's product for the selected Delivery mode (built <code>mavlink/send</code> message, <code>move/sent</code> confirmation, or <code>move/stream</code> status). <b>Port 1</b> carries errors as a structured <code>mavlink/error</code> message.</p>
 </script>

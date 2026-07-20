@@ -68,10 +68,35 @@ Do not recreate MAVLink rules from memory. Refer to the official MAVLink
 specification for framing, IDs, routing, heartbeat, missions, offboard control,
 message signing, and anti-replay details.
 
+**This package is a Node-RED wrapper around node-mavlink, and the spec should
+be read that way.** node-mavlink is the source of truth for the wire
+protocol — framing, payload encode/decode, CRC and crc_extra, frame
+splitting/parsing, and message signing are library primitives — and this
+package builds on top of it, never around it. When node-mavlink's behavior
+and a stricter ideal conflict, **the library wins by default** — custom
+wire-layer code must justify its existence against that default, and "the
+library already does this" is grounds for deletion. Accepted library
+behaviors, deliberately:
+
+- v2 outbound truncation is whole-payload (identical to ArduPilot).
+- The splitter skips unknown msgids (trusting the length byte) and validates
+  against one union magic-number table per connection.
+- Signing timestamps come from Date.now() (no monotonicity guarantee, no
+  replay detection); verification is MavLinkPacketSignature.matches().
+- Encoding has no bespoke validation layer: a thin coercion (editor strings
+  to numbers/BigInt), then the library serializers — garbage surfaces as raw
+  serializer errors or as on-wire zeros, never as a custom FIELD_* taxonomy.
+
 Build on the libraries already selected for this package:
 
-- node-mavlink for MAVLink packet framing, encode/decode, and signing
-  primitives.
+- node-mavlink for everything above. Generate MavLinkData-shaped message
+  classes at runtime from the compiled dialect metadata rather than consuming
+  the pre-generated classes: those cover only some bundled dialects, know
+  nothing of custom user XML, and use camelCase properties, while this
+  package's metadata contract is the XML field names verbatim. This bridge is
+  the one deliberate wire-layer addition; everything else custom lives above
+  the wire (transports, routing, identity, workflows, editor) — territory the
+  library does not cover.
 - mavlink-mappings for bundled dialect definitions and generated metadata.
 - mavlink-mappings-gen for generation/build support for that metadata shape.
 - An XML parser only for MAVLink XML loading and include-graph resolution.
@@ -94,8 +119,13 @@ empty boilerplate to trivial private one-liners simply to inflate comment count.
 The UI should reveal the next useful choice from the user's existing selections.
 
 - Use pulldowns wherever a value is known or enumerable.
+- One control per value: when a metadata dropdown drives a value, do not also
+  show a raw text field for it — the raw field appears only when no metadata
+  exists to enumerate from (e.g. a custom-XML profile).
 - Render fields from the selected dialect's metadata.
 - Render enums as human labels with descriptions, not anonymous numeric values.
+- Keep dialogs compact: long metadata descriptions ride as hover tooltips,
+  not inline text; inline hints stay to units and ranges.
 - Dynamically update dependent choices after selecting dialect, message, command,
   firmware, vehicle family, transport, or workflow action.
 - Preserve saved selections while asynchronous metadata loads; a late menu load
@@ -142,7 +172,7 @@ singleton transport.
 | Source IDs, role, local heartbeat identity | Local Identity |
 | Target defaults, dialect, firmware, modes/params/missions | Vehicle Profile |
 | Transport, queues, peer tracking, routes, subscriptions | Connection |
-| Sequence, signing timestamp, replay memory, peer version | Connection/channel, keyed by local identity as required |
+| Outbound sequence, signing link id, peer version | Connection/channel, keyed by local identity as required |
 | Mission/parameter/ACK/control state | Workflow service/node |
 
 ### 3.4 Serial is optional
@@ -157,24 +187,26 @@ SERIALPORT_MISSING-style error, not an opaque native-module failure.
 Editor validation improves setup; runtime validation is authoritative because
 imported or hand-edited flow JSON can bypass the editor. Missing, ambiguous,
 malformed, stale, unauthorised, or unsafe action input must fail closed with a
-stable machine-readable error code plus a human repair instruction.
+stable machine-readable error code plus a human repair instruction. This
+contract covers the package's own semantics: identity resolution, targets and
+routing, workflow gates, mission/param/command field checks.
 
-The raw builder is deliberately more permissive than friendly nodes, but it
-still validates wire types and numeric precision safely.
+The wire layer is deliberately NOT part of that taxonomy (§2): conversion
+goes through one thin boundary over node-mavlink's serializers — a coercion
+shim (editor strings to numbers/BigInt), no range/blank/type checking of its
+own. Wire-level garbage surfaces as the library's raw errors or as on-wire
+zeros; visible nodes never do their own sign, mask, or numeric coercion
+either — they hand semantic fields to the boundary.
 
-All JavaScript-to-wire conversion (and back) must go through a single
-type-aware boundary module that reads each field's MAVLink type, range, and
-units from dialect metadata; visible nodes must not do their own sign, mask, or
-numeric coercion. Prove it with round-trip tests (encode(decode(x)) reproduces
-x, compared NaN-aware and at float32 precision rather than raw equality) plus
+Prove the boundary with round-trip tests (encode(decode(x)) reproduces x,
+compared NaN-aware and at float32 precision rather than raw equality) plus
 canonical payload-byte vectors or an independent-decoder cross-check. A round
 trip alone can bless a symmetric codec bug, so verify payload bytes but not
 whole frames whose sequence/signature/timestamp legitimately vary. Cover every
 field type, including an unsigned bitmask with bit 31 set, a NaN “keep current”
 sentinel where that message field defines it, an int/float parameter union, and
-a full-length char array. Validate an integer's range before any unsigned
-normalization, so out-of-range input fails closed instead of silently wrapping.
-See WIRE_ENCODING_GOTCHAS.md for the recurring failures this prevents.
+a full-length char array. See WIRE_ENCODING_GOTCHAS.md for the recurring
+failures this prevents.
 
 ## 4. Architecture: three config nodes, one question each
 
@@ -229,6 +261,13 @@ per-identity heartbeats; signing link ID; and all per-link channel state.
 
 One UDP port is one socket, not one vehicle. A routed Connection can receive
 many remote systems and send target-specific packets to learned peers.
+
+A Connection can be disabled from its own config. Node-RED cannot disable
+config nodes, so the node owns the switch. Disabled means zero network
+activity — no dialing, listening, heartbeats, or timers, not merely ignoring
+traffic — because no runtime is constructed at all. Nodes that reference a
+disabled Connection fail closed with a clear reason until it is re-enabled
+and redeployed.
 
 ### 4.4 Safe identity resolution
 
@@ -294,8 +333,9 @@ specification for exact cryptographic, timestamp, and anti-replay mechanics.
   or logs.
 - Explain that signing requires MAVLink 2.
 - A Local Identity may select reusable signing policy/credential intent, but the
-  signing link ID, outgoing sequence, monotonic timestamp, replay memory, and
-  detected peer wire version are Connection/channel state.
+  signing link ID, outgoing sequence, and detected peer wire version are
+  Connection/channel state. Timestamps come from node-mavlink's sign()
+  (Date.now(); no replay memory is kept — §2).
 - Preserve this state across Vehicle Profile reloads and codec rebuilds.
 - Key outgoing state at least by connection/channel and local source identity;
   do not put it in a replaceable dialect codec.
@@ -308,9 +348,8 @@ All build/workflow nodes talk to the Out/Connection layer through a documented,
 unambiguous envelope. Its core fields are message name, vehicleProfile,
 optional localIdentity, target system/component, and semantic fields.
 
-Use vehicleProfile rather than a legacy overloaded profile field. Decoded output
-contains message name, source IDs, matched Vehicle Profile, decoded fields, raw
-packet metadata where useful, and timestamps.
+Decoded output contains message name, source IDs, matched Vehicle Profile,
+decoded fields, raw packet metadata where useful, and timestamps.
 
 Errors use stable codes plus repair instructions. Status, node.error, Catch
 semantics, and dedicated error outputs must be predictable and consistent.

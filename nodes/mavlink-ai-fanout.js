@@ -7,16 +7,25 @@ const { buildFanout } = require('../lib/swarm/fanout');
 const { CommandSend } = require('../lib/command/command-workflow');
 const { PRIORITY, commandPriorityFor } = require('../lib/runtime/send-priority');
 const { watchConfigBadge } = require('../lib/util/node-lifecycle');
+const { DELIVERY, resolveDeliveryMode } = require('../lib/util/delivery');
 
 /**
  * mavlink-ai-fanout (issue #46).
  *
  * Expands one logical command into one message per target vehicle
  * (`target_system` filled in per sysid), or — explicitly and only when asked —
- * a single broadcast message to `target_system` 0. With "await acks" enabled
- * it runs the command protocol per vehicle and aggregates the per-sysid
- * results into accepted/failed/timedOut arrays; partial failure is normal in
- * swarm operations and is never hidden.
+ * a single broadcast message to `target_system` 0.
+ *
+ * Delivery is explicit (#207): "Build only" hands the per-target
+ * `mavlink/send` messages to a downstream mavlink-ai-out node; "Send via
+ * connection" sends every decorated target directly and aggregates a
+ * `swarm/sent` result; "Send & await result" sends each command on the
+ * connection, runs the full command protocol per vehicle, and aggregates the
+ * per-sysid results into accepted/failed/timedOut arrays — partial failure is
+ * normal in swarm operations and is never hidden. Dry-run is its own
+ * checkbox, orthogonal to Delivery: it short-circuits every mode to a
+ * `swarm/dryrun` preview with nothing sent. Every mode emits on port 0
+ * (product) with errors on port 1.
  *
  * Targets come from `msg.payload.targets` (sysids or per-target objects),
  * `msg.payload.sysids`, or a mavlink-ai-swarm registry output
@@ -30,19 +39,18 @@ module.exports = function registerMavlinkAiFanout(RED) {
     node.name = config.name;
     /**
      * Resolve node.profile + node.connection and keep their idle badges live
-     * across deploys. The connection is only *needed* when await-acks is on
-     * (otherwise the node emits mavlink/send for a downstream Out node), so a
-     * missing connection is badged only in that case (#164).
+     * across deploys. The connection is only *needed* for Send/Await delivery
+     * (Build only hands mavlink/send to a downstream Out node), so a missing
+     * connection is badged only in those modes (#164, #207).
      */
     watchConfigBadge(RED, node, config, {
       profile: 'required',
       connection: 'optional',
-      connectionRequiredWhen: () => toBool(config.awaitAck, false)
+      connectionRequiredWhen: () => config.delivery === DELIVERY.SEND || config.delivery === DELIVERY.AWAIT
     });
     node.command = config.command || '';
     node.mode = config.mode === 'broadcast' ? 'broadcast' : 'fanout';
     node.sendAs = config.sendAs || 'long';
-    node.awaitAck = toBool(config.awaitAck, false);
     node.timeoutMs = toInt(config.timeoutMs, 3000);
     node.maxRetries = toInt(config.maxRetries, 3);
     node.spacingMs = toInt(config.spacingMs, 0);
@@ -64,8 +72,38 @@ module.exports = function registerMavlinkAiFanout(RED) {
      */
     const parsedBase = parseJsonObjectConfig(config.fields, 'fields');
     const configBase = parsedBase.value;
-    node._configError = parsedBase.error;
-    if (node._configError) {
+
+    /**
+     * A missing/invalid Delivery selection (#207, #308) is a construct-time
+     * config error too, not just an input-time one: a pre-upgrade node (or one
+     * created via import/API without a `delivery` value) must show the same red
+     * badge at deploy time as malformed static JSON, instead of looking healthy
+     * until the first message. Folded into the same `node._configError` the
+     * input handler already short-circuits on; `watchConfigBadge`'s own
+     * `flows:started` refresh also checks this flag (#308 G1), so the badge
+     * is re-asserted — not cleared — on every later redeploy too, for as
+     * long as delivery stays unset.
+     */
+    let deliveryConfigError = null;
+    try {
+      resolveDeliveryMode(config, { allow: [DELIVERY.BUILD, DELIVERY.SEND, DELIVERY.AWAIT] });
+    } catch (err) {
+      if (err.code !== 'DELIVERY_UNSET') {
+        throw err;
+      }
+      deliveryConfigError = err.message;
+    }
+
+    node._configError = parsedBase.error || deliveryConfigError;
+    /**
+     * Precedence (#308): "invalid profile" is the more fundamental problem and
+     * watchConfigBadge already painted that badge above, so only paint over it
+     * with "invalid config" when the profile itself resolved fine — a
+     * delivery-unset (or malformed-fields) node with a broken profile keeps
+     * showing "invalid profile" instead of masking it.
+     */
+    const profileOk = !!(node.profile && typeof node.profile.isValid === 'function' && node.profile.isValid());
+    if (node._configError && profileOk) {
       node.status({ fill: 'red', shape: 'ring', text: 'invalid config' });
     }
 
@@ -87,7 +125,28 @@ module.exports = function registerMavlinkAiFanout(RED) {
        * so call sites pass only the failure — no positional
        * (msg, send, done, code, ...) threading to arity-shift (#276).
        */
-      const fail = makeFail({ node, nodeName: 'mavlink-ai-fanout', msg, send, done });
+      const fail = makeFail({
+        node,
+        nodeName: 'mavlink-ai-fanout',
+        msg,
+        send,
+        done,
+        outputs: 2,
+        errorIndex: 1,
+        connectionName: () => node.connection && node.connection.name
+      });
+
+      /**
+       * Delivery is explicit (#207): a node saved before this change (or
+       * imported/API-created without a delivery value) fails closed instead
+       * of silently picking a behavior.
+       */
+      let mode;
+      try {
+        mode = resolveDeliveryMode(config, { allow: [DELIVERY.BUILD, DELIVERY.SEND, DELIVERY.AWAIT] });
+      } catch (err) {
+        return fail(err);
+      }
       if (node._configError) {
         return fail(new MavlinkError('INVALID_CONFIG', `mavlink-ai-fanout: ${node._configError}`));
       }
@@ -156,23 +215,33 @@ module.exports = function registerMavlinkAiFanout(RED) {
 
       // Dry-run: show exactly what would be sent (per issue #46, formation and
       // frame mistakes should be visible before anything reaches a vehicle).
+      // Orthogonal to Delivery (#207): it short-circuits FIRST in any mode, so
+      // Send/Await never touch a vehicle while dry-run is on.
       if (toBool(firstDefined(incoming.dry_run, node.dryRun), false)) {
         msg.topic = 'swarm/dryrun';
         msg.payload = { broadcast, count: decorated.length, messages: decorated };
         node.status({ fill: 'yellow', shape: 'dot', text: `dry-run ${decorated.length}` });
-        send(msg);
+        send([msg, null]);
         return done();
       }
 
-      // --- await-acks mode: run the command protocol per vehicle -------------
-      if (node.awaitAck) {
+      /**
+       * Priority stamp shared by Send and Build delivery (#241): every clone
+       * carries the same command, so one resolution serves all decorated
+       * targets. Await needs no stamp — CommandSend sends immediately.
+       */
+      const buildBundle = node.profile && node.profile.getDialect ? node.profile.getDialect() : null;
+      const fanPriority = commandPriorityFor(buildBundle && buildBundle.valid ? buildBundle.enums : null, command);
+
+      // --- await mode: run the command protocol per vehicle ------------------
+      if (mode === DELIVERY.AWAIT) {
         if (!node.connection) {
           return fail(new MavlinkError('NO_CONNECTION',
-            'Await acks requires a connection to send on (select one in the node config).'));
+            'Send & await result requires a connection to send on (select one in the node config).'));
         }
         if (broadcast) {
           return fail(new MavlinkError('BROADCAST_NO_ACK',
-            'Broadcast (target_system 0) cannot collect per-vehicle ACKs — use fan-out mode, or disable await acks.'));
+            'Broadcast (target_system 0) cannot collect per-vehicle ACKs — use fan-out mode, or use a non-await Delivery mode.'));
         }
         const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
         // The Local Identity these workflows transmit as (#228): the explicit
@@ -306,21 +375,120 @@ module.exports = function registerMavlinkAiFanout(RED) {
           shape: 'dot',
           text: `${accepted.length}/${decorated.length} accepted`
         });
-        send(msg);
+        send([msg, null]);
         return done();
       }
 
-      // --- build-only mode (default): hand off to mavlink-ai-out -------------
+      // --- send mode: send every target directly on the connection (#207) ----
+      if (mode === DELIVERY.SEND) {
+        if (!node.connection) {
+          return fail(new MavlinkError('NO_CONNECTION',
+            'Send via connection requires a connection to send on (select one in the node config).'));
+        }
+        const connection = node.connection;
+        const results = {};
+        const sent = [];
+        const sendFailed = [];
+        const skipped = [];
+        let aborted = false;
+        let dispatched = 0;
+
+        /**
+         * Send one decorated target directly on the connection and fold the
+         * outcome into the aggregation arrays. Never rejects — every error is
+         * classified here — so the dispatcher can Promise.race the in-flight
+         * set safely. Sets `aborted` on the first failure when stop-on-error
+         * is on, so the dispatcher stops launching new targets.
+         *
+         * @param {number} i  index into `decorated`
+         * @returns {Promise<void>}
+         */
+        async function sendTarget(i) {
+          const m = decorated[i];
+          const sysid = m.target_system;
+          dispatched += 1;
+          node.status({ fill: 'blue', shape: 'dot', text: `send ${dispatched}/${decorated.length} (sys ${sysid})` });
+          try {
+            await connection.send(m, { priority: fanPriority });
+            sent.push(sysid);
+            results[sysid] = { sent: true };
+          } catch (err) {
+            const e = toMavlinkError(err, 'SEND_FAILED');
+            sendFailed.push(sysid);
+            results[sysid] = { error: e.code, reason: e.message };
+            if (node.stopOnError) {
+              aborted = true;
+            }
+          }
+        }
+
+        /**
+         * Dispatch up to node.concurrency targets at once, identical pacing to
+         * the await dispatcher above: a free slot is awaited before each
+         * launch, `spacingMs` paces successive dispatches, and `closed`
+         * (redeploy) / `aborted` (stop-on-error) both halt further dispatch.
+         */
+        let nextIndex = 0;
+        const inFlight = new Set();
+        while (nextIndex < decorated.length && !closed && !aborted) {
+          while (inFlight.size >= node.concurrency) {
+            await Promise.race(inFlight);
+            if (closed || aborted) {
+              break;
+            }
+          }
+          if (closed || aborted) {
+            break;
+          }
+          if (node.spacingMs > 0 && nextIndex > 0) {
+            await delay(node.spacingMs);
+            if (closed || aborted) {
+              break;
+            }
+          }
+          const i = nextIndex;
+          nextIndex += 1;
+          const p = sendTarget(i).finally(() => inFlight.delete(p));
+          inFlight.add(p);
+        }
+        await Promise.allSettled(inFlight);
+
+        /** Aborted by close (redeploy): emit no output from an obsolete node. */
+        if (closed) {
+          return done();
+        }
+
+        /**
+         * Stop-on-error leaves the targets never dispatched — mark them skipped in
+         * target order (mirroring the await-ack aggregate's top-level `skipped`
+         * array, #308) so a consumer can see exactly which vehicles were not sent
+         * to without having to scan `results` for `error: 'SKIPPED'` entries.
+         */
+        for (let i = nextIndex; aborted && i < decorated.length; i += 1) {
+          const sysid = decorated[i].target_system;
+          skipped.push(sysid);
+          results[sysid] = { error: 'SKIPPED', reason: 'stop-on-error aborted remaining targets' };
+        }
+        msg.topic = 'swarm/sent';
+        msg.payload = { sent, failed: sendFailed, skipped, results };
+        const ok = sendFailed.length === 0 && skipped.length === 0;
+        node.status({
+          fill: ok ? 'green' : 'yellow',
+          shape: 'dot',
+          text: `${sent.length}/${decorated.length} sent`
+        });
+        send([msg, null]);
+        return done();
+      }
+
+      // --- build mode (default): hand off to mavlink-ai-out -------------------
       /**
        * Stamp the CRITICAL band when the fanned-out command resolves to a
        * critical MAV_CMD (#241), mirroring the command node: fanout -> out
-       * must ride the same band as the await-ack path, or a fanned arm/mode
-       * change queues behind normal traffic. Every clone carries the same
-       * command, so one resolution serves all; non-critical commands carry no
+       * must ride the same band as Send/Await delivery, or a fanned arm/mode
+       * change queues behind normal traffic. Non-critical commands carry no
        * stamp so flows keep control of the field.
        */
-      const buildBundle = node.profile && node.profile.getDialect ? node.profile.getDialect() : null;
-      const fanPriority = commandPriorityFor(buildBundle && buildBundle.valid ? buildBundle.enums : null, command);
       const toSend = decorated.map((payload) => {
         const out = RED.util.cloneMessage(msg);
         out.topic = 'mavlink/send';
@@ -336,13 +504,15 @@ module.exports = function registerMavlinkAiFanout(RED) {
           if (closed) {
             return done(); // node closed mid-pacing: stop emitting (#83)
           }
-          send(toSend[i]);
+          send([toSend[i], null]);
           if (i < toSend.length - 1) {
             await delay(node.spacingMs);
           }
         }
       } else {
-        send([toSend]);
+        // Multiple messages on port 0, nothing on port 1: the outer array is
+        // per-port, the inner array is the batch of fan-out messages (#207).
+        send([toSend, null]);
       }
       node.status({
         fill: 'green',

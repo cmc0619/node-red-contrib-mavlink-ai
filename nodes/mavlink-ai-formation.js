@@ -5,7 +5,7 @@ const { formationTargets, nextLeaderSysid, moveDistanceMeters } = require('../li
 const { MavlinkError, errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { makeFail } = require('../lib/util/node-errors');
 const { toInt, toNum, toBool, firstDefined, parseJsonObjectConfig } = require('../lib/util/validation');
-const { badgeForState } = require('../lib/util/status');
+const { badgeForState, truncateStatus } = require('../lib/util/status');
 const { safeDetach } = require('../lib/util/node-lifecycle');
 const { coreEnumValues } = require('../lib/protocol/protocol-values');
 
@@ -196,7 +196,7 @@ module.exports = function registerMavlinkAiFormation(RED) {
      */
     function emitFollowers(leader, followers) {
       if (!followers.length) {
-        node.status({ fill: 'green', shape: 'dot', text: `leader ${currentLeader}, 0 followers` });
+        node.status({ fill: 'green', shape: 'dot', text: truncateStatus(`leader ${currentLeader}, 0 followers`) });
         return false;
       }
       const heading =
@@ -218,7 +218,7 @@ module.exports = function registerMavlinkAiFormation(RED) {
         });
       } catch (err) {
         const e = toMavlinkError(err, 'FORMATION_FAILED');
-        node.status({ fill: 'red', shape: 'ring', text: e.code });
+        node.status({ fill: 'red', shape: 'ring', text: truncateStatus(e.code) });
         node.send({ topic: 'mavlink/error', payload: errorPayload({ node: 'mavlink-ai-formation', code: e.code, message: e.message, context: e.context }) });
         return true;
       }
@@ -246,7 +246,7 @@ module.exports = function registerMavlinkAiFormation(RED) {
           lastEmit = 0;
           lastFollowerSig = '';
           staleHandled = false;
-          node.status({ fill: 'yellow', shape: 'dot', text: `leader → ${currentLeader} (succession)` });
+          node.status({ fill: 'yellow', shape: 'dot', text: truncateStatus(`leader → ${currentLeader} (succession)`) });
           return;
         }
         /**
@@ -269,9 +269,9 @@ module.exports = function registerMavlinkAiFormation(RED) {
         return;
       }
       if (node.staleAction === 'stop') {
-        node.status({ fill: 'red', shape: 'ring', text: `leader ${currentLeader} stale — stopped` });
+        node.status({ fill: 'red', shape: 'ring', text: truncateStatus(`leader ${currentLeader} stale — stopped`) });
       } else {
-        node.status({ fill: 'yellow', shape: 'ring', text: `leader ${currentLeader} stale — holding` });
+        node.status({ fill: 'yellow', shape: 'ring', text: truncateStatus(`leader ${currentLeader} stale — holding`) });
       }
       staleHandled = true;
     }
@@ -311,7 +311,7 @@ module.exports = function registerMavlinkAiFormation(RED) {
        * review on #244). A missing or stale fix means "not ready": wait.
        */
       if (!leader.position || leader.positionStale) {
-        node.status({ fill: 'grey', shape: 'dot', text: `leader ${currentLeader} (awaiting position)` });
+        node.status({ fill: 'grey', shape: 'dot', text: truncateStatus(`leader ${currentLeader} (awaiting position)`) });
         return;
       }
       const followers = followerSysids();

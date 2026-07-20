@@ -3,7 +3,7 @@
 const { VehicleRegistry } = require('../lib/swarm/vehicle-registry');
 const { errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { toInt, toBool, parseJsonObjectConfig } = require('../lib/util/validation');
-const { badgeForState } = require('../lib/util/status');
+const { badgeForState, truncateStatus } = require('../lib/util/status');
 const { safeDetach } = require('../lib/util/node-lifecycle');
 
 /**
@@ -88,7 +88,7 @@ module.exports = function registerMavlinkAiSwarm(RED) {
       const list = vehicles || registry.vehicles();
       const stale = list.filter((v) => v.stale).length;
       const text = stale ? `${list.length} vehicles (${stale} stale)` : `${list.length} vehicles`;
-      node.status({ fill: list.length ? 'green' : 'grey', shape: 'dot', text });
+      node.status({ fill: list.length ? 'green' : 'grey', shape: 'dot', text: truncateStatus(text) });
     }
 
     /**
@@ -268,7 +268,7 @@ module.exports = function registerMavlinkAiSwarm(RED) {
         vehicles = registry.vehicles(filter);
       } catch (err) {
         const e = toMavlinkError(err, 'BAD_FILTER');
-        node.status({ fill: 'red', shape: 'ring', text: e.code });
+        node.status({ fill: 'red', shape: 'ring', text: truncateStatus(e.code) });
         msg.topic = 'mavlink/error';
         msg.payload = errorPayload({ node: 'mavlink-ai-swarm', code: e.code, message: e.message, context: e.context });
         send(msg);

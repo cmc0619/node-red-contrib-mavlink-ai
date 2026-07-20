@@ -111,6 +111,7 @@
     "name": "Arm/Disarm",
     "profile": "ai_profile_copter",
     "command": "arm",
+    "delivery": "build",
     "x": 330,
     "y": 130,
     "wires": [

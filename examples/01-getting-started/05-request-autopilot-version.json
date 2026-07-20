@@ -88,6 +88,7 @@
     "name": "Request Message",
     "profile": "ai_profile_copter",
     "command": "request_message",
+    "delivery": "build",
     "x": 380,
     "y": 100,
     "wires": [
