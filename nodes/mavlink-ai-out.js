@@ -140,7 +140,7 @@ module.exports = function registerMavlinkAiOut(RED) {
         /** This node has no outputs; real failures surface via done(err) so a
          * Catch node can handle them. */
         node._notReadyWarned = false;
-        node.status({ fill: 'red', shape: 'ring', text: truncateStatus(err.code || 'send error') });
+        node.status({ fill: 'red', shape: 'ring', text: truncateStatus((err && err.code) || 'send error') });
         done(err);
       }
     });
