@@ -215,7 +215,7 @@ Do not collapse these concerns back into a combined profile.
 | Question | Config node | Owns |
 | --- | --- | --- |
 | Who is Node-RED on the wire? | Local Identity | source SysID/CompID, local role, heartbeat identity, signing policy/credential reference |
-| What remote vehicle is addressed/interpreted? | Vehicle Profile | targets, vehicle family, firmware, dialect, version preference, modes, parameter/mission metadata |
+| What remote vehicle is addressed/interpreted? | Vehicle Profile | targets, vehicle family, firmware, dialect, modes, parameter/mission metadata |
 | How does traffic move and remain channel-correct? | Connection | transport, routing, queue, peers, subscriptions, heartbeats, signing link ID and channel state |
 
 Visible nodes own behavior: receive, filter, build, send, command, move,
@@ -243,8 +243,8 @@ vehicle type must never determine the local identity.
 Suggested type: mavlink-ai-vehicle.
 
 It owns name; default target system/component IDs; vehicle family; firmware;
-dialect source and choice; v1/v2/auto preference; mode/parameter metadata; and
-mission defaults.
+dialect source and choice; mode/parameter metadata; and mission defaults.
+There is no MAVLink version preference: transmit is MAVLink 2 only.
 
 It must never own source IDs, local heartbeat role, signing channel state, or
 the Local Identity used for transmission. Inbound routes map remote SysID/CompID
@@ -333,8 +333,8 @@ specification for exact cryptographic, timestamp, and anti-replay mechanics.
   or logs.
 - Explain that signing requires MAVLink 2.
 - A Local Identity may select reusable signing policy/credential intent, but the
-  signing link ID, outgoing sequence, and detected peer wire version are
-  Connection/channel state. Timestamps come from node-mavlink's sign()
+  signing link ID and outgoing sequence are Connection/channel state.
+  Timestamps come from node-mavlink's sign()
   (Date.now(); no replay memory is kept — §2).
 - Preserve this state across Vehicle Profile reloads and codec rebuilds.
 - Key outgoing state at least by connection/channel and local source identity;

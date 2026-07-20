@@ -19,7 +19,6 @@ function setup() {
     id: 'p1',
     name: 'P',
     dialect: 'common',
-    mavlinkVersion: 'v2',
     defaultTargetSystem: 7,
     defaultTargetComponent: 3
   });
@@ -205,41 +204,4 @@ test('an addressed message still routes to its target via the profile default (#
   await conn.send({ name: 'COMMAND_LONG', fields: { ...COMMAND_FIELDS } });
   assert.strictEqual(sent.length, 1);
   assert.strictEqual(sent[0].meta.targetSystem, 7, 'addressed message keeps its routing target');
-});
-
-test('under auto version, a broadcast is framed with the connection default, not the routing target peer (#148)', async (t) => {
-  const RED = new MockRED().loadNodes();
-  RED.create('mavlink-ai-vehicle', {
-    id: 'pa', name: 'Auto', dialect: 'common', mavlinkVersion: 'auto',
-    defaultTargetSystem: 7, defaultTargetComponent: 3
-  });
-  RED.create('mavlink-ai-local-identity', {
-    id: 'ida', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190
-  });
-  const conn = RED.create('mavlink-ai-connection', {
-    id: 'ca', name: 'CA', profile: 'pa', localIdentity: 'ida', transport: 'udp',
-    bindAddress: '127.0.0.1', bindPort: 0, reconnect: false, heartbeat: false
-  });
-  const sent = [];
-  conn._queue = { enqueue(buffer, priority, meta) { sent.push({ buffer, meta }); return Promise.resolve(); }, clear() {} };
-  t.after(() => RED.close(conn));
-
-  /** The default target sysid 7 speaks v2 and sysid 9 v1. A broadcast must
-   * not be framed for the profile-default target (#148) — with the fleet now
-   * mixed it is encoded once per version group instead (#199), each group
-   * routed to its own sysids. */
-  conn._link.noteInboundMagic(0xfd, 7);
-  conn._link.noteInboundMagic(0xfe, 9);
-
-  await conn.send({ name: 'HEARTBEAT', fields: { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 } });
-  assert.strictEqual(sent.length, 2, 'mixed fleet: one frame per version group');
-  const v1send = sent.find((s) => s.buffer[0] === 0xfe);
-  const v2send = sent.find((s) => s.buffer[0] === 0xfd);
-  assert.deepStrictEqual(v1send.meta.sysids, [9], 'v1 frame routed to the v1 peer only');
-  assert.deepStrictEqual(v2send.meta.sysids, [7], 'v2 frame routed to the v2 peer only');
-
-  /** An addressed message to sysid 7 still uses that peer's detected v2 (0xfd). */
-  await conn.send({ name: 'COMMAND_LONG', fields: { command: 512, confirmation: 0, target_system: 7 } });
-  assert.strictEqual(sent[sent.length - 1].meta.targetSystem, 7);
-  assert.strictEqual(sent[sent.length - 1].buffer[0], 0xfd, 'addressed message uses the target sysid detected version (v2)');
 });

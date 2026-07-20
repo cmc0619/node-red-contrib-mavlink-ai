@@ -77,7 +77,6 @@ async function setupFleet(t, opts = {}) {
       id: `p${sysid}`,
       name: `Drone ${sysid}`,
       dialect: 'ardupilotmega',
-      mavlinkVersion: 'v2',
       defaultTargetSystem: sysid,
       defaultTargetComponent: 1
     });

@@ -128,7 +128,7 @@ test('two attached identities sharing a source (sysid, compid) fail closed at de
 // --- vehicle profile never selects identity ---------------------------------
 test('the Vehicle Profile never determines the outbound identity (#228)', async (t) => {
   const RED = new MockRED().loadNodes();
-  makeProfile(RED, { id: 'p1', dialect: 'common', mavlinkVersion: 'v2' });
+  makeProfile(RED, { id: 'p1', dialect: 'common' });
   makeIdentity(RED, { id: 'gcs', name: 'GCS', sourceSystemId: 250, sourceComponentId: 5 });
   const { connection } = makeConnection(RED, { id: 'c1', profile: 'p1', localIdentity: 'gcs' });
   t.after(() => RED.close(connection));

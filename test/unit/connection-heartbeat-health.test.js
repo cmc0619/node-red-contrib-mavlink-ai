@@ -37,7 +37,7 @@ function identity(id, healthDriven = true) {
  */
 function connection(RED) {
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
+    id: 'p1', name: 'Vehicle', dialect: 'common', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {

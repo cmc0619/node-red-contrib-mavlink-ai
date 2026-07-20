@@ -13,7 +13,6 @@
     "firmware": "ardupilot",
     "dialect": "ardupilotmega",
     "customDialectPath": "",
-    "mavlinkVersion": "auto",
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",

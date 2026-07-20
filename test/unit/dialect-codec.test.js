@@ -9,8 +9,8 @@ const { enc } = require('../helpers/v3-config');
 
 /**
  * The codec is dialect-scoped only in v3 (#192, #228): source identity and
- * per-link version/sequence/signing state live outside it. encode() takes the
- * sender ids + a LinkState explicitly; version detection is a LinkState method.
+ * per-link sequence/signing state live outside it. encode() takes the
+ * sender ids + a LinkState explicitly; every outbound frame is MAVLink 2.
  * `enc()` (test helper) supplies a fresh LinkState and default 255/190 unless a
  * test threads its own.
  */
@@ -45,7 +45,7 @@ test('a custom value that is neither a bundled name nor an .xml path fails loudl
 
 test('codec round-trips a HEARTBEAT', async () => {
   const b = loadDialect('ardupilotmega');
-  const codec = new MavlinkCodec({ bundle: b, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle: b });
   const buf = enc(codec, 'HEARTBEAT', {
     type: 'MAV_TYPE_QUADROTOR',
     autopilot: 'MAV_AUTOPILOT_ARDUPILOTMEGA',
@@ -68,7 +68,7 @@ test('codec round-trips a HEARTBEAT', async () => {
 
 test('codec encodes COMMAND_LONG with enum + target defaults', async () => {
   const b = loadDialect('ardupilotmega');
-  const codec = new MavlinkCodec({ bundle: b, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle: b });
   const buf = enc(
     codec,
     'COMMAND_LONG',
@@ -115,79 +115,9 @@ test('encode rejects an out-of-range source identity (#90)', () => {
   assert.ok(Buffer.isBuffer(codec.encode('HEARTBEAT', hb, { sysid: 255, compid: 1, link })));
 });
 
-test('auto version follows the detected inbound wire version (#19)', () => {
-  const b = loadDialect('ardupilotmega');
-  const codec = new MavlinkCodec({ bundle: b, version: 'auto' });
-  const link = new LinkState();
-  const hb = { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 };
-
-  // Before any inbound traffic: v2 framing (0xFD magic).
-  assert.strictEqual(link.effectiveVersion('auto'), 'v2');
-  assert.strictEqual(enc(codec, 'HEARTBEAT', hb, { link })[0], 0xfd);
-
-  // A v1 peer appears: outbound switches to v1 framing (0xFE magic).
-  link.noteInboundMagic(0xfe);
-  assert.strictEqual(link.effectiveVersion('auto'), 'v1');
-  assert.strictEqual(enc(codec, 'HEARTBEAT', hb, { link })[0], 0xfe);
-
-  // The peer upgrades to v2: outbound follows.
-  link.noteInboundMagic(0xfd);
-  assert.strictEqual(link.effectiveVersion('auto'), 'v2');
-  assert.strictEqual(enc(codec, 'HEARTBEAT', hb, { link })[0], 0xfd);
-
-  // Unknown magic bytes are ignored.
-  link.noteInboundMagic(0x00);
-  assert.strictEqual(link.effectiveVersion('auto'), 'v2');
-});
-
-test('auto tracks wire version per peer sysid (#69)', () => {
-  const b = loadDialect('ardupilotmega');
-  const codec = new MavlinkCodec({ bundle: b, version: 'auto' });
-  const link = new LinkState();
-  const hb = { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 };
-
-  // Vehicle 1 speaks v1, vehicle 2 speaks v2 on the same connection.
-  link.noteInboundMagic(0xfe, 1);
-  link.noteInboundMagic(0xfd, 2);
-
-  // Each peer's outbound framing follows its own observed version, regardless
-  // of who spoke last.
-  assert.strictEqual(link.effectiveVersion('auto', 1), 'v1');
-  assert.strictEqual(link.effectiveVersion('auto', 2), 'v2');
-  assert.strictEqual(enc(codec, 'HEARTBEAT', hb, { link, targetSystem: 1 })[0], 0xfe);
-  assert.strictEqual(enc(codec, 'HEARTBEAT', hb, { link, targetSystem: 2 })[0], 0xfd);
-
-  // An unknown/untargeted peer falls back to the most recent inbound version.
-  assert.strictEqual(link.effectiveVersion('auto', 99), 'v2');
-  assert.strictEqual(link.effectiveVersion('auto'), 'v2');
-});
-
-test('auto keeps v2 framing for message ids above 255 even with a v1 peer (#19)', () => {
-  const b = loadDialect('ardupilotmega');
-  const codec = new MavlinkCodec({ bundle: b, version: 'auto' });
-  const link = new LinkState();
-  link.noteInboundMagic(0xfe); // v1 peer
-  // BUTTON_CHANGE has msgid 257 — v1 framing cannot express it.
-  const buf = enc(codec, 'BUTTON_CHANGE', { time_boot_ms: 1, last_change_ms: 1, state: 1 }, { link });
-  assert.strictEqual(buf[0], 0xfd);
-});
-
-test('explicit v1/v2 settings ignore inbound magic (#19)', () => {
-  const b = loadDialect('ardupilotmega');
-  const hb = { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 };
-  const v2 = new MavlinkCodec({ bundle: b, version: 'v2' });
-  const v2link = new LinkState();
-  v2link.noteInboundMagic(0xfe);
-  assert.strictEqual(enc(v2, 'HEARTBEAT', hb, { link: v2link })[0], 0xfd);
-  const v1 = new MavlinkCodec({ bundle: b, version: 'v1' });
-  const v1link = new LinkState();
-  v1link.noteInboundMagic(0xfd);
-  assert.strictEqual(enc(v1, 'HEARTBEAT', hb, { link: v1link })[0], 0xfe);
-});
-
 test('encode rejects unresolvable enum-name strings with the field named (#36)', () => {
   const b = loadDialect('ardupilotmega');
-  const codec = new MavlinkCodec({ bundle: b, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle: b });
   assert.throws(
     () => enc(codec, 'COMMAND_LONG', { command: 'MAV_CMD_ARM_DISRAM', target_system: 1, target_component: 1 }),
     (e) => {
@@ -206,7 +136,7 @@ test('encode rejects unresolvable enum-name strings with the field named (#36)',
 
 test('encode accepts a decimal string on a float field but rejects it on an integer field (#153)', async () => {
   const b = loadDialect('ardupilotmega');
-  const codec = new MavlinkCodec({ bundle: b, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle: b });
   /** param1 is a float field: "1.5" (as from an MQTT/CSV source) must encode as 1.5. */
   const decoded = await roundTrip(codec, 'COMMAND_LONG', {
     command: 'MAV_CMD_COMPONENT_ARM_DISARM',
@@ -271,7 +201,7 @@ function roundTrip(codec, name, fields) {
  */
 test('char[] fields are never enum/number-resolved: digit and enum-name text survive (#137)', async () => {
   const b = loadDialect('ardupilotmega');
-  const codec = new MavlinkCodec({ bundle: b, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle: b });
 
   const digits = await roundTrip(codec, 'STATUSTEXT', { severity: 6, text: '123' });
   assert.strictEqual(digits.fields.text, '123');
@@ -298,56 +228,18 @@ test('char[] fields are never enum/number-resolved: digit and enum-name text sur
   assert.strictEqual(named.fields.param_id, 'ARMING_CHECK');
 });
 
-/** A HEARTBEAT with numeric fields, for version-detection round-trips. */
+/** A HEARTBEAT with numeric fields, for wire round-trips. */
 const HB_FIELDS = { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 };
 
-test('v1 encode strips MAVLink-2 extension fields (#138)', async () => {
+test('raw.magic reflects the v2 wire version (#138)', async () => {
   const b = loadDialect('common');
-  const codec = new MavlinkCodec({ bundle: b, version: 'v1' });
-  /**
-   * COMMAND_ACK core is 3 bytes (command:2 + result:1); progress, result_param2,
-   * target_system, target_component are MAVLink-2 extensions the v1 wire omits.
-   */
-  const buf = enc(codec, 'COMMAND_ACK', { command: 400, result: 0 }, { sysid: 1, compid: 1 });
-  assert.strictEqual(buf[0], 0xfe);
-  assert.strictEqual(buf[1], 3, 'v1 payload length must exclude extension fields');
-  /** The truncated frame still carries a valid CRC and decodes its base fields. */
-  const decoded = await roundTrip(codec, 'COMMAND_ACK', { command: 400, result: 0 });
-  assert.strictEqual(decoded.fields.command, 400);
-  assert.strictEqual(decoded.fields.result, 0);
-});
-
-test('raw.magic reflects the real wire version, including v1 (#138)', async () => {
-  const b = loadDialect('common');
-  const v1 = new MavlinkCodec({ bundle: b, version: 'v1' });
-  const v2 = new MavlinkCodec({ bundle: b, version: 'v2' });
-  assert.strictEqual((await roundTrip(v1, 'HEARTBEAT', HB_FIELDS)).raw.magic, 0xfe);
-  assert.strictEqual((await roundTrip(v2, 'HEARTBEAT', HB_FIELDS)).raw.magic, 0xfd);
-});
-
-test('auto version detects v1 from a real parsed frame, not header.magic (#138, #152)', async () => {
-  const b = loadDialect('common');
-  const peer = new MavlinkCodec({ bundle: b, version: 'v1' });
-  const v1frame = enc(peer, 'HEARTBEAT', HB_FIELDS, { sysid: 3, compid: 1 });
-  const auto = new MavlinkCodec({ bundle: b, version: 'auto' });
-  const link = new LinkState();
-  assert.strictEqual(link.effectiveVersion('auto', 3), 'v2', 'v2 until an inbound frame is seen');
-
-  /** Parse the real frame the way the connection does, then feed the wire byte. */
-  const packet = await new Promise((resolve) => {
-    const dec = auto.createDecoder((p) => resolve(p));
-    dec.write(v1frame);
-  });
-  assert.strictEqual(packet.header.magic, 0, 'node-mavlink v1 parser leaves header.magic 0 — the bug this guards');
-  link.noteInboundMagic(packet.buffer[0], packet.header.sysid);
-
-  assert.strictEqual(link.effectiveVersion('auto', 3), 'v1');
-  assert.strictEqual(enc(auto, 'HEARTBEAT', HB_FIELDS, { link, targetSystem: 3 })[0], 0xfe);
+  const codec = new MavlinkCodec({ bundle: b });
+  assert.strictEqual((await roundTrip(codec, 'HEARTBEAT', HB_FIELDS)).raw.magic, 0xfd);
 });
 
 test('addressesTarget distinguishes addressed messages from broadcasts (#148)', () => {
   const b = loadDialect('common');
-  const codec = new MavlinkCodec({ bundle: b, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle: b });
   assert.strictEqual(codec.addressesTarget('COMMAND_LONG'), true);
   assert.strictEqual(codec.addressesTarget('MISSION_REQUEST_LIST'), true);
   assert.strictEqual(codec.addressesTarget('HEARTBEAT'), false);
@@ -357,7 +249,7 @@ test('addressesTarget distinguishes addressed messages from broadcasts (#148)', 
 
 test('all-zero v2 payload keeps the spec minimum of one payload byte', async () => {
   const b = loadDialect('common');
-  const codec = new MavlinkCodec({ bundle: b, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle: b });
   /**
    * Broadcast PARAM_REQUEST_LIST serializes all-zero; node-mavlink trims that
    * to a zero-length payload, but the MAVLink 2 reference trim never goes
@@ -377,7 +269,7 @@ test('all-zero v2 payload keeps the spec minimum of one payload byte', async () 
 
 test('outbound HEARTBEAT stamps mavlink_version 3 unless the caller sets it', async () => {
   const b = loadDialect('common');
-  const codec = new MavlinkCodec({ bundle: b, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle: b });
   const decode = (buf) =>
     new Promise((resolve) => {
       const dec = codec.createDecoder((packet) => resolve(codec.decode(packet)));
@@ -393,7 +285,7 @@ test('outbound HEARTBEAT stamps mavlink_version 3 unless the caller sets it', as
 
 test('exactFloatBits writes the exact wire pattern and decode exposes param_value_bits (#146)', async () => {
   const b = loadDialect('common');
-  const codec = new MavlinkCodec({ bundle: b, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle: b });
   /** INT32 -1 byte-union: float bits 0xFFFFFFFF — a NaN pattern JS canonicalizes */
   const buf = enc(
     codec,

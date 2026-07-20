@@ -366,7 +366,6 @@ function setupProbe(extraConfig, ackDelayMs) {
     id: 'p1',
     name: 'Copter',
     dialect: 'ardupilotmega',
-    mavlinkVersion: 'v2',
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   });
@@ -384,7 +383,6 @@ function setup(extraConfig, script) {
     id: 'p1',
     name: 'Copter',
     dialect: 'ardupilotmega',
-    mavlinkVersion: 'v2',
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   });
@@ -673,7 +671,6 @@ test('fanout Send via connection without a connection is a structured NO_CONNECT
     id: 'p1',
     name: 'Copter',
     dialect: 'ardupilotmega',
-    mavlinkVersion: 'v2',
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   });
@@ -745,7 +742,7 @@ test('fanout Send via connection stop-on-error reports aborted targets in a top-
 test('fanout node badges a construct-time DELIVERY_UNSET before any input (#308)', () => {
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   const node = RED.create('mavlink-ai-fanout', { id: 'f2', profile: 'p1', command: 'MAV_CMD_NAV_LAND' }); // no delivery
@@ -761,7 +758,7 @@ test('fanout node badges a construct-time DELIVERY_UNSET before any input (#308)
 test('fanout node keeps the DELIVERY_UNSET badge across a flows:started refresh (#308 G1)', () => {
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   const node = RED.create('mavlink-ai-fanout', { id: 'f3', profile: 'p1', command: 'MAV_CMD_NAV_LAND' }); // no delivery

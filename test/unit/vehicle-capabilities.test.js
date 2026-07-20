@@ -13,7 +13,7 @@ const { MockRED } = require('../helpers/mock-red');
 function setup() {
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'P', dialect: 'common', mavlinkVersion: 'v2',
+    id: 'p1', name: 'P', dialect: 'common', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {

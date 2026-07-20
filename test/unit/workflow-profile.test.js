@@ -90,7 +90,7 @@ test('an accepted decision never overrides an explicit profile', () => {
 test('the connection node exposes the router decision, reject reason included (#196)', (t) => {
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {
@@ -124,7 +124,7 @@ test('component-broadcast targets (compid 0) use any-responder semantics, not a 
    */
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {
@@ -159,7 +159,7 @@ test('single-profile compid accept filters cannot reject a component-broadcast t
    */
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {
@@ -189,11 +189,11 @@ test('unmatched-default does not shadow a sysid-matching responder route for com
    */
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'Default', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    id: 'p1', name: 'Default', vehicleFamily: 'generic', dialect: 'common', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-vehicle', {
-    id: 'p2', name: 'Routed', vehicleFamily: 'generic', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    id: 'p2', name: 'Routed', vehicleFamily: 'generic', dialect: 'ardupilotmega', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {
@@ -257,7 +257,7 @@ test('a compid-0-only route cannot make a component-broadcast target viable', (t
    */
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {
@@ -289,7 +289,7 @@ test('a compid-0-only accept filter rejects a component-broadcast target', (t) =
    */
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {
@@ -323,7 +323,7 @@ test('an unresolvable compid-wildcard route shadows all responders and rejects c
    */
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {
@@ -371,11 +371,11 @@ test('a route to an existing but invalid profile rejects the workflow target (pr
    */
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'Good', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    id: 'p1', name: 'Good', vehicleFamily: 'generic', dialect: 'common', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-vehicle', {
-    id: 'pBad', name: 'Broken', vehicleFamily: 'generic', dialect: 'no-such-dialect', mavlinkVersion: 'v2',
+    id: 'pBad', name: 'Broken', vehicleFamily: 'generic', dialect: 'no-such-dialect', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {
@@ -449,7 +449,7 @@ test('a shadowed exact route cannot revive a compid-0 target via a less-specific
    */
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'Good', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    id: 'p1', name: 'Good', vehicleFamily: 'generic', dialect: 'common', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {

@@ -20,7 +20,6 @@ function withProfile() {
     id: 'p_default',
     name: 'Default',
     dialect: 'common',
-    mavlinkVersion: 'v2'
   });
   RED.create('mavlink-ai-local-identity', {
     id: 'id_t',

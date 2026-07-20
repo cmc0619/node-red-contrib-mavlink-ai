@@ -36,7 +36,6 @@ test('connection verifies inbound signatures per the identity policy', async (t)
     name: 'Signed',
     vehicleFamily: 'generic',
     dialect: 'ardupilotmega',
-    mavlinkVersion: 'v2',
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   });
@@ -78,9 +77,9 @@ test('connection verifies inbound signatures per the identity policy', async (t)
   const bundle = loadDialect('ardupilotmega');
   const goodKey = MavLinkPacketSignature.key('shared-link-secret');
   const badKey = MavLinkPacketSignature.key('wrong-secret');
-  const goodSigner = new MavlinkCodec({ bundle, version: 'v2' });
-  const badSigner = new MavlinkCodec({ bundle, version: 'v2' });
-  const unsigned = new MavlinkCodec({ bundle, version: 'v2' });
+  const goodSigner = new MavlinkCodec({ bundle });
+  const badSigner = new MavlinkCodec({ bundle });
+  const unsigned = new MavlinkCodec({ bundle });
 
   const sock = dgram.createSocket('udp4');
   t.after(async () => {
@@ -158,7 +157,6 @@ test('routed connection verifies signed frames against the default identity key'
     name: 'Default',
     vehicleFamily: 'generic',
     dialect: 'ardupilotmega',
-    mavlinkVersion: 'v2',
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   });
@@ -167,7 +165,6 @@ test('routed connection verifies signed frames against the default identity key'
     name: 'Routed',
     vehicleFamily: 'copter',
     dialect: 'ardupilotmega',
-    mavlinkVersion: 'v2',
     defaultTargetSystem: 2,
     defaultTargetComponent: 1
   });
@@ -205,9 +202,9 @@ test('routed connection verifies signed frames against the default identity key'
   const goodKey = MavLinkPacketSignature.key('link-key');
   const wrongKey = MavLinkPacketSignature.key('other-key');
   // sysid 2 signs with the connection's identity key -> accepted, labeled 'Routed'.
-  const routedSigner = new MavlinkCodec({ bundle, version: 'v2' });
+  const routedSigner = new MavlinkCodec({ bundle });
   // sysid 2 signing with a different key -> rejected as signature-invalid.
-  const wrongKeySigner = new MavlinkCodec({ bundle, version: 'v2' });
+  const wrongKeySigner = new MavlinkCodec({ bundle });
 
   const sock = dgram.createSocket('udp4');
   t.after(async () => {
@@ -276,7 +273,6 @@ test('connection rejects a replayed signed frame', async (t) => {
     name: 'Replay',
     vehicleFamily: 'generic',
     dialect: 'ardupilotmega',
-    mavlinkVersion: 'v2',
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   });
@@ -312,7 +308,7 @@ test('connection rejects a replayed signed frame', async (t) => {
 
   const bundle = loadDialect('ardupilotmega');
   const key = MavLinkPacketSignature.key('replay-secret');
-  const signer = new MavlinkCodec({ bundle, version: 'v2' });
+  const signer = new MavlinkCodec({ bundle });
   /** One frame, captured so the exact bytes (and timestamp) can be replayed. */
   const frame = enc(signer, 'HEARTBEAT', HEARTBEAT, { sysid: 1, compid: 1, signing: { key, linkId: 2 } });
 

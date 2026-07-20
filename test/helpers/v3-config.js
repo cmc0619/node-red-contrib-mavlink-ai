@@ -9,7 +9,7 @@ const { LinkState } = require('../../lib/protocol/link-state');
  *
  * They also wrap the codec's identity-aware encode() API: the codec is now
  * dialect-scoped only, so encode() needs the sender's sysid/compid plus a
- * connection-owned LinkState carrying sequence/signing/version state (#192).
+ * connection-owned LinkState carrying sequence/signing state (#192).
  */
 
 let seq = 0;
@@ -46,7 +46,7 @@ function makeIdentity(RED, config = {}) {
  * Create a Vehicle Profile config node.
  *
  * @param {MockRED} RED
- * @param {object} [config]  overrides (id/name/dialect/mavlinkVersion/... )
+ * @param {object} [config]  overrides (id/name/dialect/... )
  * @returns {object} the profile node
  */
 function makeProfile(RED, config = {}) {
@@ -56,8 +56,7 @@ function makeProfile(RED, config = {}) {
       {
         id: uid('p'),
         name: 'Vehicle',
-        dialect: 'ardupilotmega',
-        mavlinkVersion: 'auto'
+        dialect: 'ardupilotmega'
       },
       config
     )

@@ -204,7 +204,7 @@ for (const dialect of DIALECTS) {
   test(`round-trips every message/field type in '${dialect}' (§3.5)`, async () => {
     const bundle = loadDialect(dialect);
     assert.ok(bundle.valid, `dialect '${dialect}' should load`);
-    const codec = new MavlinkCodec({ bundle, version: 'v2' });
+    const codec = new MavlinkCodec({ bundle });
 
     const failures = [];
     let messages = 0;
@@ -264,7 +264,7 @@ for (const dialect of DIALECTS) {
 
 test('NaN is preserved as a sentinel on a float field, not silently 0/null (§3.5)', async () => {
   const bundle = loadDialect('common');
-  const codec = new MavlinkCodec({ bundle, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle });
   /**
    * SET_POSITION_TARGET_LOCAL_NED uses NaN in unused axes as a real "keep
    * current" signal. The codec preserves a non-finite float as the JSON-safe
@@ -290,7 +290,7 @@ test('NaN is preserved as a sentinel on a float field, not silently 0/null (§3.
 
 test('golden HEARTBEAT payload matches hand-derived MAVLink bytes (§3.5)', () => {
   const bundle = loadDialect('common');
-  const codec = new MavlinkCodec({ bundle, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle });
   const buf = enc(
     codec,
     'HEARTBEAT',

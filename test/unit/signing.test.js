@@ -31,7 +31,7 @@ const HEARTBEAT = {
   system_status: 'MAV_STATE_ACTIVE'
 };
 
-const codec = new MavlinkCodec({ bundle, version: 'v2' });
+const codec = new MavlinkCodec({ bundle });
 
 /** Sign a HEARTBEAT as (sysid/compid) with a passphrase + link id. */
 function signHeartbeat({ sysid = 2, compid = 1, passphrase, linkId = 0, link = new LinkState() }) {
@@ -93,20 +93,6 @@ test('sign outbound: encode appends a valid signature block (#15)', async () => 
   const key = MavLinkPacketSignature.key('swarmsecret');
   assert.strictEqual(packet.signature.matches(key), true);
   assert.strictEqual(packet.signature.matches(MavLinkPacketSignature.key('wrong')), false);
-});
-
-test('signing forces MAVLink 2 even when the version is v1 (#15)', async () => {
-  // Signed frames are v2-only; a v1 profile setting must not drop signing.
-  const v1 = new MavlinkCodec({ bundle, version: 'v1' });
-  const buf = v1.encode('HEARTBEAT', HEARTBEAT, {
-    sysid: 1,
-    compid: 1,
-    link: new LinkState(),
-    signing: { key: MavLinkPacketSignature.key('k'), linkId: 0 }
-  });
-  assert.strictEqual(buf[0], 0xfd); // v2 magic, not 0xfe
-  const packet = await decodeOne(buf);
-  assert.ok(packet.signature);
 });
 
 test('verify disabled: verifyInboundPacket returns null (pass-through) (#15)', () => {

@@ -141,7 +141,7 @@ The extra node types keep the architecture clean while allowing simple flows to 
 
 The original 10 design goals are retained except migration.
 
-1. Shared MAVLink profile/config node for dialect, MAVLink version, system ID, component ID, and protocol behavior.
+1. Shared MAVLink profile/config node for dialect, system ID, component ID, and protocol behavior.
 2. Transport details belong in connection/comms, not message nodes.
 3. Message construction/filtering/decoding logic should stay out of transport-specific code where practical.
 4. Serial, UDP, and TCP should be supported without changing message nodes.

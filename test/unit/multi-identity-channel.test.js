@@ -20,7 +20,7 @@ function header(frame) {
 
 test('one connection transmits as two distinct identities with independent sequence streams (#228, #192)', async (t) => {
   const RED = new MockRED().loadNodes();
-  makeProfile(RED, { id: 'p1', dialect: 'common', mavlinkVersion: 'v2' });
+  makeProfile(RED, { id: 'p1', dialect: 'common' });
   makeIdentity(RED, { id: 'gcs', name: 'GCS', sourceSystemId: 255, sourceComponentId: 190 });
   makeIdentity(RED, { id: 'companion', name: 'Companion', role: 'companion', sourceSystemId: 1, sourceComponentId: 191 });
   const { connection } = makeConnection(RED, {
@@ -60,8 +60,8 @@ test('the default identity sequence is unaffected by routed vehicle profiles on 
   // one local identity. Sequence state is keyed by local identity + link, not
   // by dialect codec, so alternating sends keep a single ascending stream.
   const RED = new MockRED().loadNodes();
-  makeProfile(RED, { id: 'p_common', name: 'Common', dialect: 'common', mavlinkVersion: 'v2' });
-  makeProfile(RED, { id: 'p_ardu', name: 'Ardu', dialect: 'ardupilotmega', mavlinkVersion: 'v2' });
+  makeProfile(RED, { id: 'p_common', name: 'Common', dialect: 'common' });
+  makeProfile(RED, { id: 'p_ardu', name: 'Ardu', dialect: 'ardupilotmega' });
   makeIdentity(RED, { id: 'gcs', name: 'GCS', sourceSystemId: 255, sourceComponentId: 190 });
   const { connection } = makeConnection(RED, {
     id: 'c1',

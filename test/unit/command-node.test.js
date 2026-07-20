@@ -12,7 +12,6 @@ function setup(commandConfig) {
     id: 'p1',
     name: 'Copter',
     dialect: 'ardupilotmega',
-    mavlinkVersion: 'v2',
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   });
@@ -35,7 +34,6 @@ function setupWithConnection(commandConfig) {
     id: 'p1',
     name: 'Copter',
     dialect: 'ardupilotmega',
-    mavlinkVersion: 'v2',
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   });
@@ -145,7 +143,6 @@ function setupWithFirmware(commandConfig, profileExtra) {
     id: 'p1',
     name: 'Copter',
     dialect: 'ardupilotmega',
-    mavlinkVersion: 'v2',
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   }, profileExtra));

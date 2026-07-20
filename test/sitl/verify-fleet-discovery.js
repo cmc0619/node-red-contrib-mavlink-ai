@@ -58,7 +58,7 @@ const EXPECT = requireInt(args.expect || process.env.EXPECT || 3, '--expect', 1,
 const TIMEOUT = requireInt(args.timeout || process.env.TIMEOUT || 30000, '--timeout', 1, 3600000);
 const DIALECT = args.dialect || process.env.DIALECT || 'ardupilotmega';
 
-const codec = new MavlinkCodec({ bundle: loadDialect(DIALECT), version: 'v2' });
+const codec = new MavlinkCodec({ bundle: loadDialect(DIALECT) });
 const seen = new Set();
 
 const decoder = codec.createDecoder(

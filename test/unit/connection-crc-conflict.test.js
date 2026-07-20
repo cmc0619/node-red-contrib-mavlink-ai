@@ -22,21 +22,18 @@ function setup(routeProfiles) {
     id: 'p_default',
     name: 'Default',
     dialect: 'common',
-    mavlinkVersion: 'v2'
   });
   RED.create('mavlink-ai-vehicle', {
     id: 'p_custom',
     name: 'Custom',
     dialect: 'custom',
     customDialectPath: path.join(FIXTURES, 'custom_addon.xml'),
-    mavlinkVersion: 'v2'
   });
   RED.create('mavlink-ai-vehicle', {
     id: 'p_conflict',
     name: 'Conflict',
     dialect: 'custom',
     customDialectPath: path.join(FIXTURES, 'custom_vehicle_conflict.xml'),
-    mavlinkVersion: 'v2'
   });
   // Another profile on the same dialect as the default: identical duplicate
   // CRC definitions, which must stay valid.
@@ -44,7 +41,6 @@ function setup(routeProfiles) {
     id: 'p_common2',
     name: 'Common2',
     dialect: 'common',
-    mavlinkVersion: 'v2'
   });
   RED.create('mavlink-ai-local-identity', {
     id: 'id1', name: 'GCS', role: 'custom', sourceSystemId: 255, sourceComponentId: 190

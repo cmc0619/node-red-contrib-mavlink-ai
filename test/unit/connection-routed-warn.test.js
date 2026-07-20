@@ -14,7 +14,7 @@ const { MockRED } = require('../helpers/mock-red');
 
 function profile(RED) {
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', mavlinkVersion: 'v2',
+    id: 'p1', name: 'P', vehicleFamily: 'generic', dialect: 'common', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {

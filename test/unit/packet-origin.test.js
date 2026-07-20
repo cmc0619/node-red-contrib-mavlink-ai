@@ -27,7 +27,7 @@ const HEARTBEAT = { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_
  * @returns {Buffer} the encoded frame
  */
 function heartbeatFrom(sysid) {
-  const codec = new MavlinkCodec({ bundle: common, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle: common });
   return enc(codec, 'HEARTBEAT', HEARTBEAT, { sysid, compid: 1 });
 }
 
@@ -42,7 +42,7 @@ function heartbeatFrom(sysid) {
  */
 function udpPeerConnection(RED, config) {
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
+    id: 'p1', name: 'Vehicle', dialect: 'common', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {
@@ -259,7 +259,7 @@ test('a partial broadcast failure surfaces as a throttled connection warning (#1
 });
 
 test('the decoder attributes packets to the read that completed the frame (#239)', () => {
-  const codec = new MavlinkCodec({ bundle: common, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle: common });
   const f1 = heartbeatFrom(1);
   const f2 = heartbeatFrom(2);
 

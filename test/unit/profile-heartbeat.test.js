@@ -38,7 +38,7 @@ test('companion HEARTBEAT encodes to MAV_TYPE_ONBOARD_CONTROLLER (18) (#106)', {
   const RED = new MockRED().loadNodes();
   const bundle = loadDialect('ardupilotmega');
   const id = makeIdentity(RED, { role: 'companion' });
-  const codec = new MavlinkCodec({ bundle, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle });
   const buf = enc(codec, 'HEARTBEAT', id.getHeartbeatFields(), { sysid: 1, compid: 191 });
 
   const splitter = new MavLinkPacketSplitter({}, { magicNumbers: bundle.magicNumbers });
@@ -58,7 +58,7 @@ test('encoded HEARTBEAT round-trips mavlink_version = 3 (#66)', { timeout: 2000 
   const RED = new MockRED().loadNodes();
   const bundle = loadDialect('ardupilotmega');
   const id = makeIdentity(RED, { role: 'gcs' });
-  const codec = new MavlinkCodec({ bundle, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle });
   const buf = enc(codec, 'HEARTBEAT', id.getHeartbeatFields(), { sysid: 1, compid: 1 });
 
   const splitter = new MavLinkPacketSplitter({}, { magicNumbers: bundle.magicNumbers });

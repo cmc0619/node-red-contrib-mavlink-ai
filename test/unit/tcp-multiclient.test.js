@@ -27,7 +27,7 @@ const common = loadDialect('common');
  * @returns {Buffer} the encoded frame
  */
 function heartbeatFrom(sysid) {
-  const codec = new MavlinkCodec({ bundle: common, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle: common });
   return enc(codec, 'HEARTBEAT', { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 }, { sysid, compid: 1 });
 }
 
@@ -39,7 +39,7 @@ function heartbeatFrom(sysid) {
  */
 function tcpServerConnection(RED) {
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
+    id: 'p1', name: 'Vehicle', dialect: 'common', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {

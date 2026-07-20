@@ -593,14 +593,14 @@ module.exports = function registerMavlinkAiConnection(RED) {
 
     /**
      * Build a dialect codec for a Vehicle Profile. Codecs carry no identity or
-     * channel state (#192) — just the dialect bundle and the profile's version
-     * preference.
+     * channel state (#192) — just the dialect bundle. Every outbound frame is
+     * MAVLink 2; there is no version preference.
      *
      * @param {object} profile  a valid Vehicle Profile config node
      * @returns {MavlinkCodec}
      */
     function buildCodec(profile) {
-      return new MavlinkCodec({ bundle: profile.getDialect(), version: profile.mavlinkVersion });
+      return new MavlinkCodec({ bundle: profile.getDialect() });
     }
 
     /**
@@ -1637,35 +1637,6 @@ module.exports = function registerMavlinkAiConnection(RED) {
     }
 
     /**
-     * Throttled warning for a mixed-version broadcast whose version group
-     * failed while its sibling went out (#199 review): the broadcast counts
-     * as sent (best-effort), but an entire wire-version group silently
-     * missing heartbeats/commands is a half-dead fleet link. Same throttle
-     * shape as the transport's sendPartialFailure warning (#148): warn when
-     * the failing set changes or once a minute while it persists —
-     * broadcasts fire at heartbeat rate.
-     *
-     * @param {Array<{version: string, reason: *}>} failed
-     */
-    let lastMixedWarnKey = '';
-    let lastMixedWarnAt = 0;
-    node._warnMixedPartialFailure = (failed) => {
-      const key = failed
-        .map(({ version, reason }) => `${version}:${(reason && (reason.code || reason.message)) || reason}`)
-        .sort()
-        .join('|');
-      const now = Date.now();
-      if (key === lastMixedWarnKey && now - lastMixedWarnAt < 60000) {
-        return;
-      }
-      lastMixedWarnKey = key;
-      lastMixedWarnAt = now;
-      node.warn(
-        `mavlink-ai-connection '${node.name || node.id}': mixed-version broadcast partially failed (${key})`
-      );
-    };
-
-    /**
      * Encode and enqueue a normalized outbound message (§14.2), filling target
      * defaults from the effective Vehicle Profile and stamping the source
      * identity of the resolved Local Identity (#228).
@@ -1684,8 +1655,8 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (!message || typeof message !== 'object') {
         return Promise.reject(new MavlinkError('BAD_OUTBOUND', 'Outbound message must be an object.'));
       }
-      // The Vehicle Profile named on the message supplies the codec (dialect,
-      // version — #68) *and* the target defaults. It never supplies the source
+      // The Vehicle Profile named on the message supplies the codec (dialect
+      // — #68) *and* the target defaults. It never supplies the source
       // identity (#228): that resolves independently below. An explicit
       // reference that can't be resolved rejects rather than silently sending
       // as the default.
@@ -1749,14 +1720,10 @@ module.exports = function registerMavlinkAiConnection(RED) {
        *   - routing: an addressed packet goes to that sysid's learned udp endpoint
        *     (#21); a broadcast fans out to every learned peer instead of
        *     unicasting to the profile default.
-       *   - encoding: under `mavlinkVersion: 'auto'`, the effective version is
-       *     picked from the target sysid's detected version, so passing the
-       *     profile default target would frame an untargeted HEARTBEAT as that
-       *     peer's version (e.g. v2) and a learned v1-only vehicle would miss
-       *     it. With no target the encoder uses the link's detected default.
-       * A genuinely mixed v1/v2 fleet can't be reached by a single broadcast
-       * frame (one frame carries one magic byte), so that case branches below
-       * into one encode per detected version group (#199).
+       *   - encoding: an untargeted message stays untargeted on the wire instead
+       *     of picking up the profile default target.
+       * Every outbound frame is MAVLink 2, so one encode serves the whole fleet;
+       * legacy v1-only peers are read-only telemetry sources.
        */
       const routingTargetSystem = codec.addressesTarget(message.name) ? targetSystem : undefined;
       const { sysid, compid } = identity.getIdentity();
@@ -1782,104 +1749,6 @@ module.exports = function registerMavlinkAiConnection(RED) {
          */
         exactFloatBits: message.exactFloatBits
       };
-      /**
-       * Broadcast to a mixed v1/v2 fleet (#199): one frame per detected wire
-       * version, each routed to exactly that group's sysids, with a
-       * version-suffixed coalesce key so the two heartbeat variants don't
-       * cancel each other in the queue. Applies only when the version can
-       * actually vary AND the split can be delivered — a broadcast
-       * (untargeted, or explicitly addressed to target_system 0, which the
-       * transport also fans to every peer), 'auto' versioning, no signing
-       * (signed frames are v2-only by spec, so a signed fleet is never
-       * version-mixed on the wire), and a transport that can route by sysid
-       * (udp in peer-learning mode). On a shared medium — serial, tcp, udp
-       * with a fixed destination — both encodings would land on the same
-       * stream and MAVLink2 peers (which parse v1 frames too) would see the
-       * broadcast twice, so those keep the single-encode path. Everything
-       * else — the common single-version fleet included — keeps the
-       * original one-encode path byte for byte.
-       */
-      const isBroadcast = routingTargetSystem === undefined || Number(routingTargetSystem) === 0;
-      let mixed =
-        isBroadcast && !signing && codec.version === 'auto' && node._transport && node._transport.canRouteBySysid
-          ? node._link.mixedVersionGroups()
-          : null;
-      /**
-       * Even in peer-learning mode both version groups can sit behind ONE
-       * learned endpoint (a MAVLink router/bridge), and an endpoint must
-       * receive exactly one frame — never both encodings, which would
-       * double-deliver to MAVLink2 peers (they parse v1 frames too). Since
-       * v1 framing is parseable by every peer, v2 sysids whose endpoint is
-       * shared with the v1 group ride the v1 frame; sysids on their own
-       * endpoints keep their own version, so a bridge elsewhere in the
-       * fleet never degrades delivery to disjoint peers (#303 review).
-       */
-      if (mixed && typeof node._transport.endpointKeyForSysid === 'function') {
-        const v1keys = new Set(
-          mixed.v1.map((s) => node._transport.endpointKeyForSysid(s)).filter((k) => k != null)
-        );
-        const bridgedV2 = [];
-        const pureV2 = [];
-        for (const s of mixed.v2) {
-          const key = node._transport.endpointKeyForSysid(s);
-          (key != null && v1keys.has(key) ? bridgedV2 : pureV2).push(s);
-        }
-        if (bridgedV2.length > 0) {
-          mixed = { v1: [...mixed.v1, ...bridgedV2], v2: pureV2 };
-        }
-      }
-      if (mixed) {
-        const buffers = [];
-        try {
-          for (const version of ['v1', 'v2']) {
-            /** A group emptied by the bridge merge above sends nothing. */
-            if (mixed[version].length === 0) {
-              continue;
-            }
-            buffers.push({
-              version,
-              sysids: mixed[version],
-              buffer: codec.encode(message.name, fields, { ...encodeOpts, forceVersion: version })
-            });
-          }
-        } catch (err) {
-          return Promise.reject(toMavlinkError(err, 'ENCODE_FAILED'));
-        }
-        /**
-         * Best-effort, mirroring UdpTransport#send's own fan-out (#148,
-         * CodeRabbit review): one group's frame may already be on the wire
-         * when the other's enqueue fails, so rejecting the whole send would
-         * invite a retry that duplicates delivery to the group that
-         * succeeded. The send resolves while at least one group went out
-         * and rejects only when every group failed. A PARTIAL failure —
-         * an entire wire-version group missing the broadcast — is a
-         * half-dead fleet link and is surfaced as a throttled warning,
-         * like the transport's own partial fan-out failures.
-         */
-        return Promise.allSettled(
-          buffers.map(({ version, sysids: groupSysids, buffer: groupBuffer }) =>
-            node._queue.enqueue(
-              groupBuffer,
-              options.priority,
-              { sysids: groupSysids },
-              {
-                coalesceKey: options.coalesceKey != null ? `${options.coalesceKey}:${version}` : undefined,
-                onWrite: () => logProtocolDebug(profile, 'send', message.name, undefined, undefined)
-              }
-            )
-          )
-        ).then((results) => {
-          const failed = results
-            .map((r, i) => (r.status === 'rejected' ? { version: buffers[i].version, reason: r.reason } : null))
-            .filter(Boolean);
-          if (failed.length === results.length) {
-            throw failed[0].reason;
-          }
-          if (failed.length > 0) {
-            node._warnMixedPartialFailure(failed);
-          }
-        });
-      }
       let buffer;
       try {
         buffer = codec.encode(message.name, fields, encodeOpts);
@@ -2026,17 +1895,6 @@ module.exports = function registerMavlinkAiConnection(RED) {
      */
     function onPacket(packet, origin) {
       const header = packet.header;
-      /**
-       * The peer's wire version, from the protocol instance the parser
-       * attaches to every packet (its START_BYTE static) — node-mavlink's v1
-       * parser never sets header.magic, so the header field cannot be used
-       * (#138). Recorded below on the shared LinkState (#192), only after
-       * routing and signature policy accept the packet — an unsigned forged v1
-       * frame passes CRC without any secret, so learning the version here would
-       * let it silently downgrade outbound framing for a trusted peer even
-       * under requireSignature.
-       */
-      const wireMagic = packet.protocol.constructor.START_BYTE;
 
       /**
        * 1. Route on the framed header (sysid/compid) before decoding. A
@@ -2108,18 +1966,6 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (origin && node._transport && typeof node._transport.confirmPeer === 'function') {
         node._transport.confirmPeer(header.sysid, { address: origin.remoteAddress, port: origin.remotePort });
       }
-
-      /**
-       * Track the peer's wire version, keyed by its sysid, so an "auto"
-       * profile frames outbound packets the way *that* peer speaks — a v1-only
-       * vehicle ignores v2 frames, and a mixed fleet must not have one peer's
-       * version flip framing for all of them (#69). Recorded once on the
-       * connection's LinkState, which every codec on this link shares (#192),
-       * and learned at the same trust boundary as confirmPeer (#85): only a
-       * packet that passed routing and the signature policy may influence
-       * outbound framing.
-       */
-      node._link.noteInboundMagic(wireMagic, header.sysid);
 
       // 4. If the matched dialect has no definition for this message id, or
       //    decoding throws, emit a structured decode error with raw metadata
@@ -2304,13 +2150,9 @@ module.exports = function registerMavlinkAiConnection(RED) {
     /**
      * Drop every heartbeat frame currently queued for `identityId` — the
      * bare `heartbeat:<id>` coalesce key `send()` normally uses, *and* any
-     * `:`-suffixed variant. The variant matters because the mixed v1/v2
-     * broadcast path (#199) re-keys a coalesced frame per wire version
-     * (`options.coalesceKey` becomes `<key>:v1` / `<key>:v2`) when a UDP
-     * peer-learning `auto`-mode connection has learned mixed-version peers,
-     * so a heartbeat can end up queued under `heartbeat:<id>:v1` /
-     * `heartbeat:<id>:v2` rather than the bare key an exact-match eviction
-     * would look for (#225 review).
+     * `:`-suffixed variant. No current sender produces suffixed keys, but the
+     * predicate stays prefix-anchored so a queued frame can never survive
+     * eviction because of an unexpected key shape.
      *
      * The `=== base || startsWith(base + ':')` predicate is anchored on the
      * literal `:` separator so a shared numeric prefix can never false-match
@@ -2373,7 +2215,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * identity is superseded rather than stacked) or, on fatal, evict any
      * heartbeat for this identity already sitting in the queue via
      * `node._evictQueuedHeartbeats` (covers the bare coalesce key and any
-     * mixed v1/v2 `:`-suffixed variant, #225 review).
+     * `:`-suffixed variant, #225 review).
      *
      * The eviction matters because the enqueue-time supersede in `send()`
      * never runs on a fatal tick (it returns before calling `send`): a

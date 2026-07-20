@@ -43,7 +43,7 @@ const tick = (ms = 50) => new Promise((r) => setTimeout(r, ms));
 test('peer learning requires validated packets (#85)', async (t) => {
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'P', dialect: 'common', mavlinkVersion: 'v2',
+    id: 'p1', name: 'P', dialect: 'common',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {
@@ -58,8 +58,8 @@ test('peer learning requires validated packets (#85)', async (t) => {
   const port = addr.port;
 
   const bundle = loadDialect('common');
-  const fromSys1 = new MavlinkCodec({ bundle, version: 'v2' });
-  const fromSys2 = new MavlinkCodec({ bundle, version: 'v2' });
+  const fromSys1 = new MavlinkCodec({ bundle });
+  const fromSys2 = new MavlinkCodec({ bundle });
   const sock = dgram.createSocket('udp4');
   await new Promise((r) => sock.bind(0, '127.0.0.1', r));
   t.after(async () => {
@@ -111,7 +111,7 @@ test('peer learning requires validated packets (#85)', async (t) => {
 test('signature-rejected packets do not teach a peer mapping (#85)', async (t) => {
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p_sig', name: 'Sig', dialect: 'common', mavlinkVersion: 'v2',
+    id: 'p_sig', name: 'Sig', dialect: 'common',
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {
@@ -129,8 +129,8 @@ test('signature-rejected packets do not teach a peer mapping (#85)', async (t) =
 
   const bundle = loadDialect('common');
   const signingKey = MavLinkPacketSignature.key('the-shared-secret');
-  const unsigned = new MavlinkCodec({ bundle, version: 'v2' });
-  const signed = new MavlinkCodec({ bundle, version: 'v2' });
+  const unsigned = new MavlinkCodec({ bundle });
+  const signed = new MavlinkCodec({ bundle });
   const sock = dgram.createSocket('udp4');
   await new Promise((r) => sock.bind(0, '127.0.0.1', r));
   t.after(async () => {

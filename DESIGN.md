@@ -215,8 +215,8 @@ config nodes so each question has one owner.
 | Concern | Config node | Owns |
 | --- | --- | --- |
 | Who Node-RED **is** on the wire | `mavlink-ai-local-identity` | source SysID/CompID, role preset (GCS / companion / custom), HEARTBEAT identity (`MAV_TYPE`, autopilot, base_mode/status defaults) |
-| What vehicle is **addressed** | `mavlink-ai-vehicle` (Vehicle Profile) | dialect, firmware, MAVLink version preference, default target SysID/CompID, vehicle family (mode tables + parameter metadata), mission preferences |
-| How traffic **moves** and is **secured** | `mavlink-ai-connection` | transport/session, routing, outbound queue, mission locks, heartbeat scheduling, **signing credential + sign/verify/require policy + link id**, and all per-link channel state (sequence numbers, monotonic signing timestamps, inbound replay memory, detected peer wire versions) |
+| What vehicle is **addressed** | `mavlink-ai-vehicle` (Vehicle Profile) | dialect, firmware, default target SysID/CompID, vehicle family (mode tables + parameter metadata), mission preferences |
+| How traffic **moves** and is **secured** | `mavlink-ai-connection` | transport/session, routing, outbound queue, mission locks, heartbeat scheduling, **signing credential + sign/verify/require policy + link id**, and all per-link channel state (sequence numbers, monotonic signing timestamps, inbound replay memory) |
 
 A Vehicle Profile must **never** determine or change the local source identity.
 A Connection must **never** silently choose among multiple identities. Signing —
@@ -239,7 +239,7 @@ mavlink-ai-local-identity        mavlink-ai-vehicle (Vehicle Profile)
              ├── default Local Identity   (required, exactly one)
              ├── additional identities    (advanced, opt-in, disabled by default)
              ├── signing key + policy + link id   (5.5.8)
-             └── LinkState: seq / signing-ts / replay / detected-version
+             └── LinkState: seq / signing-ts / replay
 ```
 
 Many Connections may reuse one Local Identity. Multiple Local Identity config
@@ -333,8 +333,7 @@ the `LinkState`, which keys:
 - outbound **sequence** numbers by `(local sysid, local compid)`;
 - monotonic outbound signing **timestamps** by `(local sysid, local compid, link id)`;
 - inbound **replay** memory by verification key (so a profile/identity rebuild
-  under the same key never resets it);
-- detected peer **wire versions** by peer sysid.
+  under the same key never resets it).
 
 `LinkState` lives exactly as long as the transport/session — it survives profile
 and identity edits and is reset only on deactivation.
@@ -365,7 +364,7 @@ never transmits with a guessed identity.
 ## 6. Vehicle Profile Config Node
 
 The Vehicle Profile config node (`mavlink-ai-vehicle`) describes the ADDRESSED
-vehicle: its dialect, firmware, MAVLink version preference, target ids,
+vehicle: its dialect, firmware, target ids,
 vehicle family, and mission preferences. Source identity and heartbeat
 identity live on `mavlink-ai-local-identity`; signing lives on the Connection
 ([section 5.5](#55-architecture-local-identity-vehicle-profile-connection-228)).
@@ -384,7 +383,6 @@ Responsibilities:
 - Profile name.
 - Vehicle family (for mode tables / parameter metadata).
 - Dialect selection.
-- MAVLink version preference.
 - Default target system.
 - Default target component.
 - Preferred mission item message type.
@@ -401,7 +399,6 @@ Name
 Vehicle family: generic | copter | plane | rover | boat | sub | antenna-tracker
 Dialect: ardupilotmega | common | minimal | custom
 Custom dialect path
-MAVLink version: auto | v1 | v2
 Default target system
 Default target component
 Preferred mission item type: MISSION_ITEM_INT | MISSION_ITEM
@@ -413,11 +410,15 @@ Default profile values:
 ```text
 Vehicle family: generic
 Dialect: ardupilotmega
-MAVLink version: auto
 Default target system: 1
 Default target component: 1
 Preferred mission item type: MISSION_ITEM_INT
 ```
+
+There is no MAVLink version preference: transmit is MAVLink 2 only
+([section 16](#16-protocol-layer)), and inbound MAVLink 1 frames still decode
+as read-only telemetry. A saved profile that still contains a `mavlinkVersion`
+key is invalid and errors at deploy — there is no silent conversion.
 
 The defaults should make the module useful against a single ArduPilot-style
 vehicle first. The GCS-side identity defaults (sysid 255 / compid 190,
@@ -466,7 +467,7 @@ Who Node-RED itself is on the wire is a different question with a different owne
 > **v3 (#228):** in addition to transport/session state, the connection now
 > requires exactly one **default Local Identity**, owns the signing **link id**,
 > and owns all per-link channel state via `LinkState` (sequence, signing
-> timestamps, replay, detected versions). Additional local identities transmit
+> timestamps, replay). Additional local identities transmit
 > only through an explicit, disabled-by-default binding list. See
 > [section 5.5](#55-architecture-local-identity-vehicle-profile-connection-228).
 
@@ -1284,13 +1285,19 @@ Silent fallback is evil because it creates fake success. The node looks alive wh
 ## 16. Protocol Layer
 
 > **v3 (#192, #228):** the codec is dialect-scoped only. Source identity,
-> sequence numbers, signing timestamps, replay memory, and detected peer wire
-> versions are **not** codec state — they live in the connection-owned
+> sequence numbers, signing timestamps, and replay memory are **not** codec
+> state — they live in the connection-owned
 > `LinkState` (`lib/protocol/link-state.js`) and are passed to `encode()` per
 > call. Inbound signature verification is the pure module function
 > `verifyInboundPacket(packet, policy)`. This is what keeps one logical
 > `(sysid, compid, link id)` stream correct across routed profiles and codec
 > rebuilds. See [section 5.5.8](#558-signing-and-channel-state-ownership-192).
+
+**MAVLink 2 transmit only.** Every outbound frame is MAVLink 2 — there is no
+version selection, no per-peer version detection, and no per-version-group
+broadcast. Inbound MAVLink 1 (`0xFE`) frames still decode through the same
+splitter/parser, so legacy peers remain read-only telemetry sources; nothing
+is ever encoded back onto the wire as v1.
 
 Protocol code should be isolated behind a wrapper.
 

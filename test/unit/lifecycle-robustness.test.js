@@ -81,7 +81,7 @@ test('mavlink-ai-out close still signals done when the connection dereference th
 test('connection close completes (done) even when decoder teardown throws (#140)', async (t) => {
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'Vehicle', dialect: 'common', mavlinkVersion: 'v2',
+    id: 'p1', name: 'Vehicle', dialect: 'common', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.create('mavlink-ai-local-identity', {
@@ -96,7 +96,7 @@ test('connection close completes (done) even when decoder teardown throws (#140)
 
   /** The decoder is built lazily on first inbound datagram, so feed one HEARTBEAT. */
   const hb = enc(
-    new MavlinkCodec({ bundle: loadDialect('common'), version: 'v2' }),
+    new MavlinkCodec({ bundle: loadDialect('common') }),
     'HEARTBEAT',
     { type: 6, autopilot: 8, base_mode: 0, custom_mode: 0, system_status: 4 },
     { sysid: 1, compid: 1 }

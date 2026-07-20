@@ -60,8 +60,8 @@ resolved design decisions, not open work.)
 
 ## Features
 
-- **MAVLink v1/v2 framing** with per-peer version selection (`v1` / `v2` /
-  `auto` on the profile).
+- **MAVLink 2 framing** on every outbound frame. Inbound MAVLink 1 frames
+  still decode, so legacy peers remain read-only telemetry sources.
 - **Multiple connection types**: UDP (in/out/peer), TCP (client/server), and
   optional/lazy-loaded serial.
 - **Three-node architecture (#228)**: **Local Identity** (source ids, heartbeat,
@@ -71,7 +71,7 @@ resolved design decisions, not open work.)
   multiple participants.
 - **Connection-based runtime**: one connection owns transport, decode, routing,
   subscriptions, queueing, heartbeat, locks, peer state, and per-link channel
-  state (sequence, signing timestamps, replay, detected versions).
+  state (sequence, signing timestamps, replay).
 - **Bundled and custom XML dialects**: use bundled dialects or compile local or
   mounted MAVLink XML dialects at runtime, with a downloadable official XML
   catalog.
@@ -278,7 +278,6 @@ What vehicle is being addressed and how its protocol metadata is interpreted.
 Target-facing only; it owns no local identity, heartbeat, or signing.
 
 - dialect: bundled, or custom XML (local path or a catalog download)
-- MAVLink version: v1, v2, or auto
 - vehicle family: copter, plane, rover, boat, sub, tracker, or generic
   (drives ArduPilot mode tables and parameter metadata)
 - firmware: generic, ArduPilot, PX4
@@ -540,7 +539,7 @@ fleets). Built on the protocol library's signing primitives (no custom crypto
 layer):
 
 - **Sign outbound** — appends a valid signature to every packet sent on this
-  connection; forces MAVLink 2 framing, since signed frames are v2-only. Every
+  connection; all outbound frames are MAVLink 2, which signing requires. Every
   identity transmitting on the connection signs with the connection's key.
 - **Verify inbound** — checks signatures on received signed packets; a bad
   signature is rejected and surfaced on the In node's errors output as

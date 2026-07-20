@@ -19,7 +19,7 @@ const { enc } = require('../helpers/v3-config');
  * the success path.
  */
 
-const codec = () => new MavlinkCodec({ bundle: loadDialect('common'), version: 'v2' });
+const codec = () => new MavlinkCodec({ bundle: loadDialect('common') });
 
 test('an out-of-range integer names the field, type and value (#153)', () => {
   assert.throws(

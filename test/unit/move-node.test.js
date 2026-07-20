@@ -21,7 +21,6 @@ function setup(moveConfig, { withConnection = false } = {}) {
     id: 'p1',
     name: 'Copter',
     dialect: 'ardupilotmega',
-    mavlinkVersion: 'v2',
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   });
@@ -290,7 +289,7 @@ test('redeploying the referenced profile (flows:started, new config node) tears 
    * i.e. this node's referenced config was redeployed. `close` never fires, but
    * the stream must not keep flying with the stale state. */
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', 
     sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.events.emit('flows:started');
@@ -391,7 +390,7 @@ test('a firmware-unsupported setpoint raises an advisory warning but still sends
    * pass it explicitly: ArduPilot + force preset must warn. */
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', firmware: 'ardupilot', mavlinkVersion: 'v2',
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', firmware: 'ardupilot', 
     sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   const node = RED.create('mavlink-ai-move', {
@@ -426,7 +425,7 @@ test('missing profile emits MISSING_PROFILE', async () => {
 test('with no delivery set the node fails closed with DELIVERY_UNSET on port 1 (#207)', async () => {
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   const node = RED.create('mavlink-ai-move', { id: 'm3', profile: 'p1', coordinate: 'local', preset: 'position', north: 1, east: 0, altitude: 1 }); // no delivery
@@ -444,7 +443,7 @@ test('with no delivery set the node fails closed with DELIVERY_UNSET on port 1 (
 test('move node badges a construct-time DELIVERY_UNSET before any input (#308)', () => {
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   const node = RED.create('mavlink-ai-move', { id: 'm4', profile: 'p1', coordinate: 'local', preset: 'position' }); // no delivery
@@ -460,7 +459,7 @@ test('move node badges a construct-time DELIVERY_UNSET before any input (#308)',
 test('move node keeps the DELIVERY_UNSET badge across a flows:started refresh (#308 G1)', () => {
   const RED = new MockRED().loadNodes();
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', 
     defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   const node = RED.create('mavlink-ai-move', { id: 'm5', profile: 'p1', coordinate: 'local', preset: 'position' }); // no delivery
@@ -511,7 +510,7 @@ test('move node clears a stale "invalid profile" badge when the profile is fixed
   assert.ok(!node.profile);
 
   RED.create('mavlink-ai-vehicle', {
-    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', 
     sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   RED.events.emit('flows:started');

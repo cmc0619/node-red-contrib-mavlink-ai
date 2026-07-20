@@ -11,9 +11,9 @@ const { registerEditorApi } = require('../lib/editor-api');
  * mavlink-ai-vehicle — the target-facing **Vehicle Profile** (issue #228).
  *
  * A Vehicle Profile describes the vehicle being addressed and how its protocol
- * metadata is interpreted: dialect, firmware, MAVLink version preference,
- * default target ids, vehicle family (for mode tables and parameter metadata),
- * and mission preferences.
+ * metadata is interpreted: dialect, firmware, default target ids, vehicle
+ * family (for mode tables and parameter metadata), and mission preferences.
+ * Every outbound frame is MAVLink 2 — there is no version preference.
  *
  * It deliberately owns NOTHING about the local side (#195, #228):
  *
@@ -51,11 +51,19 @@ module.exports = function registerMavlinkAiProfile(RED) {
     node.firmware = config.firmware || 'generic';
     node.dialect = config.dialect || 'ardupilotmega';
     node.customDialectPath = config.customDialectPath || '';
-    node.mavlinkVersion = config.mavlinkVersion || 'auto';
 
     // Target ids are uint8s on the wire (#90). Validate here — not just in the
     // editor — so imported/API-created flows get the same enforcement.
     const targetProblems = [];
+    // Clean break (rule 7): mavlinkVersion was removed when outbound became
+    // MAVLink-2-only. A saved config still carrying the key is an invalid
+    // profile — no silent conversion, same surfacing as the other config
+    // problems below.
+    if (config.mavlinkVersion !== undefined) {
+      targetProblems.push(
+        "mavlinkVersion was removed — MAVLink 2 is always used. Remove the mavlinkVersion key from this node's saved config (re-create the node or edit the flow JSON)"
+      );
+    }
     /**
      * Validate one uint8 target config value, collecting the problem instead
      * of throwing so every bad field is reported at once.
@@ -116,7 +124,6 @@ module.exports = function registerMavlinkAiProfile(RED) {
       vehicleFamily: node.vehicleFamily,
       firmware: node.firmware,
       dialect: node.dialect,
-      mavlinkVersion: node.mavlinkVersion,
       defaultTargetSystem: node.defaultTargetSystem,
       defaultTargetComponent: node.defaultTargetComponent,
       preferredMissionItemType: node.preferredMissionItemType,

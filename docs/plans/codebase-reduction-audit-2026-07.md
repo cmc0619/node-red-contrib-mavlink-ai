@@ -5,7 +5,7 @@ Date: 2026-07-20. Method: six parallel read-only audits covering all of `lib/`, 
 ## Headline conclusions
 
 1. **Goal 2 (node-mavlink duplication) is nearly a null result — the migration already happened.** `lib/protocol/mavlink-codec.js` already routes framing, parsing, serialization, CRC (`x25crc`), and signing through node-mavlink (`MavLinkPacketSplitter/Parser`, `MavLinkProtocolV1/V2`, `MavLinkPacketSignature`). Transports, runtime, routing, swarm, state, and nodes contain zero wire-layer code. The remaining hand-rolled wire code patches **verified upstream gaps**, not duplication:
-   - `truncateV1Extensions` — upstream v1 serialize writes extension bytes; must stay.
+   - ~~`truncateV1Extensions`~~ — **REMOVED 2026-07-20 by maintainer decision** (v2-transmit-only): outbound frames are MAVLink 2 only, so the v1 serialize path that wrote extension bytes no longer exists.
    - `ensureMinV2Payload` — upstream truncation can yield 0; must stay.
    - `applyExactFloatBits` — PX4 byte-union / JS NaN canonicalization; project-specific.
    - ~~`ResyncingPacketSplitter` + `PACKET_VALIDATION` mirror~~ — **REMOVED 2026-07-20 by maintainer decision**: stock splitter's UNKNOWN length-skip accepted (clean-link deployment assumption).
@@ -108,7 +108,7 @@ Each of these is guarded at deploy time by `validateConnectionConfig`, so the ru
 
 ## Upstream opportunity (not removable now)
 
-The codec patches (`ResyncingPacketSplitter`, `truncateV1Extensions`, `ensureMinV2Payload`, `applyExactFloatBits`) fix confirmed node-mavlink defects — the splitter test's own comment says it belongs upstream. If upstreamed: ~130 production lines + ~120 test lines. Directional only.
+The remaining codec patches (`ensureMinV2Payload`, `applyExactFloatBits`) fix confirmed node-mavlink gaps. If upstreamed: ~80 production lines + ~70 test lines. Directional only. (`ResyncingPacketSplitter` and `truncateV1Extensions` were removed 2026-07-20 — see headline annotations.)
 
 ## Deliberately NOT flagged (verified reachable — do not "clean up")
 

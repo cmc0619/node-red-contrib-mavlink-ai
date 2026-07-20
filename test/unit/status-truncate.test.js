@@ -45,7 +45,6 @@ test('a node applies truncateStatus to a long badge end-to-end (#221)', async ()
     id: 'p1',
     name: 'Copter',
     dialect: 'ardupilotmega',
-    mavlinkVersion: 'v2',
     defaultTargetSystem: 1,
     defaultTargetComponent: 1
   });

@@ -18,7 +18,6 @@ function setup(buildConfig) {
     id: 'p1',
     name: 'Copter',
     dialect: 'ardupilotmega',
-    mavlinkVersion: 'v2',
     defaultTargetSystem: 3,
     defaultTargetComponent: 4
   });

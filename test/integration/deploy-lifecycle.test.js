@@ -84,7 +84,6 @@ const profileConfig = (id, name, dialect, extra = {}) => ({
   name,
   vehicleFamily: 'generic',
   dialect,
-  mavlinkVersion: 'v2',
   defaultTargetSystem: 1,
   defaultTargetComponent: 1,
   ...extra
@@ -125,13 +124,13 @@ const routedConnectionConfig = (port, routes) =>
 
 /** A GNSS_INTEGRITY (id 441) frame — decodable only by the development dialect. */
 function gnssIntegrityFrame(sysid = 1) {
-  const codec = new MavlinkCodec({ bundle: loadDialect('development'), version: 'v2' });
+  const codec = new MavlinkCodec({ bundle: loadDialect('development') });
   return enc(codec, 'GNSS_INTEGRITY', {}, { sysid, compid: 1 });
 }
 
 /** An ATTITUDE (id 30) frame — decodable by ardupilotmega/common, not minimal. */
 function attitudeFrame(sysid = 1) {
-  const codec = new MavlinkCodec({ bundle: loadDialect('ardupilotmega'), version: 'v2' });
+  const codec = new MavlinkCodec({ bundle: loadDialect('ardupilotmega') });
   return enc(codec, 'ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }, { sysid, compid: 1 });
 }
 

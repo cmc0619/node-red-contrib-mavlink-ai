@@ -30,9 +30,9 @@ const bundle = loadDialect('common');
  * @returns {object}
  */
 function roundTripFields(name, fields) {
-  const encCodec = new MavlinkCodec({ bundle, version: 'v2' });
+  const encCodec = new MavlinkCodec({ bundle });
   const buf = encCodec.encode(name, fields, { sysid: 1, compid: 1, link: new LinkState() });
-  const dec = new MavlinkCodec({ bundle, version: 'v2' });
+  const dec = new MavlinkCodec({ bundle });
   let out = null;
   let err = null;
   const d = dec.createDecoder(

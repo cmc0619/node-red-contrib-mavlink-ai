@@ -189,7 +189,7 @@ real minimal support rather than a "not supported" note.
 
 - [x] **Sign outbound**: the codec builds a V2 `IFLAG_SIGNED` frame and appends
   the signature block (node-mavlink's own `sendSigned` sequence) when the
-  profile enables it. Signing forces MAVLink 2 framing.
+  profile enables it. All outbound frames are MAVLink 2, which signing requires.
 - [x] **Verify inbound**: the connection checks `packet.signature` before
   routing/decoding and rejects bad/missing signatures per policy
   (`signature-invalid` / `signature-required` / `signature-no-key`), surfaced on

@@ -324,7 +324,7 @@ class VirtualFleet extends EventEmitter {
     super();
     this.dialect = opts.dialect || 'ardupilotmega';
     const bundle = loadDialect(this.dialect);
-    this.codec = new MavlinkCodec({ bundle, version: 'v2' });
+    this.codec = new MavlinkCodec({ bundle });
 
     const count = requireIntInRange(opts.count !== undefined ? opts.count : 3, 'count', 1, 255);
     const baseSysid = requireIntInRange(opts.baseSysid !== undefined ? opts.baseSysid : 1, 'baseSysid', 1, 255);

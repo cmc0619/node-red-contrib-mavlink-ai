@@ -298,7 +298,6 @@
     "dialect": "common",
     "dialectSource": "bundled",
     "customDialectPath": "",
-    "mavlinkVersion": "auto",
     "defaultTargetSystem": 1,
     "defaultTargetComponent": 1,
     "preferredMissionItemType": "MISSION_ITEM_INT",

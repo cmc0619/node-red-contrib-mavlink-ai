@@ -32,7 +32,7 @@ const dev = loadDialect('development');
  * @returns {Buffer} the encoded frame
  */
 function attitudeFrom(sysid) {
-  const codec = new MavlinkCodec({ bundle: ardu, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle: ardu });
   return enc(codec, 'ATTITUDE', { roll: 0, pitch: 0, yaw: 0 }, { sysid, compid: 1 });
 }
 
@@ -46,7 +46,7 @@ function attitudeFrom(sysid) {
  * @returns {Buffer} the encoded frame
  */
 function gnssIntegrityFrom(sysid) {
-  const codec = new MavlinkCodec({ bundle: dev, version: 'v2' });
+  const codec = new MavlinkCodec({ bundle: dev });
   return enc(codec, 'GNSS_INTEGRITY', {}, { sysid, compid: 1 });
 }
 
@@ -65,7 +65,6 @@ function profile(RED, id, name, dialect, extra = {}) {
     id,
     name,
     dialect,
-    mavlinkVersion: 'v2',
     defaultTargetSystem: 1,
     defaultTargetComponent: 1,
     ...extra
