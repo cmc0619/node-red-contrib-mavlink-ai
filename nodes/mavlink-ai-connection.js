@@ -425,15 +425,21 @@ module.exports = function registerMavlinkAiConnection(RED) {
     // dark. With valid config the profile/identity checks below pass without
     // overwriting this; a genuinely broken config still surfaces its own error.
     let startInactive = node.disabled ? { code: 'DISABLED', message: 'Connection is disabled.' } : null;
-    if (!node.profile) {
-      fatal('NO_PROFILE', 'Connection has no Vehicle Profile configured.');
-      startInactive = { code: 'NO_PROFILE', message: 'Connection has no Vehicle Profile configured.' };
-    } else if (!node.profile.isValid()) {
-      const err = node.profile.getError();
-      const code = (err && err.code) || 'PROFILE_INVALID';
-      const message = `Vehicle Profile invalid: ${err && err.message}`;
-      fatal(code, message);
-      startInactive = { code, message };
+    // Guarded on `!startInactive` (first-failure-wins, matching the identity
+    // checks below) so a disabled connection stays DISABLED — grey badge, no
+    // fatal()/node.error() noise — instead of a broken profile overwriting it.
+    // In the enabled path `startInactive` is null here, so this runs unchanged.
+    if (!startInactive) {
+      if (!node.profile) {
+        fatal('NO_PROFILE', 'Connection has no Vehicle Profile configured.');
+        startInactive = { code: 'NO_PROFILE', message: 'Connection has no Vehicle Profile configured.' };
+      } else if (!node.profile.isValid()) {
+        const err = node.profile.getError();
+        const code = (err && err.code) || 'PROFILE_INVALID';
+        const message = `Vehicle Profile invalid: ${err && err.message}`;
+        fatal(code, message);
+        startInactive = { code, message };
+      }
     }
 
     /**
@@ -443,7 +449,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * actionable error instead of guessing (e.g. from a Vehicle Profile).
      */
     node.localIdentity = config.localIdentity ? RED.nodes.getNode(config.localIdentity) : null;
-    if (!isIdentityNode(node.localIdentity)) {
+    if (!startInactive && !isIdentityNode(node.localIdentity)) {
       const message =
         `Connection '${node.name || node.id}' has no Local Identity. Select one in Connection > Local Identity. ` +
         'If none exists, create a GCS, Companion, or Custom Local Identity first.';
@@ -451,7 +457,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       if (!startInactive) {
         startInactive = { code: 'LOCAL_IDENTITY_REQUIRED', message };
       }
-    } else if (!node.localIdentity.isValid()) {
+    } else if (!startInactive && !node.localIdentity.isValid()) {
       const err = node.localIdentity.getError();
       const message = `Local Identity '${node.localIdentity.name || node.localIdentity.id}' is invalid: ${err && err.message}`;
       fatal('LOCAL_IDENTITY_INVALID', message);

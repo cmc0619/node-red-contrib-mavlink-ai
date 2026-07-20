@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { MockRED } = require('../helpers/mock-red');
-const { makeConnection } = require('../helpers/v3-config');
+const { makeConnection, makeIdentity } = require('../helpers/v3-config');
 const { badgeForState } = require('../../lib/util/status');
 
 /**
@@ -62,6 +62,24 @@ test('an enabled connection is unaffected (control)', (t) => {
   assert.strictEqual(connection.disabled, false);
   assert.strictEqual(connection._active, true);
   assert.ok(connection._transport, 'transport is created when enabled');
+});
+
+test('disabled wins over a missing profile — grey, not a red NO_PROFILE, no error log', (t) => {
+  const RED = new MockRED().loadNodes();
+  const identity = makeIdentity(RED);
+  // Disabled AND no Vehicle Profile: the disable must win — the operator turned
+  // it off, so it should not nag NO_PROFILE (grey badge, DISABLED rejection, and
+  // no fatal()/node.error() noise).
+  const connection = RED.create('mavlink-ai-connection', {
+    id: 'c-dis', name: 'Conn', profile: '', localIdentity: identity.id,
+    disabled: true, transport: 'udp', bindAddress: '127.0.0.1', bindPort: 0,
+    reconnect: false, heartbeat: false
+  });
+  t.after(() => RED.close(connection));
+
+  assert.strictEqual(connection.statusState, 'disabled');
+  assert.strictEqual(connection._inactiveError.code, 'DISABLED');
+  assert.strictEqual(connection.errors.length, 0, 'no NO_PROFILE error is logged');
 });
 
 test('badgeForState maps disabled to a grey badge', () => {
