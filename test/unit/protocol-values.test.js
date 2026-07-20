@@ -9,11 +9,34 @@ const { resolveInEnum } = require('../../lib/protocol/enum-resolver');
 const {
   requireEnumMember,
   enumMembers,
-  coreEnumMember
+  coreEnumMember,
+  bindEnumValues,
+  coreEnumValues
 } = require('../../lib/protocol/protocol-values');
 
 const ARDU = loadDialect('ardupilotmega');
 const CONTEXT = { dialect: ARDU.name, consumer: 'test' };
+
+test('bindEnumValues carries dialect and consumer context across lookups', () => {
+  const value = bindEnumValues(ARDU.enums, {
+    dialect: ARDU.name,
+    consumer: 'bound-test'
+  });
+  assert.strictEqual(value('MavCmd', 'COMPONENT_ARM_DISARM'), common.MavCmd.COMPONENT_ARM_DISARM);
+  assert.ok(value.members('MavResult').some((entry) => entry.name === 'ACCEPTED'));
+  assert.throws(
+    () => value('MavCmd', 'NOT_A_MEMBER'),
+    (err) =>
+      err.code === 'ENUM_VALUE_UNAVAILABLE' &&
+      err.context.dialect === ARDU.name &&
+      err.context.consumer === 'bound-test'
+  );
+});
+
+test('coreEnumValues resolves public core mappings through the same adapter', () => {
+  const value = coreEnumValues({ consumer: 'core-bound-test' });
+  assert.strictEqual(value('MavComponent', 'AUTOPILOT1'), minimal.MavComponent.AUTOPILOT1);
+});
 
 test('coreEnumMember resolves from node-mavlink core exports', () => {
   assert.strictEqual(
