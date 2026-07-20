@@ -82,6 +82,23 @@ test('disabled wins over a missing profile — grey, not a red NO_PROFILE, no er
   assert.strictEqual(connection.errors.length, 0, 'no NO_PROFILE error is logged');
 });
 
+test('disabled wins over an invalid transport config — grey, not a red error, no error log', (t) => {
+  const RED = new MockRED().loadNodes();
+  // Disabled AND a broken transport (TCP with neither a remote pair nor a bind
+  // port — no role at all): the go-live gate never runs, so the transport-config
+  // validation must not trip registerNoop and log TRANSPORT_CONFIG_INVALID — the
+  // node parks grey.
+  const { connection } = makeConnection(RED, {
+    disabled: true, transport: 'tcp',
+    bindPort: '', remoteHost: '', remotePort: ''
+  });
+  t.after(() => RED.close(connection));
+
+  assert.strictEqual(connection.statusState, 'disabled');
+  assert.strictEqual(connection._inactiveError.code, 'DISABLED');
+  assert.strictEqual(connection.errors.length, 0, 'no TRANSPORT_CONFIG_INVALID error is logged');
+});
+
 test('badgeForState maps disabled to a grey badge', () => {
   const badge = badgeForState('disabled', 'disabled');
   assert.strictEqual(badge.fill, 'grey');

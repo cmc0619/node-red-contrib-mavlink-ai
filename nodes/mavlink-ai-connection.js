@@ -473,7 +473,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
      * turn a config mistake into a *different* valid link id (#90), so reject.
      */
     node.signingLinkId = 0;
-    if (config.signingLinkId !== undefined && config.signingLinkId !== null && config.signingLinkId !== '') {
+    if (!startInactive && config.signingLinkId !== undefined && config.signingLinkId !== null && config.signingLinkId !== '') {
       const linkId = Number(config.signingLinkId);
       if (!Number.isInteger(linkId) || linkId < 0 || linkId > 255) {
         fatal(
@@ -498,7 +498,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
     node.verifyInbound = toBool(config.verifyInbound, false);
     node.requireSignature = toBool(config.requireSignature, false);
     const signingPassphrase = (node.credentials && node.credentials.signingPassphrase) || '';
-    if (node.signOutbound && !signingPassphrase) {
+    if (!startInactive && node.signOutbound && !signingPassphrase) {
       fatal(
         'SIGNING_NO_PASSPHRASE',
         "'Sign outbound' is enabled but no signing passphrase is set — refusing to start rather than send every frame unsigned while the operator believes traffic is authenticated."
@@ -587,7 +587,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
       serialPath: config.serialPath,
       serialBaud: config.serialBaud
     });
-    if (transportProblems.length) {
+    if (!startInactive && transportProblems.length) {
       fatal('TRANSPORT_CONFIG_INVALID', transportProblems.map((p) => p.message).join(' '));
       registerNoop(node);
       return;
