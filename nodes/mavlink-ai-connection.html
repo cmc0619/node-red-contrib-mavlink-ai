@@ -1,4 +1,16 @@
 <script type="text/javascript">
+  // #210: browser mirror of lib/util/numeric-bounds.js. Kept in sync by
+  // test/unit/numeric-bounds-editor-spec.test.js — edit both together.
+  function mavlinkNumericBounds() {
+    function isBlank(v) { return v === undefined || v === null || String(v).trim() === ''; }
+    return {
+      positive: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n > 0; },
+      nonNegativeInteger: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return Number.isInteger(n) && n >= 0; },
+      nonNegative: function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n >= 0; },
+      atLeast: function (min) { return function (v) { if (isBlank(v)) { return true; } var n = Number(v); return isFinite(n) && n >= min; }; },
+      integerAtLeast: function (min) { return function (v) { if (isBlank(v)) { return true; } var n = Number(v); return Number.isInteger(n) && n >= min; }; }
+    };
+  }
   (function () {
     // Transport field spec, mirrored from lib/transport/transport-fields.js so
     // the editor shows only the settings a protocol uses and flags an
@@ -322,7 +334,7 @@
         serialBaud: { value: 57600, validate: requiredNumberValidator('serialBaud') },
         reconnect: { value: true },
         heartbeat: { value: false },
-        heartbeatIntervalMs: { value: 1000, validate: RED.validators.number() },
+        heartbeatIntervalMs: { value: 1000, validate: function (v) { return mavlinkNumericBounds().atLeast(1000)(v); } },
         acceptedSysids: { value: '' },
         acceptedCompids: { value: '' },
         unmatchedPolicy: { value: 'default' },
