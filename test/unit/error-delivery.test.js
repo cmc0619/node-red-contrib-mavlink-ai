@@ -280,13 +280,13 @@ test('out node forwards a clamped msg.priority to the connection (#241)', async 
 
 test('move node: missing profile delivers one mavlink/error, done() clean (#285)', async () => {
   const RED = new MockRED().loadNodes();
-  const node = RED.create('mavlink-ai-move', { id: 'mv1' });
+  const node = RED.create('mavlink-ai-move', { id: 'mv1', delivery: 'build' });
   const { collected, err } = await RED.inject(node, { payload: { lat: 1, lon: 2, alt: 10 } });
   assert.strictEqual(err, undefined, 'done() without the error — Catch must not fire too');
   assert.strictEqual(collected.length, 1, 'exactly one error message');
-  assert.strictEqual(collected[0].topic, 'mavlink/error');
-  assert.strictEqual(collected[0].payload.code, 'MISSING_PROFILE');
-  assert.strictEqual(collected[0].payload.node, 'mavlink-ai-move');
+  assert.strictEqual(collected[0][1].topic, 'mavlink/error');
+  assert.strictEqual(collected[0][1].payload.code, 'MISSING_PROFILE');
+  assert.strictEqual(collected[0][1].payload.node, 'mavlink-ai-move');
 });
 
 test('payload node: missing profile delivers one mavlink/error, done() clean (#285)', async () => {

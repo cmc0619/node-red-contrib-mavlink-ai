@@ -4,6 +4,7 @@ const { buildSetpoint, setpointWarnings } = require('../lib/move/setpoint');
 const { toNum, toBool, firstDefined } = require('../lib/util/validation');
 const { MavlinkError, errorPayload, toMavlinkError } = require('../lib/util/errors');
 const { makeFail } = require('../lib/util/node-errors');
+const { DELIVERY, resolveDeliveryMode } = require('../lib/util/delivery');
 const { validateTargetSystem, validateTargetComponent } = require('../lib/util/field-validation');
 const { watchConfigBadge } = require('../lib/util/node-lifecycle');
 const { PRIORITY } = require('../lib/runtime/send-priority');
@@ -11,14 +12,17 @@ const { PRIORITY } = require('../lib/runtime/send-priority');
 /**
  * mavlink-ai-move.
  *
- * Friendly offboard/guided control node: emits (or sends) a
+ * Friendly offboard/guided control node: builds (or sends) a
  * `SET_POSITION_TARGET_LOCAL_NED` / `SET_POSITION_TARGET_GLOBAL_INT` setpoint
  * without the build node, hiding the inverted `type_mask` behind named presets
  * and the NED down-positive axis behind up-positive altitude/climb inputs.
  *
- * Like the command node, sending is optional: with a Connection the node sends
- * the setpoint directly (fire-and-forget — setpoints carry no ack); without
- * one it emits a `mavlink/send` message to wire into a mavlink-ai-out node.
+ * Delivery is explicit (#207): "Build only" hands the built setpoint to a
+ * downstream mavlink-ai-out node; "Send via connection" sends it directly and
+ * fire-and-forgets (setpoints carry no ack, so Move has no "await" mode, unlike
+ * command/payload); "Stream via connection" runs the existing continuous
+ * retransmit engine. Every mode emits on port 0 (product) with errors on
+ * port 1.
  */
 module.exports = function registerMavlinkAiMove(RED) {
   function MavlinkAiMoveNode(config) {
@@ -27,11 +31,17 @@ module.exports = function registerMavlinkAiMove(RED) {
 
     node.name = config.name;
     /**
-     * Resolves node.profile and keeps the "invalid profile" badge live across
-     * deploys, so a profile fixed after this node was deployed clears the badge.
+     * Resolves node.profile/node.connection and keeps their idle badges live
+     * across deploys, so a profile/connection fixed after this node was
+     * deployed clears the badge. The connection is only *needed* for Send/
+     * Stream delivery (Build only hands mavlink/send to a downstream Out
+     * node), so a missing connection is badged only in those modes (#207).
      */
-    watchConfigBadge(RED, node, config, { profile: 'required' });
-    node.connection = config.connection ? RED.nodes.getNode(config.connection) : null;
+    watchConfigBadge(RED, node, config, {
+      profile: 'required',
+      connection: 'optional',
+      connectionRequiredWhen: () => config.delivery === DELIVERY.SEND || config.delivery === DELIVERY.STREAM
+    });
     node.coordinate = config.coordinate || 'local';
     node.preset = config.preset || 'position';
     node.frame = config.frame || defaultFrame(node.coordinate);
@@ -49,8 +59,11 @@ module.exports = function registerMavlinkAiMove(RED) {
     node.accelUp = config.accelUp;
     node.yaw = config.yaw;
     node.yawRate = config.yawRate;
-    /** Optional continuous streaming (#128): resend the setpoint at a fixed rate. */
-    node.stream = toBool(config.stream, false);
+    /**
+     * Streaming rate (#128): only meaningful when Delivery is "Stream via
+     * connection" — the standalone `stream` checkbox is gone (#207); Stream
+     * is now one of the three Delivery options.
+     */
     node.streamRateHz = clampStreamRate(Number(config.streamRateHz));
     /**
      * Stream TTL / deadman (#216): the stream stops this many seconds after
@@ -115,8 +128,8 @@ module.exports = function registerMavlinkAiMove(RED) {
       /**
        * The single error exit (#285): one closure binds node/msg/send/done —
        * call sites pass only the failure, so the positional threading that
-       * produced the #276 arity shift cannot recur. The connection label is
-       * read lazily at failure time.
+       * produced the #276 arity shift cannot recur. Two ports (#207): product
+       * on 0, error on 1. The connection label is read lazily at failure time.
        */
       /**
        * A send failure must name the connection it actually sent on, even if
@@ -130,11 +143,27 @@ module.exports = function registerMavlinkAiMove(RED) {
         msg,
         send,
         done,
+        outputs: 2,
+        errorIndex: 1,
         connectionName: () => {
           const c = sentOn || node.connection;
           return c && c.name;
         }
       });
+
+      /**
+       * Delivery is explicit (#207): a node saved before this change (or
+       * imported/API-created without a delivery value) fails closed instead
+       * of silently picking a behavior. Move has no "await" mode — setpoints
+       * carry no ack.
+       */
+      let mode;
+      try {
+        mode = resolveDeliveryMode(config, { allow: [DELIVERY.BUILD, DELIVERY.SEND, DELIVERY.STREAM] });
+      } catch (err) {
+        return fail(err);
+      }
+
       const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
 
       /**
@@ -143,12 +172,14 @@ module.exports = function registerMavlinkAiMove(RED) {
        * coerced through toBool so a string `'false'`/`'0'` (from a Change / HTTP
        * / MQTT path) still counts — a strict `=== false` check would let those
        * fall through and silently leave a running stream commanding the vehicle.
+       * Only meaningful in Stream delivery: Build/Send are one-shot per input,
+       * so there is no running stream for them to stop.
        */
       const hasStreamFlag = payload.stream !== undefined && payload.stream !== null && payload.stream !== '';
       const streamOverride = hasStreamFlag ? toBool(payload.stream, false) : undefined;
 
       /** An explicit `stream: false` stops a running stream and sends nothing. */
-      if (streamOverride === false) {
+      if (mode === DELIVERY.STREAM && streamOverride === false) {
         const wasStreaming = !!node._streamTimer;
         stopStream(node);
         node.status(wasStreaming ? { fill: 'grey', shape: 'ring', text: 'stream stopped' } : {});
@@ -221,15 +252,15 @@ module.exports = function registerMavlinkAiMove(RED) {
       node._lastWarnKey = warnKey;
 
       /**
-       * Streaming mode (#128): resend this setpoint continuously at the node
-       * rate until stopped. Each input refreshes the streamed setpoint. Requires
-       * a Connection (there is nowhere to stream a build-only message to), and
-       * the stream is torn down on redeploy/close so a partial deploy can never
-       * leave a setpoint stream flying the vehicle.
+       * Stream via connection (#128, #207): resend this setpoint continuously
+       * at the node rate until stopped. Every input while in this delivery
+       * mode arms/refreshes the streamed setpoint (the payload.stream flag no
+       * longer selects streaming — Delivery does). Requires a Connection
+       * (there is nowhere to stream a build-only message to), and the stream
+       * is torn down on redeploy/close so a partial deploy can never leave a
+       * setpoint stream flying the vehicle.
        */
-      const streaming =
-        streamOverride === true || (streamOverride === undefined && (node.stream || !!node._streamTimer));
-      if (streaming) {
+      if (mode === DELIVERY.STREAM) {
         if (!node.connection) {
           return fail(new MavlinkError('STREAM_NEEDS_CONNECTION', 'Streaming requires a Connection to send setpoints continuously.'));
         }
@@ -260,17 +291,21 @@ module.exports = function registerMavlinkAiMove(RED) {
       }
 
       /**
-       * One-shot: with a connection the node is the sender (setpoints are
-       * fire-and-forget, so there is no ack to await); without one it hands the
-       * built message to a downstream mavlink-ai-out node. The connection is
-       * captured before the await — the flows:started redeploy guard can null or
-       * replace `node.connection` while the send is in flight, and the catch
-       * path must still name the connection it actually sent on rather than
-       * throw a TypeError that leaves done() uncalled.
+       * Send via connection (#207): setpoints are fire-and-forget (there is no
+       * ack to await, unlike command/payload), so this is a plain one-shot
+       * send. The connection is captured before the await — the flows:started
+       * redeploy guard can null or replace `node.connection` while the send is
+       * in flight, and the catch path must still name the connection it
+       * actually sent on rather than throw a TypeError that leaves done()
+       * uncalled. Emitting `move/sent` on success (rather than a silent
+       * badge-only send) makes the direct-send path observable on the wire.
        */
-      const connection = node.connection;
-      sentOn = connection;
-      if (connection) {
+      if (mode === DELIVERY.SEND) {
+        if (!node.connection) {
+          return fail(new MavlinkError('NO_CONNECTION', 'Send via connection requires a Connection to send on (select one in the node config).'));
+        }
+        const connection = node.connection;
+        sentOn = connection;
         try {
           /** Setpoints ride the ELEVATED band (#241): their cadence keeps
            * OFFBOARD/GUIDED alive, so they must not sit behind bulk traffic. */
@@ -283,13 +318,22 @@ module.exports = function registerMavlinkAiMove(RED) {
             },
             { msg, priority: PRIORITY.ELEVATED }
           );
-          node.status({ fill: 'green', shape: 'dot', text: `sent ${labelFor(built.name)}` });
-          return done();
         } catch (err) {
           return fail(err, 'SEND_FAILED');
         }
+        node.status({ fill: 'green', shape: 'dot', text: `sent ${labelFor(built.name)}` });
+        msg.topic = 'move/sent';
+        msg.payload = {
+          name: built.name,
+          target_system: targetSystem,
+          target_component: targetComponent,
+          sent: true
+        };
+        send([msg, null]);
+        return done();
       }
 
+      // --- Build only (default remaining mode): hand off to mavlink-ai-out ---
       msg.topic = 'mavlink/send';
       msg.payload = {
         name: built.name,
@@ -307,7 +351,7 @@ module.exports = function registerMavlinkAiMove(RED) {
        * as a direct-Connection send. */
       msg.priority = PRIORITY.ELEVATED;
       node.status({ fill: 'green', shape: 'dot', text: labelFor(built.name) });
-      send(msg);
+      send([msg, null]);
       done();
     });
 
@@ -382,8 +426,8 @@ function clampStreamRate(hz) {
  * at the deadline, not at the next send tick — at the minimum 0.2 Hz rate a
  * short TTL would otherwise wait up to 5 s. Past the deadline the stream
  * stops for good: the status shows why and ONE expiry message goes out on
- * the output so a flow can react (re-arm, land, alert). Unref'd like the
- * send timer so it never holds the process open.
+ * port 0 (#207: two-port [out, error]) so a flow can react (re-arm, land,
+ * alert). Unref'd like the send timer so it never holds the process open.
  *
  * @param {object} node
  * @returns {void}
@@ -399,10 +443,13 @@ function armStreamExpiry(node) {
   node._streamExpiryTimer = setTimeout(() => {
     stopStream(node);
     node.status({ fill: 'yellow', shape: 'ring', text: 'stream expired' });
-    node.send({
-      topic: 'move/stream',
-      payload: { stream: 'expired', max_stream_seconds: node.maxStreamSeconds }
-    });
+    node.send([
+      {
+        topic: 'move/stream',
+        payload: { stream: 'expired', max_stream_seconds: node.maxStreamSeconds }
+      },
+      null
+    ]);
   }, node._streamDeadline - Date.now());
   if (typeof node._streamExpiryTimer.unref === 'function') {
     node._streamExpiryTimer.unref();
@@ -450,16 +497,20 @@ function streamTick(node) {
       node.status({ fill: 'yellow', shape: 'ring', text: `stream: ${e.code}` });
       if (!node._streamErrored) {
         node._streamErrored = true;
-        node.send({
-          topic: 'mavlink/error',
-          payload: errorPayload({
-            node: 'mavlink-ai-move',
-            connection: connection.name,
-            code: e.code,
-            message: e.message,
-            context: e.context
-          })
-        });
+        /** Per-streak send failures land on port 1 (#207: two-port [out, error]). */
+        node.send([
+          null,
+          {
+            topic: 'mavlink/error',
+            payload: errorPayload({
+              node: 'mavlink-ai-move',
+              connection: connection.name,
+              code: e.code,
+              message: e.message,
+              context: e.context
+            })
+          }
+        ]);
       }
     })
     .finally(() => {

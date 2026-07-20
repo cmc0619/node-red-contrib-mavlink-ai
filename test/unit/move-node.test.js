@@ -31,7 +31,7 @@ function setup(moveConfig, { withConnection = false } = {}) {
   }
   const node = RED.create(
     'mavlink-ai-move',
-    Object.assign({ id: 'm1', profile: 'p1', connection: withConnection ? 'conn1' : '' }, moveConfig)
+    Object.assign({ id: 'm1', profile: 'p1', delivery: 'build', connection: withConnection ? 'conn1' : '' }, moveConfig)
   );
   return { RED, node, conn };
 }
@@ -39,14 +39,15 @@ function setup(moveConfig, { withConnection = false } = {}) {
 test('local position build-only emits mavlink/send with negated z', async () => {
   const { RED, node } = setup({ coordinate: 'local', preset: 'position', altitude: '10', north: '5', east: '0' });
   const { collected } = await RED.inject(node, { payload: {} });
-  const out = collected[0].payload;
-  assert.strictEqual(collected[0].topic, 'mavlink/send');
+  const out = collected[0][0].payload;
+  assert.strictEqual(collected[0][0].topic, 'mavlink/send');
   assert.strictEqual(out.name, 'SET_POSITION_TARGET_LOCAL_NED');
   assert.strictEqual(out.fields.x, 5);
   assert.strictEqual(out.fields.z, -10);
   assert.strictEqual(out.fields.type_mask, 3576);
   assert.strictEqual(out.vehicleProfile, 'p1');
   assert.strictEqual(out.target_system, 1);
+  assert.ok(!collected.map((o) => o[1]).find(Boolean), 'no error on port 1');
 });
 
 test('acceleration preset passes the af vector through the node (#128)', async () => {
@@ -59,7 +60,7 @@ test('acceleration preset passes the af vector through the node (#128)', async (
     accelUp: '2'
   });
   const { collected } = await RED.inject(node, { payload: {} });
-  const out = collected[0].payload;
+  const out = collected[0][0].payload;
   assert.strictEqual(out.fields.afx, 1.5);
   assert.strictEqual(out.fields.afz, -2);
 });
@@ -67,7 +68,7 @@ test('acceleration preset passes the af vector through the node (#128)', async (
 test('force preset via msg.payload sets the force bit (#128)', async () => {
   const { RED, node } = setup({ coordinate: 'local', preset: 'position', frame: 'MAV_FRAME_LOCAL_NED' });
   const { collected } = await RED.inject(node, { payload: { preset: 'force', accelNorth: 3, accelEast: 0, accelUp: 0 } });
-  const out = collected[0].payload;
+  const out = collected[0][0].payload;
   assert.strictEqual(out.fields.afx, 3);
   assert.strictEqual(out.fields.type_mask & 0b0000_0010_0000_0000, 0b0000_0010_0000_0000);
 });
@@ -82,29 +83,33 @@ test('global coordinate builds SET_POSITION_TARGET_GLOBAL_INT with degE7', async
     altitude: '5'
   });
   const { collected } = await RED.inject(node, { payload: {} });
-  const out = collected[0].payload;
+  const out = collected[0][0].payload;
   assert.strictEqual(out.name, 'SET_POSITION_TARGET_GLOBAL_INT');
   assert.strictEqual(out.fields.lat_int, 473977420);
   assert.strictEqual(out.fields.alt, 5);
 });
 
-test('with a connection the node sends directly and emits nothing', async () => {
+test('Send via connection sends directly and emits move/sent on port 0 (observable, #207)', async () => {
   const { RED, node, conn } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0.5' },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0.5', delivery: 'send' },
     { withConnection: true }
   );
   const { collected } = await RED.inject(node, { payload: {} });
-  assert.strictEqual(collected.length, 0);
-  assert.strictEqual(conn.sent.length, 1);
+  assert.strictEqual(conn.sent.length, 1, 'sent directly on the connection');
   assert.strictEqual(conn.sent[0].name, 'SET_POSITION_TARGET_LOCAL_NED');
   assert.strictEqual(conn.sent[0].vehicleProfile, 'p1');
   assert.strictEqual(conn.sent[0].fields.vx, 1);
   assert.strictEqual(conn.sent[0].fields.vz, -0.5);
+  const out = collected.map((o) => o[0]).find(Boolean);
+  assert.strictEqual(out.topic, 'move/sent', 'the one-shot send is now observable on port 0');
+  assert.strictEqual(out.payload.sent, true);
+  assert.strictEqual(out.payload.target_system, 1);
+  assert.ok(!collected.map((o) => o[1]).find(Boolean), 'no error on port 1');
 });
 
 test('a one-shot send that fails after a connection redeploy still emits the structured error (#128)', async () => {
   const { RED, node, conn } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0' },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', delivery: 'send' },
     { withConnection: true }
   );
 
@@ -121,15 +126,22 @@ test('a one-shot send that fails after a connection redeploy still emits the str
   rejectSend(new Error('link down'));
 
   const { collected } = await injected;
-  assert.strictEqual(collected[0].topic, 'mavlink/error');
-  assert.strictEqual(collected[0].payload.code, 'SEND_FAILED');
-  assert.strictEqual(collected[0].payload.connection, 'Conn', 'names the connection it sent on');
+  assert.strictEqual(collected[0][1].topic, 'mavlink/error');
+  assert.strictEqual(collected[0][1].payload.code, 'SEND_FAILED');
+  assert.strictEqual(collected[0][1].payload.connection, 'Conn', 'names the connection it sent on');
+});
+
+test('Send via connection without a connection is a structured NO_CONNECTION error (#207)', async () => {
+  const { RED, node } = setup({ coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', delivery: 'send' });
+  const { collected } = await RED.inject(node, { payload: {} });
+  assert.strictEqual(collected[0][1].topic, 'mavlink/error');
+  assert.strictEqual(collected[0][1].payload.code, 'NO_CONNECTION');
 });
 
 test('msg.payload overrides editor values', async () => {
   const { RED, node } = setup({ coordinate: 'local', preset: 'position', altitude: '1', east: '0' });
   const { collected } = await RED.inject(node, { payload: { altitude: 20, north: 3 } });
-  const out = collected[0].payload;
+  const out = collected[0][0].payload;
   assert.strictEqual(out.fields.z, -20);
   assert.strictEqual(out.fields.x, 3);
 });
@@ -147,7 +159,7 @@ test('custom preset uses the raw type_mask from the payload', async () => {
       yaw: 0, yawRate: 0
     }
   });
-  assert.strictEqual(collected[0].payload.fields.type_mask, 0);
+  assert.strictEqual(collected[0][0].payload.fields.type_mask, 0);
 });
 
 test('a whitespace-only active field is rejected, not sent as 0 (#248 review)', async () => {
@@ -158,22 +170,22 @@ test('a whitespace-only active field is rejected, not sent as 0 (#248 review)', 
    */
   const { RED, node } = setup({ coordinate: 'local', preset: 'position', north: '5', east: '   ', altitude: '10' });
   const { collected } = await RED.inject(node, { payload: {} });
-  assert.strictEqual(collected[0].topic, 'mavlink/error');
-  assert.strictEqual(collected[0].payload.code, 'BAD_SETPOINT_FIELD');
-  assert.ok(collected[0].payload.context.fields.includes('east'), 'names the blank axis');
+  assert.strictEqual(collected[0][1].topic, 'mavlink/error');
+  assert.strictEqual(collected[0][1].payload.code, 'BAD_SETPOINT_FIELD');
+  assert.ok(collected[0][1].payload.context.fields.includes('east'), 'names the blank axis');
 });
 
 test('a bad custom type_mask emits a structured error', async () => {
   const { RED, node } = setup({ coordinate: 'local', preset: 'custom', typeMask: '70000' });
   const { collected } = await RED.inject(node, { payload: {} });
-  const err = collected[0].payload;
-  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  const err = collected[0][1].payload;
+  assert.strictEqual(collected[0][1].topic, 'mavlink/error');
   assert.strictEqual(err.code, 'BAD_TYPE_MASK');
 });
 
 test('streaming resends the setpoint at the configured rate until stopped (#128)', async (t) => {
   const { RED, node, conn } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', delivery: 'stream', streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -190,7 +202,7 @@ test('streaming resends the setpoint at the configured rate until stopped (#128)
 
 test('msg.payload.stream=false stops a running stream (#128)', async (t) => {
   const { RED, node } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', delivery: 'stream', streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -202,7 +214,7 @@ test('msg.payload.stream=false stops a running stream (#128)', async (t) => {
 
 test('msg.payload.stream="false" (string) also stops a running stream (#128)', async (t) => {
   const { RED, node } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', delivery: 'stream', streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -215,7 +227,7 @@ test('msg.payload.stream="false" (string) also stops a running stream (#128)', a
 
 test('a slow send is not piled up — ticks are skipped while one is in flight (#128)', async (t) => {
   const { RED, node, conn } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', delivery: 'stream', streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -238,7 +250,7 @@ test('a slow send is not piled up — ticks are skipped while one is in flight (
 
 test('an unrelated deploy (flows:started, no dependency change) keeps a running stream alive (#128)', async (t) => {
   const { RED, node } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', delivery: 'stream', streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -254,7 +266,7 @@ test('an unrelated deploy (flows:started, no dependency change) keeps a running 
 
 test('redeploying the referenced profile (flows:started, new config node) tears down the stream (#128)', async (t) => {
   const { RED, node } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', delivery: 'stream', streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -275,7 +287,7 @@ test('redeploying the referenced profile (flows:started, new config node) tears 
 
 test('a stream send that rejects after the stream is stopped emits no stale error (#128)', async (t) => {
   const { RED, node, conn } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', delivery: 'stream', streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -291,23 +303,25 @@ test('a stream send that rejects after the stream is stopped emits no stale erro
   assert.strictEqual(node._streamTimer, null, 'stream stopped');
 
   /** The in-flight send now fails — but the stream is already stopped, so its
-   * settle is stale and must not emit a mavlink/error from the node. */
+   * settle is stale and must not emit a mavlink/error from the node. Stream
+   * errors land as [null, errMsg] on the two-port [out, error] contract. */
   rejectSend(new Error('link down'));
   await new Promise((r) => setTimeout(r, 0));
-  assert.strictEqual(node.sent.filter((m) => m && m.topic === 'mavlink/error').length, 0, 'no stale error emitted');
+  const staleErrors = node.sent.filter((m) => Array.isArray(m) && m[1] && m[1].topic === 'mavlink/error');
+  assert.strictEqual(staleErrors.length, 0, 'no stale error emitted');
 });
 
 test('streaming without a connection is a structured error (#128)', async () => {
-  const { RED, node } = setup({ coordinate: 'local', preset: 'velocity', velNorth: '0', velEast: '0', climb: '0', stream: true });
+  const { RED, node } = setup({ coordinate: 'local', preset: 'velocity', velNorth: '0', velEast: '0', climb: '0', delivery: 'stream' });
   const { collected } = await RED.inject(node, { payload: {} });
-  assert.strictEqual(collected[0].topic, 'mavlink/error');
-  assert.strictEqual(collected[0].payload.code, 'STREAM_NEEDS_CONNECTION');
+  assert.strictEqual(collected[0][1].topic, 'mavlink/error');
+  assert.strictEqual(collected[0][1].payload.code, 'STREAM_NEEDS_CONNECTION');
   assert.strictEqual(node._streamTimer, null, 'no stream started');
 });
 
 test('closing the node stops the stream (stop-on-deploy guard) (#128)', async () => {
   const { RED, node } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', delivery: 'stream', streamRateHz: 50 },
     { withConnection: true }
   );
   await RED.inject(node, { payload: {} });
@@ -316,17 +330,27 @@ test('closing the node stops the stream (stop-on-deploy guard) (#128)', async ()
   assert.strictEqual(node._streamTimer, null, 'close cleared the stream timer');
 });
 
-test('msg.payload.stream=true streams even from a one-shot node and each input refreshes it (#128)', async (t) => {
+test('a stream-delivery node starts and refreshes on every input, with or without a payload.stream flag (#207)', async (t) => {
+  /**
+   * Streaming is no longer a per-message override (#207): it is the node's
+   * Delivery mode. Every input while Delivery is "Stream via connection"
+   * arms/refreshes the stream — not a one-shot send — regardless of whether
+   * the message carries a `stream` flag at all.
+   */
   const { RED, node } = setup(
-    { coordinate: 'local', preset: 'position', north: '0', east: '0', altitude: '5', streamRateHz: 50 },
+    { coordinate: 'local', preset: 'position', north: '0', east: '0', altitude: '5', delivery: 'stream', streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
-  await RED.inject(node, { payload: { stream: true } });
-  assert.ok(node._streamTimer, 'stream started from payload');
+
+  const first = await RED.inject(node, { payload: {} });
+  assert.strictEqual(first.collected.length, 0, 'stream start emits nothing on the input itself');
+  assert.ok(node._streamTimer, 'stream started');
   assert.strictEqual(node._streamState.fields.z, -5);
-  await RED.inject(node, { payload: { stream: true, altitude: 12 } });
-  assert.strictEqual(node._streamState.fields.z, -12, 'streamed setpoint refreshed');
+
+  const second = await RED.inject(node, { payload: { altitude: 12 } });
+  assert.strictEqual(second.collected.length, 0, 'a plain refresh emits nothing on the input itself');
+  assert.strictEqual(node._streamState.fields.z, -12, 'streamed setpoint refreshed, not treated as one-shot');
   assert.ok(node._streamTimer, 'still a single running stream');
 });
 
@@ -335,7 +359,7 @@ test('refreshing a running stream does not force an extra immediate send — the
    * start should send immediately. Later refreshes must update the streamed
    * setpoint for the next scheduled tick, not fire an out-of-band send. */
   const { RED, node, conn } = setup(
-    { coordinate: 'local', preset: 'position', north: '0', east: '0', altitude: '5', stream: true, streamRateHz: 0.2 },
+    { coordinate: 'local', preset: 'position', north: '0', east: '0', altitude: '5', delivery: 'stream', streamRateHz: 0.2 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -349,23 +373,6 @@ test('refreshing a running stream does not force an extra immediate send — the
   assert.strictEqual(node._streamState.fields.z, -18, 'streamed setpoint refreshed for the next tick');
 });
 
-test('a plain input keeps a payload-started stream alive and refreshes it (not one-shot) (#128)', async (t) => {
-  const { RED, node } = setup(
-    { coordinate: 'local', preset: 'position', north: '0', east: '0', altitude: '5', streamRateHz: 50 },
-    { withConnection: true }
-  );
-  t.after(() => RED.close(node));
-  await RED.inject(node, { payload: { stream: true } });
-  assert.ok(node._streamTimer, 'stream started from payload');
-
-  /** A later message with no `stream` flag must refresh the running stream, not
-   * fall through to a one-shot send that leaves the timer orphaned with stale state. */
-  const { collected } = await RED.inject(node, { payload: { altitude: 9 } });
-  assert.strictEqual(collected.length, 0, 'no one-shot emit');
-  assert.ok(node._streamTimer, 'stream still running');
-  assert.strictEqual(node._streamState.fields.z, -9, 'stream refreshed to the new setpoint');
-});
-
 test('a firmware-unsupported setpoint raises an advisory warning but still sends (#128)', async () => {
   /** The ardupilotmega test profile reports no firmware field by default, so
    * pass it explicitly: ArduPilot + force preset must warn. */
@@ -375,12 +382,12 @@ test('a firmware-unsupported setpoint raises an advisory warning but still sends
     sourceSystemId: 255, sourceComponentId: 190, defaultTargetSystem: 1, defaultTargetComponent: 1
   });
   const node = RED.create('mavlink-ai-move', {
-    id: 'm1', profile: 'p1', connection: '', coordinate: 'local', preset: 'force', frame: 'MAV_FRAME_LOCAL_NED',
+    id: 'm1', profile: 'p1', delivery: 'build', connection: '', coordinate: 'local', preset: 'force', frame: 'MAV_FRAME_LOCAL_NED',
     accelNorth: '1', accelEast: '0', accelUp: '0'
   });
 
   const { collected } = await RED.inject(node, { payload: {} });
-  assert.strictEqual(collected[0].topic, 'mavlink/send', 'setpoint still sent');
+  assert.strictEqual(collected[0][0].topic, 'mavlink/send', 'setpoint still sent');
   assert.strictEqual(node.warnings.length, 1, 'one advisory warning');
   assert.match(node.warnings[0], /FORCE/);
 
@@ -396,11 +403,23 @@ test('a firmware-unsupported setpoint raises an advisory warning but still sends
 
 test('missing profile emits MISSING_PROFILE', async () => {
   const RED = new MockRED().loadNodes();
-  const node = RED.create('mavlink-ai-move', { id: 'm2', preset: 'position' });
+  const node = RED.create('mavlink-ai-move', { id: 'm2', delivery: 'build', preset: 'position' });
   const { collected } = await RED.inject(node, { payload: {} });
-  const err = collected[0].payload;
-  assert.strictEqual(collected[0].topic, 'mavlink/error');
+  const err = collected[0][1].payload;
+  assert.strictEqual(collected[0][1].topic, 'mavlink/error');
   assert.strictEqual(err.code, 'MISSING_PROFILE');
+});
+
+test('with no delivery set the node fails closed with DELIVERY_UNSET on port 1 (#207)', async () => {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1', name: 'Copter', dialect: 'ardupilotmega', mavlinkVersion: 'v2',
+    defaultTargetSystem: 1, defaultTargetComponent: 1
+  });
+  const node = RED.create('mavlink-ai-move', { id: 'm3', profile: 'p1', coordinate: 'local', preset: 'position', north: 1, east: 0, altitude: 1 }); // no delivery
+  const { collected } = await RED.inject(node, { payload: { x: 1 } });
+  const err = collected.map((o) => o[1]).find(Boolean);
+  assert.strictEqual(err.payload.code, 'DELIVERY_UNSET');
 });
 
 /**
@@ -430,8 +449,8 @@ test('build-only output carries the ELEVATED priority stamp (#241)', async () =>
    * node forwards msg.priority to the outbound queue. */
   const { RED, node } = setup({ coordinate: 'local', preset: 'position', north: '1', east: '0', altitude: '5' });
   const { collected } = await RED.inject(node, { payload: {} });
-  assert.strictEqual(collected[0].topic, 'mavlink/send');
-  assert.strictEqual(collected[0].priority, 1, 'setpoints are ELEVATED on the build-only path too');
+  assert.strictEqual(collected[0][0].topic, 'mavlink/send');
+  assert.strictEqual(collected[0][0].priority, 1, 'setpoints are ELEVATED on the build-only path too');
 });
 
 test('a streamed setpoint expires after maxStreamSeconds (#216)', async (t) => {
@@ -439,10 +458,10 @@ test('a streamed setpoint expires after maxStreamSeconds (#216)', async (t) => {
    * A bare setInterval used to retransmit the last setpoint forever — an
    * abandoned flow kept commanding the vehicle indefinitely. The stream now
    * carries a TTL: on expiry the timer stops, the status shows the expiry,
-   * and one { stream: 'expired' } message is emitted on the output.
+   * and one { stream: 'expired' } message is emitted on port 0.
    */
   const { RED, node, conn } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50, maxStreamSeconds: 0.05 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', delivery: 'stream', streamRateHz: 50, maxStreamSeconds: 0.05 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -457,13 +476,14 @@ test('a streamed setpoint expires after maxStreamSeconds (#216)', async (t) => {
   await new Promise((r) => setTimeout(r, 60));
   assert.strictEqual(conn.sent.length, sentCount, 'no setpoints after expiry');
   assert.strictEqual(emitted.length, 1, 'exactly one expiry message');
-  assert.strictEqual(emitted[0].payload.stream, 'expired');
+  assert.strictEqual(emitted[0][0].payload.stream, 'expired');
+  assert.strictEqual(emitted[0][1], null, 'nothing on the error port');
   assert.strictEqual(injected.collected.length, 0, 'the input itself emitted nothing');
 });
 
 test('maxStreamSeconds 0 opts out of the stream TTL (#216)', async (t) => {
   const { RED, node } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50, maxStreamSeconds: 0 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', delivery: 'stream', streamRateHz: 50, maxStreamSeconds: 0 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -475,7 +495,7 @@ test('maxStreamSeconds 0 opts out of the stream TTL (#216)', async (t) => {
 
 test('the stream TTL defaults to 300 seconds and refreshes on every input (#216)', async (t) => {
   const { RED, node } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 50 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', delivery: 'stream', streamRateHz: 50 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -497,12 +517,12 @@ test('a blank Max stream field keeps the default TTL, only explicit 0 opts out (
    * blank-aware parsing; only an explicit 0 means unlimited.
    */
   const blank = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, maxStreamSeconds: '' },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', delivery: 'stream', maxStreamSeconds: '' },
     { withConnection: true }
   );
   assert.strictEqual(blank.node.maxStreamSeconds, 300, 'blank field falls to the default');
   const zero = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, maxStreamSeconds: '0' },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', delivery: 'stream', maxStreamSeconds: '0' },
     { withConnection: true }
   );
   assert.strictEqual(zero.node.maxStreamSeconds, 0, 'explicit 0 stays the unlimited opt-out');
@@ -515,7 +535,7 @@ test('stream expiry fires on time even when the TTL is shorter than a tick inter
    * deadline now arms its own timeout, independent of the send interval.
    */
   const { RED, node } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, streamRateHz: 0.2, maxStreamSeconds: 0.05 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', delivery: 'stream', streamRateHz: 0.2, maxStreamSeconds: 0.05 },
     { withConnection: true }
   );
   t.after(() => RED.close(node));
@@ -528,7 +548,7 @@ test('stream expiry fires on time even when the TTL is shorter than a tick inter
   await new Promise((r) => setTimeout(r, 150));
   assert.strictEqual(node._streamTimer, null, 'expired without waiting for a tick');
   assert.strictEqual(emitted.length, 1);
-  assert.strictEqual(emitted[0].payload.stream, 'expired');
+  assert.strictEqual(emitted[0][0].payload.stream, 'expired');
 });
 
 test('a stream TTL beyond the 32-bit timer limit is capped, not instantly expired (#216 review)', () => {
@@ -538,7 +558,7 @@ test('a stream TTL beyond the 32-bit timer limit is capped, not instantly expire
    * config time to the timer limit (~24.8 days).
    */
   const { node } = setup(
-    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', stream: true, maxStreamSeconds: 999999999999 },
+    { coordinate: 'local', preset: 'velocity', velNorth: '1', velEast: '0', climb: '0', delivery: 'stream', maxStreamSeconds: 999999999999 },
     { withConnection: true }
   );
   assert.strictEqual(node.maxStreamSeconds, 2147483, 'capped at the setTimeout limit in seconds');

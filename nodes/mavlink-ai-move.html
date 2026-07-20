@@ -41,7 +41,26 @@
     defaults: {
       name: { value: '' },
       profile: { value: '', type: 'mavlink-ai-vehicle', required: true },
-      connection: { value: '', type: 'mavlink-ai-connection', required: false },
+      connection: {
+        value: '',
+        type: 'mavlink-ai-connection',
+        required: false,
+        /** Send/Stream have nothing to send on without a connection; catch it at edit time, not as a runtime NO_CONNECTION/STREAM_NEEDS_CONNECTION (#207). */
+        validate: function (v) {
+          /**
+           * Read the live select while the dialog is open — `this.delivery`
+           * holds the pre-edit value, so switching to Send/Stream and leaving
+           * the connection blank would pass validation until the node is
+           * reopened. Outside the dialog (import/deploy checks) fall back to
+           * the stored value; the command node's validator uses the same
+           * pattern.
+           */
+          const $live = $('#node-input-delivery');
+          const mode = $live.length ? $live.val() : this.delivery;
+          return (mode !== 'send' && mode !== 'stream') || (v !== '' && v != null);
+        }
+      },
+      delivery: { value: 'build' },
       coordinate: { value: 'local', required: true },
       preset: { value: 'position', required: true },
       frame: { value: 'MAV_FRAME_LOCAL_NED' },
@@ -70,16 +89,18 @@
       accelUp: { value: '' },
       yaw: { value: '' },
       yawRate: { value: '' },
-      /** Optional continuous streaming (#128); rate only matters when streaming. */
-      stream: { value: false },
       /** Stream TTL (#216): stop this many seconds after the last input; 0 =
-       * unlimited, blank = default. Non-numeric/negative input is outlined. */
+       * unlimited, blank = default. Non-numeric/negative input is outlined.
+       * Only applies to the Stream delivery mode (#207) — the standalone
+       * `stream` checkbox is gone; Stream is now a Delivery option. */
       maxStreamSeconds: {
         value: 300,
         validate: function (v) {
           /** A hidden field must not block deploy: the TTL only applies while
-           * streaming is enabled, like the stream-rate validator below. */
-          if (!$('#node-input-stream').is(':checked')) {
+           * Delivery is Stream, like the stream-rate validator below. */
+          const $live = $('#node-input-delivery');
+          const mode = $live.length ? $live.val() : this.delivery;
+          if (mode !== 'stream') {
             return true;
           }
           if (v === '' || v == null) {
@@ -92,7 +113,9 @@
       streamRateHz: {
         value: 5,
         validate: function (v) {
-          if (!$('#node-input-stream').is(':checked')) {
+          const $live = $('#node-input-delivery');
+          const mode = $live.length ? $live.val() : this.delivery;
+          if (mode !== 'stream') {
             return true;
           }
           const n = Number(String(v == null ? '' : v).trim());
@@ -101,7 +124,10 @@
       }
     },
     inputs: 1,
-    outputs: 1,
+    outputs: 2,
+    outputLabels: function (i) {
+      return i === 1 ? 'error' : (this.delivery === 'build' ? 'message' : 'result');
+    },
     icon: 'font-awesome/fa-location-arrow',
     label: function () {
       return this.name || 'move ' + (this.coordinate === 'global' ? 'global' : 'local');
@@ -151,9 +177,14 @@
         $('#node-input-typeMask').trigger('change');
       }
 
-      /** Show the stream rate only when streaming is enabled. */
-      function refreshStream() {
-        $('.mav-move-streamrate').toggle($('#node-input-stream').is(':checked'));
+      /**
+       * Delivery controls which rows apply (#207): the rate/TTL rows only
+       * matter for Stream, and Connection is only needed for Send/Stream.
+       */
+      function refreshDelivery() {
+        const mode = $('#node-input-delivery').val();
+        $('.mav-move-streamrate').toggle(mode === 'stream');
+        $('.mav-move-connection').toggle(mode === 'send' || mode === 'stream');
         $('#node-input-streamRateHz').trigger('change');
       }
 
@@ -162,10 +193,10 @@
         refresh();
       });
       $preset.on('change', refresh);
-      $('#node-input-stream').on('change', refreshStream);
+      $('#node-input-delivery').on('change', refreshDelivery);
       refreshFrames();
       refresh();
-      refreshStream();
+      refreshDelivery();
     }
   });
 </script>
@@ -180,14 +211,19 @@
     <input type="text" id="node-input-profile">
   </div>
   <div class="form-row">
+    <label for="node-input-delivery"><i class="fa fa-arrow-right"></i> Delivery</label>
+    <select id="node-input-delivery" style="width:70%;">
+      <option value="build">Build only (hand off to MAVLink Out)</option>
+      <option value="send">Send via connection (fire-and-forget)</option>
+      <option value="stream">Stream via connection (continuous setpoints)</option>
+    </select>
+  </div>
+  <div class="form-row mav-move-connection">
     <label for="node-input-connection">Connection</label>
     <input type="text" id="node-input-connection">
   </div>
   <div class="form-tips" style="margin: -6px 0 8px 105px; width: 70%;">
-    Set a Connection to <b>send</b> the setpoint directly; leave it empty to emit a <code>mavlink/send</code> message for a <b>mavlink-ai-out</b> node.
-  </div>
-  <div class="form-row">
-    <label for="node-input-stream" style="width: auto;"><input type="checkbox" id="node-input-stream" style="width: auto; vertical-align: top; margin-right: 6px;"> Stream continuously</label>
+    <b>Build only</b> emits a <code>mavlink/send</code> message for a <b>mavlink-ai-out</b> node. <b>Send</b> and <b>Stream</b> send the setpoint directly on the Connection (fire-and-forget — setpoints carry no ack).
   </div>
   <div class="form-row mav-move-streamrate">
     <label for="node-input-streamRateHz">Rate (Hz)</label>
@@ -198,7 +234,7 @@
     <input type="number" id="node-input-maxStreamSeconds" min="0" step="any" placeholder="300">
   </div>
   <div class="form-tips mav-move-streamrate" style="margin: -6px 0 8px 105px; width: 70%;">
-    Resends the setpoint at this rate until stopped. Needs a Connection. PX4 <b>OFFBOARD</b> requires a setpoint stream (≥ ~2 Hz) <i>before</i> the mode switch. Send <code>msg.payload.stream = false</code> to stop; the stream also stops automatically on redeploy — and expires <b>Max stream</b> seconds after the last input (default 300, <code>0</code> = unlimited), emitting one <code>{ stream: "expired" }</code> message.
+    Resends the setpoint at this rate until stopped. PX4 <b>OFFBOARD</b> requires a setpoint stream (≥ ~2 Hz) <i>before</i> the mode switch. Send <code>msg.payload.stream = false</code> to stop; the stream also stops automatically on redeploy — and expires <b>Max stream</b> seconds after the last input (default 300, <code>0</code> = unlimited), emitting one <code>{ stream: "expired" }</code> message.
   </div>
   <div class="form-row">
     <label for="node-input-coordinate">Coordinate</label>
