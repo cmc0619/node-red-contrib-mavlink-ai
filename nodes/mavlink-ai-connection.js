@@ -1,7 +1,7 @@
 'use strict';
 
 const { EventEmitter } = require('events');
-const { MavLinkPacketSignature } = require('node-mavlink');
+const { MavLinkPacketSignature, MavLinkProtocolV2 } = require('node-mavlink');
 const { MavlinkCodec, verifyInboundPacket } = require('../lib/protocol/mavlink-codec');
 const { LinkState } = require('../lib/protocol/link-state');
 const { createTransport } = require('../lib/transport');
@@ -32,8 +32,6 @@ const HEARTBEAT_MIN_INTERVAL_MS = 1000;
  * other bit is rejected in onPacket rather than decoded with an unknown framing
  * (#153).
  */
-const KNOWN_INCOMPAT_FLAGS = 0x01;
-
 /**
  * Stream key for transports that carry a single peer's byte stream (serial,
  * tcp client-role). They share one decoder; a tcp server keys one per client via its
@@ -1944,7 +1942,7 @@ module.exports = function registerMavlinkAiConnection(RED) {
        * incompatibilityFlags is 0/undefined and this never trips.)
        */
       const incompatFlags = Number(header.incompatibilityFlags) || 0;
-      if (incompatFlags & ~KNOWN_INCOMPAT_FLAGS) {
+      if (incompatFlags & ~MavLinkProtocolV2.IFLAG_SIGNED) {
         node.emitter.emit('rejected', rejectedInfo(header, 'incompat-unsupported', origin));
         return;
       }

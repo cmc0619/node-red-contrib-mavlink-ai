@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { x25crc } = require('node-mavlink');
+const { MavLinkProtocolV2, x25crc } = require('node-mavlink');
 const { MockRED } = require('../helpers/mock-red');
 const { nextEvent } = require('../helpers/next-event');
 const { loadDialect, getMessageClass } = require('../../lib/dialects/dialect-loader');
@@ -63,7 +63,7 @@ test('a frame with an unsupported incompat flag is rejected, not decoded (#153)'
 
   /** incompat 0x02 is not implemented → the frame must be rejected. */
   const rejected = nextEvent(conn.emitter, 'rejected');
-  conn._transport.emit('data', heartbeatWithIncompat(0x02));
+  conn._transport.emit('data', heartbeatWithIncompat(MavLinkProtocolV2.IFLAG_SIGNED << 1));
   assert.strictEqual((await rejected).reason, 'incompat-unsupported');
   assert.strictEqual(messages.length, 0, 'the frame must not be dispatched');
 });

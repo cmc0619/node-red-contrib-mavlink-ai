@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { minimal } = require('node-mavlink');
 
 const { MockRED } = require('../helpers/mock-red');
 const { makeIdentity, makeProfile, makeConnection } = require('../helpers/v3-config');
@@ -35,10 +36,16 @@ test('source component 0 (MAV_COMP_ID_ALL) invalidates the identity (#153)', () 
 test('blank source identity values take the role preset defaults (#90, #106)', () => {
   const RED = new MockRED().loadNodes();
   const gcs = makeIdentity(RED, { role: 'gcs', sourceSystemId: '', sourceComponentId: '' });
-  assert.deepStrictEqual(gcs.getIdentity(), { sysid: 255, compid: 190 });
+  assert.deepStrictEqual(gcs.getIdentity(), {
+    sysid: 255,
+    compid: minimal.MavComponent.MISSIONPLANNER
+  });
   // Companion preset suggests the vehicle sysid (1) and CompID 191.
   const companion = makeIdentity(RED, { role: 'companion', sourceSystemId: '', sourceComponentId: '' });
-  assert.deepStrictEqual(companion.getIdentity(), { sysid: 1, compid: 191 });
+  assert.deepStrictEqual(companion.getIdentity(), {
+    sysid: 1,
+    compid: minimal.MavComponent.ONBOARD_COMPUTER
+  });
 });
 
 test('an explicit source CompID is not rewritten by the role preset (#106)', () => {

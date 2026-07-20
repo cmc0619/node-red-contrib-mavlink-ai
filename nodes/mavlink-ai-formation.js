@@ -389,6 +389,7 @@ module.exports = function registerMavlinkAiFormation(RED) {
           staleMs: node.staleMs,
           expireMs: node.expireMs,
           enums: bundle && bundle.valid ? bundle.enums : null,
+          dialect: bundle && bundle.valid ? bundle.name : 'unknown',
           now: () => node._now()
         });
         node.registry = registry;

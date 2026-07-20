@@ -3,8 +3,11 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { EventEmitter } = require('events');
-const { common } = require('node-mavlink');
+const { common, minimal } = require('node-mavlink');
 const { MockRED } = require('../helpers/mock-red');
+const { loadDialect } = require('../../lib/dialects/dialect-loader');
+
+const DIALECT = loadDialect('ardupilotmega');
 
 /**
  * mavlink-ai-formation node (issue #46 / #232). Geometric shapes are a stateless
@@ -19,7 +22,7 @@ function stubConnection(RED, id) {
     id,
     name: 'stub',
     emitter: new EventEmitter(),
-    profile: null,
+    profile: { getDialect: () => DIALECT },
     filters: [],
     callbacks: [],
     subscribe: (filter, cb) => {
@@ -39,7 +42,18 @@ function stubConnection(RED, id) {
 }
 
 function heartbeat(sysid) {
-  return { name: 'HEARTBEAT', sysid, compid: 1, fields: { type: 2, autopilot: 3, base_mode: 81, custom_mode: 4, system_status: 4 } };
+  return {
+    name: 'HEARTBEAT',
+    sysid,
+    compid: 1,
+    fields: {
+      type: minimal.MavType.QUADROTOR,
+      autopilot: minimal.MavAutopilot.ARDUPILOTMEGA,
+      base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED,
+      custom_mode: 4,
+      system_status: minimal.MavState.ACTIVE
+    }
+  };
 }
 
 function gpi(sysid, lat, lon, alt, hdg) {

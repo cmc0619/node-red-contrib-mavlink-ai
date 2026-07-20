@@ -1,6 +1,14 @@
 'use strict';
 
 const { MavlinkError } = require('../lib/util/errors');
+const { coreEnumMember } = require('../lib/protocol/protocol-values');
+
+const MISSIONPLANNER_COMPONENT = coreEnumMember('MavComponent', 'MISSIONPLANNER', {
+  consumer: 'local-identity'
+});
+const ONBOARD_COMPUTER_COMPONENT = coreEnumMember('MavComponent', 'ONBOARD_COMPUTER', {
+  consumer: 'local-identity'
+});
 
 /**
  * mavlink-ai-local-identity (issue #228).
@@ -26,19 +34,19 @@ const { MavlinkError } = require('../lib/util/errors');
 const ROLE_PRESETS = {
   gcs: {
     sysid: 255,
-    compid: 190, // MAV_COMP_ID_MISSIONPLANNER, the conventional GCS component
+    compid: MISSIONPLANNER_COMPONENT,
     heartbeatType: 'MAV_TYPE_GCS'
   },
   companion: {
     // A companion normally shares its vehicle's sysid (commonly 1) and keeps
     // its own component id: MAV_COMP_ID_ONBOARD_COMPUTER.
     sysid: 1,
-    compid: 191,
+    compid: ONBOARD_COMPUTER_COMPONENT,
     heartbeatType: 'MAV_TYPE_ONBOARD_CONTROLLER'
   },
   custom: {
     sysid: 255,
-    compid: 190,
+    compid: MISSIONPLANNER_COMPONENT,
     heartbeatType: 'MAV_TYPE_GENERIC'
   }
 };

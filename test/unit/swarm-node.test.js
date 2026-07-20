@@ -3,7 +3,11 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { EventEmitter } = require('events');
+const { minimal } = require('node-mavlink');
 const { MockRED } = require('../helpers/mock-red');
+const { loadDialect } = require('../../lib/dialects/dialect-loader');
+
+const DIALECT = loadDialect('ardupilotmega');
 
 /**
  * Connection stand-in that records the swarm node's subscription filter and
@@ -15,6 +19,7 @@ function stubConnection(RED, id) {
     name: 'stub',
     emitter: new EventEmitter(),
     statusState: 'connected',
+    profile: { getDialect: () => DIALECT },
     filters: [],
     callbacks: [],
     subscribe: (filter, cb) => {
@@ -38,7 +43,13 @@ function heartbeat(sysid, extra = {}) {
     name: 'HEARTBEAT',
     sysid,
     compid: 1,
-    fields: Object.assign({ type: 2, autopilot: 3, base_mode: 81, custom_mode: 4, system_status: 4 }, extra)
+    fields: Object.assign({
+      type: minimal.MavType.QUADROTOR,
+      autopilot: minimal.MavAutopilot.ARDUPILOTMEGA,
+      base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED,
+      custom_mode: 4,
+      system_status: minimal.MavState.ACTIVE
+    }, extra)
   };
 }
 
@@ -66,7 +77,9 @@ test('swarm node subscribes to the registry message set (#46)', async () => {
 test('input triggers a vehicle snapshot with sysids for fan-out (#46)', async () => {
   const { RED, conn, node } = setup({});
   conn.deliver(heartbeat(1));
-  conn.deliver(heartbeat(2, { base_mode: 81 | 128 }));
+  conn.deliver(heartbeat(2, {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED | minimal.MavModeFlag.SAFETY_ARMED
+  }));
   const { collected } = await RED.inject(node, { payload: {} });
   assert.strictEqual(collected[0].topic, 'swarm/vehicles');
   assert.strictEqual(collected[0].payload.count, 2);
@@ -78,7 +91,9 @@ test('input triggers a vehicle snapshot with sysids for fan-out (#46)', async ()
 test('input payload filters the snapshot (armed / groups) (#46)', async () => {
   const { RED, conn, node } = setup({ groups: '{"scouts":[2]}' });
   conn.deliver(heartbeat(1));
-  conn.deliver(heartbeat(2, { base_mode: 81 | 128 }));
+  conn.deliver(heartbeat(2, {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED | minimal.MavModeFlag.SAFETY_ARMED
+  }));
   const armed = await RED.inject(node, { payload: { armed: true } });
   assert.deepStrictEqual(armed.collected[0].payload.sysids, [2]);
   const group = await RED.inject(node, { payload: { group: 'scouts' } });

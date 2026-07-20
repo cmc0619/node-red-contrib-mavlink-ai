@@ -19,9 +19,9 @@
     // pre-fills a field when it is blank or still equals the previous role's
     // suggestion; an explicitly customized value is never rewritten.
     var ROLE_PRESETS = {
-      gcs: { sysid: 255, compid: 190, heartbeatType: 'MAV_TYPE_GCS' },
-      companion: { sysid: 1, compid: 191, heartbeatType: 'MAV_TYPE_ONBOARD_CONTROLLER' },
-      custom: { sysid: 255, compid: 190, heartbeatType: 'MAV_TYPE_GENERIC' }
+      gcs: { sysid: 255, componentMember: 'MISSIONPLANNER', compid: null, heartbeatType: 'MAV_TYPE_GCS' },
+      companion: { sysid: 1, componentMember: 'ONBOARD_COMPUTER', compid: null, heartbeatType: 'MAV_TYPE_ONBOARD_CONTROLLER' },
+      custom: { sysid: 255, componentMember: 'MISSIONPLANNER', compid: null, heartbeatType: 'MAV_TYPE_GENERIC' }
     };
 
     RED.nodes.registerType('mavlink-ai-local-identity', {
@@ -33,7 +33,7 @@
         /** Source compid 0 is MAV_COMP_ID_ALL (the broadcast component
          * address), never a valid sender id — same floor the runtime and the
          * codec enforce (#153). */
-        sourceComponentId: { value: 190, required: true, validate: mavUint8Validator(1) },
+        sourceComponentId: { value: '', required: true, validate: mavUint8Validator(1) },
         heartbeatType: { value: '' },
         heartbeatAutopilot: { value: 'MAV_AUTOPILOT_INVALID' }
       },
@@ -66,7 +66,8 @@
           if (String($sysid.val()).trim() === '' || Number($sysid.val()) === prev.sysid) {
             $sysid.val(next.sysid);
           }
-          if (String($compid.val()).trim() === '' || Number($compid.val()) === prev.compid) {
+          if (next.compid !== null &&
+              (String($compid.val()).trim() === '' || Number($compid.val()) === prev.compid)) {
             $compid.val(next.compid);
           }
           var hb = String($hbType.val()).trim();
@@ -77,6 +78,21 @@
           prevRole = role;
         }
         $role.on('change', applyRole);
+        $.getJSON('mavlink-ai/protocol-values').done(function (data) {
+          var components = {};
+          (data && data.components ? data.components : []).forEach(function (component) {
+            components[component.name] = component.value;
+          });
+          Object.keys(ROLE_PRESETS).forEach(function (role) {
+            var entry = ROLE_PRESETS[role];
+            if (typeof components[entry.componentMember] === 'number') {
+              entry.compid = components[entry.componentMember];
+            }
+          });
+          if (String($compid.val()).trim() === '' && preset(prevRole).compid !== null) {
+            $compid.val(preset(prevRole).compid);
+          }
+        });
         // Show the hint for the saved role without rewriting saved values.
         $('.mav-role-hint').hide();
         $('#mav-role-hint-' + prevRole).show();
@@ -119,7 +135,7 @@
   </div>
   <div class="form-row">
     <label for="node-config-input-sourceComponentId">Source CompID</label>
-    <input type="number" id="node-config-input-sourceComponentId" min="0" max="255">
+    <input type="number" id="node-config-input-sourceComponentId" min="1" max="255">
   </div>
   <div class="form-row">
     <label for="node-config-input-heartbeatType">HB Type</label>
