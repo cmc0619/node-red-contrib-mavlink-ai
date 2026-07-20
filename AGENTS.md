@@ -28,6 +28,22 @@ Follow `DESIGN.md` first. Do not recreate the old coupled architecture.
    notes explaining *why* a specific line is the way it is. Keep comments useful
    and current; don't add empty boilerplate to trivial one-liners. See
    DESIGN.md §27.1.
+10. Do not write code for states that cannot occur. Trust the system's own
+    invariants — no defensive re-checks, no "just in case" fallbacks for a
+    condition an upstream boundary already guarantees. If an impossible state
+    somehow occurs, let it fail loud (throw) rather than silently substituting a
+    value. Every branch must handle a state that can *actually* happen. This
+    targets impossible states only — real external inputs (malformed user XML,
+    dropped sockets, wire garbage, user-supplied node config) are not
+    "impossible" and stay fully handled. Example: a workflow resolves enum
+    values strictly from the profile's loaded dialect
+    (`bindEnumValues(this.enums)`) and throws `ENUM_VALUE_UNAVAILABLE` if the
+    index is ever bad — it does *not* fall back to a core bundle, because a
+    broken dialect already fails closed at the connection boundary
+    (`mavlink-ai-connection.js`). (Dialect-*independent* values — command
+    results, vehicle classification, base_mode — may still resolve from the core
+    defs via `coreEnumValues`; that is not a fallback but the correct source for
+    values every dialect shares.)
 
 ## Architecture
 

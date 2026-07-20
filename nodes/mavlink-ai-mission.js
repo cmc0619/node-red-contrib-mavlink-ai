@@ -134,9 +134,9 @@ module.exports = function registerMavlinkAiMission(RED) {
       let missionTypeNum;
       let missionTypeAll;
       try {
-        const protocolContext = { dialect: bundle ? bundle.name : 'unknown', consumer: 'mission' };
-        missionTypeNum = missionTypeToNumber(missionTypeName, bundle ? bundle.enums : null, protocolContext);
-        missionTypeAll = missionTypeToNumber('all', bundle ? bundle.enums : null, protocolContext);
+        const protocolContext = { dialect: bundle.name, consumer: 'mission' };
+        missionTypeNum = missionTypeToNumber(missionTypeName, bundle.enums, protocolContext);
+        missionTypeAll = missionTypeToNumber('all', bundle.enums, protocolContext);
       } catch (err) {
         return fail(err, 'BAD_MISSION_TYPE');
       }
@@ -189,7 +189,7 @@ module.exports = function registerMavlinkAiMission(RED) {
           const allowEmpty =
             typeof rawAllowEmpty === 'boolean' || typeof rawAllowEmpty === 'string' ? toBool(rawAllowEmpty, false) : false;
           resolveUploadItems(payload, { allowEmpty });
-          uploadItems = validateMissionItems(normalizeUploadItems(payload), bundle ? bundle.enums : null);
+          uploadItems = validateMissionItems(normalizeUploadItems(payload), bundle.enums);
         } catch (err) {
           return fail(err, 'INVALID_FIELD');
         }
@@ -241,8 +241,8 @@ module.exports = function registerMavlinkAiMission(RED) {
         sourceSystem: source.sysid,
         sourceComponent: source.compid,
         missionType: missionTypeName,
-        enums: bundle ? bundle.enums : null,
-        dialect: bundle ? bundle.name : 'unknown',
+        enums: bundle.enums,
+        dialect: bundle.name,
         useInt,
         timeoutMs: node.timeoutMs,
         maxRetries: node.maxRetries,

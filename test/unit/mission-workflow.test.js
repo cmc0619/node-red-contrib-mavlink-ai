@@ -370,11 +370,10 @@ test('mission workflow default timeout is 10s (#58)', () => {
   assert.strictEqual(wf.timeoutMs, 10000);
 });
 
-test('mission workflow resolves core enums from the core bundle even with no loaded dialect (#309 review: apply core)', () => {
-  // MavMissionResult / MavMissionType / MavFrame and the standard mission type
-  // are all common core enums, so download/upload/clear still construct for a
-  // profile whose dialect failed to load (enums: null).
-  const wf = new MissionDownload(downloadOpts(new FakeConnection(), { enums: null, dialect: 'unknown' }));
+test('mission workflow resolves its dialect-independent constants from the core defs', () => {
+  // MavMissionResult / MavMissionType / MavFrame are dialect-independent common
+  // enums, resolved from the core defs (a numeric mission_type needs no dialect).
+  const wf = new MissionDownload(downloadOpts(new FakeConnection(), { missionType: 0 }));
   assert.strictEqual(wf.missionAccepted, 0); // MAV_MISSION_ACCEPTED
   assert.strictEqual(wf.missionTypeMission, 0); // MAV_MISSION_TYPE_MISSION
 });

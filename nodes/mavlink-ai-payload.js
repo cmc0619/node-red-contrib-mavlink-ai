@@ -196,8 +196,8 @@ module.exports = function registerMavlinkAiPayload(RED) {
       let built;
       try {
         built = buildPayload(action, {
-          enums: bundle ? bundle.enums : null,
-          dialect: bundle ? bundle.name : 'unknown',
+          enums: bundle.enums,
+          dialect: bundle.name,
           targetSystem,
           targetComponent,
           interval: toNum(firstDefined(payload.interval, node.interval), undefined),
@@ -278,8 +278,8 @@ module.exports = function registerMavlinkAiPayload(RED) {
           action,
           targetSystem,
           targetComponent,
-          enums: bundle ? bundle.enums : null,
-          dialect: bundle ? bundle.name : 'unknown',
+          enums: bundle.enums,
+          dialect: bundle.name,
           defaults,
           payload
         });
@@ -296,7 +296,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
               localIdentity: payload.localIdentity,
               fields: built.fields
             },
-            { msg, priority: commandPriorityFor(bundle ? bundle.enums : null, built.fields.command) }
+            { msg, priority: commandPriorityFor(bundle.enums, built.fields.command) }
           );
         } catch (err) {
           /**
@@ -346,7 +346,7 @@ module.exports = function registerMavlinkAiPayload(RED) {
        * Non-critical verbs carry no stamp so flows keep control of the field.
        */
       {
-        const priority = commandPriorityFor(bundle ? bundle.enums : null, built.fields.command);
+        const priority = commandPriorityFor(bundle.enums, built.fields.command);
         if (priority === PRIORITY.CRITICAL) {
           msg.priority = priority;
         }
