@@ -365,7 +365,10 @@ function setupProbe(extraConfig, ackDelayMs) {
     defaultTargetComponent: 1
   });
   const conn = probeAckConnection(RED, 'c1', ackDelayMs);
-  const node = RED.create('mavlink-ai-fanout', Object.assign({ id: 'f1', profile: 'p1', connection: 'c1' }, extraConfig));
+  const node = RED.create(
+    'mavlink-ai-fanout',
+    Object.assign({ id: 'f1', profile: 'p1', connection: 'c1', delivery: 'build' }, extraConfig)
+  );
   return { RED, node, conn };
 }
 
@@ -382,7 +385,7 @@ function setup(extraConfig, script) {
   const conn = stubAckConnection(RED, 'c1', script || {});
   const node = RED.create(
     'mavlink-ai-fanout',
-    Object.assign({ id: 'f1', profile: 'p1', connection: 'c1' }, extraConfig)
+    Object.assign({ id: 'f1', profile: 'p1', connection: 'c1', delivery: 'build' }, extraConfig)
   );
   return { RED, node, conn };
 }
@@ -415,11 +418,12 @@ test('node accepts a swarm registry output (payload.vehicles) directly (#46)', a
 });
 
 test('dry-run outputs the built messages without sending (#46)', async () => {
-  const { RED, node, conn } = setup({ command: 'MAV_CMD_NAV_LAND', awaitAck: true, dryRun: true });
+  const { RED, node, conn } = setup({ command: 'MAV_CMD_NAV_LAND', delivery: 'await', dryRun: true });
   const { collected } = await RED.inject(node, { payload: { sysids: [1, 2] } });
-  assert.strictEqual(collected[0].topic, 'swarm/dryrun');
-  assert.strictEqual(collected[0].payload.count, 2);
+  assert.strictEqual(collected[0][0].topic, 'swarm/dryrun');
+  assert.strictEqual(collected[0][0].payload.count, 2);
   assert.strictEqual(conn.sent.length, 0);
+  assert.ok(!collected.map((o) => o[1]).find(Boolean), 'no error on port 1');
 });
 
 test('await-acks aggregates accepted/failed/timedOut per sysid (#46)', async () => {
@@ -431,7 +435,7 @@ test('await-acks aggregates accepted/failed/timedOut per sysid (#46)', async () 
   // sysid 5 should ever hit the timeout, so a large value stays reliable while the
   // acked sysids still finish near-instantly.
   const { RED, node } = setup(
-    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', awaitAck: true, timeoutMs: 1000, maxRetries: 0 },
+    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', delivery: 'await', timeoutMs: 1000, maxRetries: 0 },
     { 1: 0, 2: 0, 4: 2 /* MAV_RESULT_DENIED */ } // sysid 5 stays silent -> timeout
   );
   // The workflow's retry timer is unref'd; keep the loop alive while it runs.
@@ -440,8 +444,8 @@ test('await-acks aggregates accepted/failed/timedOut per sysid (#46)', async () 
     payload: { sysids: [1, 2, 4, 5], fields: { param1: 1 } }
   });
   clearInterval(keepAlive);
-  assert.strictEqual(collected[0].topic, 'swarm/ack');
-  const out = collected[0].payload;
+  assert.strictEqual(collected[0][0].topic, 'swarm/ack');
+  const out = collected[0][0].payload;
   assert.deepStrictEqual(out.accepted, [1, 2]);
   assert.deepStrictEqual(out.failed, [4]);
   assert.deepStrictEqual(out.timedOut, [5]);
@@ -455,13 +459,13 @@ test('stop-on-error skips remaining targets after the first failure (#46)', asyn
   // 1/2 ack immediately and must be classified by their ack, not a timeout race
   // under load. No sysid is silent here, so a large timeout never actually fires.
   const { RED, node } = setup(
-    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', awaitAck: true, timeoutMs: 1000, maxRetries: 0, stopOnError: true },
+    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', delivery: 'await', timeoutMs: 1000, maxRetries: 0, stopOnError: true },
     { 1: 0, 2: 2, 3: 0 }
   );
   const keepAlive = setInterval(() => {}, 10);
   const { collected } = await RED.inject(node, { payload: { sysids: [1, 2, 3] } });
   clearInterval(keepAlive);
-  const out = collected[0].payload;
+  const out = collected[0][0].payload;
   assert.deepStrictEqual(out.accepted, [1]);
   assert.deepStrictEqual(out.failed, [2]);
   assert.deepStrictEqual(out.skipped, [3]);
@@ -469,34 +473,34 @@ test('stop-on-error skips remaining targets after the first failure (#46)', asyn
 });
 
 test('broadcast with await-acks is rejected (BROADCAST_NO_ACK) (#46)', async () => {
-  const { RED, node } = setup({ command: 'MAV_CMD_NAV_LAND', mode: 'broadcast', awaitAck: true });
+  const { RED, node } = setup({ command: 'MAV_CMD_NAV_LAND', mode: 'broadcast', delivery: 'await' });
   const { collected } = await RED.inject(node, { payload: {} });
-  assert.strictEqual(collected[0].topic, 'mavlink/error');
-  assert.strictEqual(collected[0].payload.code, 'BROADCAST_NO_ACK');
+  assert.strictEqual(collected[0][1].topic, 'mavlink/error');
+  assert.strictEqual(collected[0][1].payload.code, 'BROADCAST_NO_ACK');
 });
 
 test('await-acks defaults to sequential (concurrency 1): one workflow in flight (#155)', async () => {
   const { RED, node, conn } = setupProbe(
-    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', awaitAck: true, timeoutMs: 2000, maxRetries: 0 },
+    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', delivery: 'await', timeoutMs: 2000, maxRetries: 0 },
     15
   );
   const keepAlive = setInterval(() => {}, 10);
   const { collected } = await RED.inject(node, { payload: { sysids: [1, 2, 3, 4] } });
   clearInterval(keepAlive);
-  assert.strictEqual(collected[0].topic, 'swarm/ack');
+  assert.strictEqual(collected[0][0].topic, 'swarm/ack');
   assert.strictEqual(conn.maxInFlight, 1, 'the default runs strictly one target at a time');
-  assert.deepStrictEqual(collected[0].payload.accepted.slice().sort((a, b) => a - b), [1, 2, 3, 4]);
+  assert.deepStrictEqual(collected[0][0].payload.accepted.slice().sort((a, b) => a - b), [1, 2, 3, 4]);
 });
 
 test('concurrency runs up to N await-ack workflows in parallel (#155)', async () => {
   const { RED, node, conn } = setupProbe(
-    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', awaitAck: true, timeoutMs: 2000, maxRetries: 0, concurrency: 3 },
+    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', delivery: 'await', timeoutMs: 2000, maxRetries: 0, concurrency: 3 },
     20
   );
   const keepAlive = setInterval(() => {}, 10);
   const { collected } = await RED.inject(node, { payload: { sysids: [1, 2, 3, 4, 5] } });
   clearInterval(keepAlive);
-  const out = collected[0].payload;
+  const out = collected[0][0].payload;
   /** 5 targets, 3 slots: at least one moment has all 3 slots busy at once. */
   assert.strictEqual(conn.maxInFlight, 3, 'up to three targets are commanded in parallel');
   /** Every target is still acked and aggregated, regardless of completion order. */
@@ -508,7 +512,7 @@ test('concurrency runs up to N await-ack workflows in parallel (#155)', async ()
 test('a concurrency below the target count is clamped, above it is capped by targets (#155)', async () => {
   /** concurrency 0/negative clamps to 1 (sequential). */
   const seq = setupProbe(
-    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', awaitAck: true, timeoutMs: 2000, maxRetries: 0, concurrency: 0 },
+    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', delivery: 'await', timeoutMs: 2000, maxRetries: 0, concurrency: 0 },
     15
   );
   let keepAlive = setInterval(() => {}, 10);
@@ -518,7 +522,7 @@ test('a concurrency below the target count is clamped, above it is capped by tar
 
   /** A concurrency larger than the target list never exceeds the target count. */
   const wide = setupProbe(
-    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', awaitAck: true, timeoutMs: 2000, maxRetries: 0, concurrency: 10 },
+    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', delivery: 'await', timeoutMs: 2000, maxRetries: 0, concurrency: 10 },
     20
   );
   keepAlive = setInterval(() => {}, 10);
@@ -538,13 +542,13 @@ test('broadcast build mode emits a single target_system-0 message (#46)', async 
 test('missing targets yields a structured NO_TARGETS error (#46)', async () => {
   const { RED, node } = setup({ command: 'MAV_CMD_NAV_LAND' });
   const { collected } = await RED.inject(node, { payload: {} });
-  assert.strictEqual(collected[0].topic, 'mavlink/error');
-  assert.strictEqual(collected[0].payload.code, 'NO_TARGETS');
+  assert.strictEqual(collected[0][1].topic, 'mavlink/error');
+  assert.strictEqual(collected[0][1].payload.code, 'NO_TARGETS');
 });
 
 test('await-acks workflow sends carry the node profile id (#81)', async () => {
   const { RED, node, conn } = setup(
-    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', awaitAck: true, timeoutMs: 1000, maxRetries: 0 },
+    { command: 'MAV_CMD_COMPONENT_ARM_DISARM', delivery: 'await', timeoutMs: 1000, maxRetries: 0 },
     { 1: 0, 2: 0 }
   );
   await RED.inject(node, { payload: { sysids: [1, 2] } });
@@ -631,4 +635,66 @@ test('build-only fan-out stamps CRITICAL only on safety commands (#241)', async 
   const rtl = setup({ command: 'MAV_CMD_NAV_RETURN_TO_LAUNCH' });
   const sent = await rtl.RED.inject(rtl.node, { payload: { sysids: [1] } });
   assert.strictEqual(sent.collected[0][0][0].priority, undefined);
+});
+
+// ---------------------------------------------------------------------------
+// Delivery: Build / Send / Await + dry-run (#207)
+// ---------------------------------------------------------------------------
+
+test('fanout Build only emits per-target mavlink/send on port 0', async () => {
+  const { RED, node } = setup({ command: 'MAV_CMD_COMPONENT_ARM_DISARM', delivery: 'build' });
+  const { collected } = await RED.inject(node, { payload: { sysids: [1, 2] } });
+  const batch = collected[0][0];
+  assert.ok(Array.isArray(batch) && batch.length === 2, 'multiple messages batched on port 0');
+  assert.ok(batch.every((m) => m.topic === 'mavlink/send'));
+  assert.ok(!collected.map((o) => o[1]).find(Boolean), 'no error on port 1');
+});
+
+test('fanout Send via connection sends all and emits swarm/sent aggregate on port 0', async () => {
+  const { RED, node, conn } = setup({ command: 'MAV_CMD_COMPONENT_ARM_DISARM', delivery: 'send' });
+  const { collected } = await RED.inject(node, { payload: { sysids: [1, 2] } });
+  assert.strictEqual(conn.sent.length, 2, 'both targets sent directly on the connection');
+  const out = collected.map((o) => o[0]).find(Boolean);
+  assert.strictEqual(out.topic, 'swarm/sent');
+  assert.deepStrictEqual(out.payload.sent.slice().sort((a, b) => a - b), [1, 2]);
+  assert.strictEqual(out.payload.failed.length, 0);
+  assert.ok(!collected.map((o) => o[1]).find(Boolean), 'no error on port 1');
+});
+
+test('fanout Send via connection without a connection is a structured NO_CONNECTION error', async () => {
+  const RED = new MockRED().loadNodes();
+  RED.create('mavlink-ai-vehicle', {
+    id: 'p1',
+    name: 'Copter',
+    dialect: 'ardupilotmega',
+    mavlinkVersion: 'v2',
+    defaultTargetSystem: 1,
+    defaultTargetComponent: 1
+  });
+  const node = RED.create('mavlink-ai-fanout', {
+    id: 'f1',
+    profile: 'p1',
+    delivery: 'send',
+    command: 'MAV_CMD_NAV_LAND'
+  });
+  const { collected } = await RED.inject(node, { payload: { sysids: [1] } });
+  assert.strictEqual(collected[0][1].topic, 'mavlink/error');
+  assert.strictEqual(collected[0][1].payload.code, 'NO_CONNECTION');
+});
+
+test('fanout with no delivery set fails closed with DELIVERY_UNSET on port 1', async () => {
+  const { RED, node } = setup({ command: 'MAV_CMD_NAV_LAND', delivery: undefined });
+  const { collected } = await RED.inject(node, { payload: { sysids: [1, 2] } });
+  const err = collected.map((o) => o[1]).find(Boolean);
+  assert.strictEqual(err.payload.code, 'DELIVERY_UNSET');
+  assert.ok(!collected.map((o) => o[0]).find(Boolean), 'nothing on port 0');
+});
+
+test('fanout dry-run emits swarm/dryrun and sends nothing regardless of delivery mode', async () => {
+  const { RED, node, conn } = setup({ command: 'MAV_CMD_NAV_LAND', delivery: 'send', dryRun: true });
+  const { collected } = await RED.inject(node, { payload: { sysids: [1, 2] } });
+  assert.strictEqual(conn.sent.length, 0, 'dry-run short-circuits before anything is sent');
+  const out = collected.map((o) => o[0]).find(Boolean);
+  assert.strictEqual(out.topic, 'swarm/dryrun');
+  assert.ok(!collected.map((o) => o[1]).find(Boolean), 'no error on port 1');
 });

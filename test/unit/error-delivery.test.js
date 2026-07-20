@@ -302,13 +302,13 @@ test('payload node: missing profile delivers one mavlink/error, done() clean (#2
 
 test('fanout node: missing profile delivers one mavlink/error, done() clean (#285)', async () => {
   const RED = new MockRED().loadNodes();
-  const node = RED.create('mavlink-ai-fanout', { id: 'fo1' });
+  const node = RED.create('mavlink-ai-fanout', { id: 'fo1', delivery: 'build' });
   const { collected, err } = await RED.inject(node, { payload: { command: 'MAV_CMD_NAV_TAKEOFF', targets: [1] } });
   assert.strictEqual(err, undefined);
   assert.strictEqual(collected.length, 1);
-  assert.strictEqual(collected[0].topic, 'mavlink/error');
-  assert.strictEqual(collected[0].payload.code, 'MISSING_PROFILE');
-  assert.strictEqual(collected[0].payload.node, 'mavlink-ai-fanout');
+  assert.strictEqual(collected[0][1].topic, 'mavlink/error');
+  assert.strictEqual(collected[0][1].payload.code, 'MISSING_PROFILE');
+  assert.strictEqual(collected[0][1].payload.node, 'mavlink-ai-fanout');
 });
 
 test('formation node: empty vehicle set delivers one mavlink/error, done() clean (#285)', async () => {
