@@ -1244,6 +1244,21 @@ Cached or user-provided dialects may live under:
 /data/mavlink/dialects/
 ```
 
+### Trusted operator boundary
+
+The Node-RED editor/admin API is a trusted operator surface: it can configure
+live vehicle control and therefore is not a sandbox for mutually untrusted
+users. A permitted operator may choose a local or mounted XML dialect and may
+retrieve XML or parameter metadata from private-network, self-hosted, or HTTP
+sources. This deliberately supports normal hobbyist and lab setups, including
+firmware or companion endpoints on RFC1918 addresses.
+
+The driver keeps Node-RED permission middleware and treats downloaded XML as
+data, not executable code. Deployers must keep the Node-RED admin interface
+authenticated and off the public internet. This trust decision does not weaken
+the runtime's separate vehicle-safety obligations: MAVLink/control input must
+remain validated and fail closed when stale, malformed, or unsafe.
+
 Bad behavior:
 
 ```text
