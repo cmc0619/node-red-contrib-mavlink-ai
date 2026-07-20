@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { common } = require('node-mavlink');
 const { loadDialect } = require('../../lib/dialects/dialect-loader');
 const { MissionDownload, extractItem } = require('../../lib/mission/mission-download');
 const { MissionUpload, buildItemFields } = require('../../lib/mission/mission-upload');
@@ -10,6 +11,15 @@ const { DEFAULT_TIMEOUT_MS } = require('../../lib/mission/mission-state-machine'
 const { normalizeUploadItems, resolveUploadItems, validateMissionItems } = require('../../lib/mission/upload-input');
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+const DIALECT = loadDialect('ardupilotmega');
+const GLOBAL_FRAMES = new Set([
+  common.MavFrame.GLOBAL,
+  common.MavFrame.GLOBAL_RELATIVE_ALT,
+  common.MavFrame.GLOBAL_INT,
+  common.MavFrame.GLOBAL_RELATIVE_ALT_INT,
+  common.MavFrame.GLOBAL_TERRAIN_ALT,
+  common.MavFrame.GLOBAL_TERRAIN_ALT_INT
+]);
 
 /**
  * Minimal connection stand-in: records outbound messages and delivers decoded
@@ -53,6 +63,8 @@ function downloadOpts(conn, extra = {}) {
       sourceSystem: 255,
       sourceComponent: 190,
       missionType: 'mission',
+      enums: DIALECT.enums,
+      dialect: DIALECT.name,
       timeoutMs: 50,
       maxRetries: 1
     },
@@ -78,8 +90,16 @@ test('buildItemFields converts lat/lon degrees to the wire scaling (#18)', () =>
 
 test('extractItem adds lat/lon degrees and wire_message for global frames (#18)', () => {
   const int = extractItem(
-    { seq: 0, frame: 6, command: 16, x: 473977420, y: 85455940, z: 50 },
-    'MISSION_ITEM_INT'
+    {
+      seq: 0,
+      frame: common.MavFrame.GLOBAL_RELATIVE_ALT_INT,
+      command: common.MavCmd.NAV_WAYPOINT,
+      x: 473977420,
+      y: 85455940,
+      z: 50
+    },
+    'MISSION_ITEM_INT',
+    GLOBAL_FRAMES
   );
   assert.strictEqual(int.lat, 47.397742);
   assert.strictEqual(int.lon, 8.545594);
@@ -88,15 +108,48 @@ test('extractItem adds lat/lon degrees and wire_message for global frames (#18)'
 
   // MISSION_ITEM_INT with a non-INT global frame (ArduPilot does this) is
   // still degE7 — scaling follows the message, not the frame.
-  const intFrame3 = extractItem({ seq: 0, frame: 3, command: 16, x: 473977420, y: 85455940, z: 50 }, 'MISSION_ITEM_INT');
+  const intFrame3 = extractItem(
+    {
+      seq: 0,
+      frame: common.MavFrame.GLOBAL_RELATIVE_ALT,
+      command: common.MavCmd.NAV_WAYPOINT,
+      x: 473977420,
+      y: 85455940,
+      z: 50
+    },
+    'MISSION_ITEM_INT',
+    GLOBAL_FRAMES
+  );
   assert.strictEqual(intFrame3.lat, 47.397742);
 
-  const flt = extractItem({ seq: 0, frame: 3, command: 16, x: 47.397742, y: 8.545594, z: 50 }, 'MISSION_ITEM');
+  const flt = extractItem(
+    {
+      seq: 0,
+      frame: common.MavFrame.GLOBAL_RELATIVE_ALT,
+      command: common.MavCmd.NAV_WAYPOINT,
+      x: 47.397742,
+      y: 8.545594,
+      z: 50
+    },
+    'MISSION_ITEM',
+    GLOBAL_FRAMES
+  );
   assert.strictEqual(flt.lat, 47.397742);
   assert.strictEqual(flt.lon, 8.545594);
 
   // Local frames (e.g. MAV_FRAME_LOCAL_NED = 1) carry meters, not lat/lon.
-  const local = extractItem({ seq: 0, frame: 1, command: 16, x: 10, y: 20, z: -5 }, 'MISSION_ITEM_INT');
+  const local = extractItem(
+    {
+      seq: 0,
+      frame: common.MavFrame.LOCAL_NED,
+      command: common.MavCmd.NAV_WAYPOINT,
+      x: 10,
+      y: 20,
+      z: -5
+    },
+    'MISSION_ITEM_INT',
+    GLOBAL_FRAMES
+  );
   assert.strictEqual(local.lat, undefined);
   assert.strictEqual(local.lon, undefined);
 });
@@ -310,9 +363,35 @@ test('mission workflow default timeout is 10s (#58)', () => {
     connection: conn,
     targetSystem: 1,
     targetComponent: 1,
-    missionType: 'mission'
+    missionType: 'mission',
+    enums: DIALECT.enums,
+    dialect: DIALECT.name
   });
   assert.strictEqual(wf.timeoutMs, 10000);
+});
+
+test('mission workflow fails with complete context when a required generated enum is unavailable', () => {
+  for (const [enumName, member] of [
+    ['MavMissionResult', 'ACCEPTED'],
+    ['MavMissionType', 'MISSION'],
+    ['MavFrame', 'GLOBAL']
+  ]) {
+    const enums = { ...DIALECT.enums, enumsByName: { ...DIALECT.enums.enumsByName } };
+    delete enums.enumsByName[enumName];
+    assert.throws(
+      () => new MissionDownload(downloadOpts(new FakeConnection(), { enums, dialect: 'incomplete' })),
+      (err) => {
+        assert.strictEqual(err.code, 'ENUM_VALUE_UNAVAILABLE');
+        assert.deepStrictEqual(err.context, {
+          enum: enumName,
+          member,
+          dialect: 'incomplete',
+          consumer: 'mission'
+        });
+        return true;
+      }
+    );
+  }
 });
 
 // --- #57: upload answers with the requested item type ----------------------
