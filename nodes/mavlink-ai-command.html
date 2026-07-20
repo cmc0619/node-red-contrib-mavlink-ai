@@ -10,23 +10,23 @@
         value: '',
         type: 'mavlink-ai-connection',
         required: false,
-        /** Await-ack has nothing to send on without a connection; catch it at edit time, not as a runtime NO_CONNECTION (#154). */
+        /** Send/Await have nothing to send on without a connection; catch it at edit time, not as a runtime NO_CONNECTION (#154, #207). */
         validate: function (v) {
           /**
-           * Read the live checkbox while the dialog is open — `this.awaitAck`
-           * holds the pre-edit value, so ticking Await ack and leaving the
-           * connection blank would pass validation until the node is reopened.
-           * Outside the dialog (import/deploy checks) fall back to the stored
-           * value; the param node's validators use the same pattern.
+           * Read the live select while the dialog is open — `this.delivery`
+           * holds the pre-edit value, so switching to Send/Await and leaving
+           * the connection blank would pass validation until the node is
+           * reopened. Outside the dialog (import/deploy checks) fall back to
+           * the stored value; the param node's validators use the same pattern.
            */
-          const $live = $('#node-input-awaitAck');
-          const awaitAck = $live.length ? $live.is(':checked') : this.awaitAck;
-          return !awaitAck || (v !== '' && v != null);
+          const $live = $('#node-input-delivery');
+          const mode = $live.length ? $live.val() : this.delivery;
+          return (mode !== 'send' && mode !== 'await') || (v !== '' && v != null);
         }
       },
       command: { value: 'arm', required: true },
       sendAs: { value: 'long' },
-      awaitAck: { value: false },
+      delivery: { value: 'build' },
       timeoutMs: { value: 3000, validate: RED.validators.number() },
       maxRetries: { value: 3, validate: RED.validators.number() },
       fields: { value: '' },
@@ -56,7 +56,10 @@
       }
     },
     inputs: 1,
-    outputs: 1,
+    outputs: 2,
+    outputLabels: function (i) {
+      return i === 1 ? 'error' : (this.delivery === 'build' ? 'message' : 'result');
+    },
     icon: 'font-awesome/fa-bolt',
     label: function () {
       return this.name || (this.command ? 'cmd ' + this.command : 'mavlink ai command');
@@ -896,14 +899,17 @@
       $('#node-input-profile').on('change', loadDialect);
       loadDialect();
 
-      // Await-ack needs a connection to send on; show the timing rows only
-      // when it's enabled.
-      function refreshAckRows() {
-        const on = $('#node-input-awaitAck').is(':checked');
-        $('.mav-cmd-ack').toggle(on);
+      /**
+       * Delivery controls which rows apply (#207): Send/Await need a
+       * connection to send on; only Await runs the retry/timeout protocol.
+       */
+      function refreshDeliveryRows() {
+        const mode = $('#node-input-delivery').val();
+        $('.mav-cmd-connection').toggle(mode === 'send' || mode === 'await');
+        $('.mav-cmd-ack').toggle(mode === 'await');
       }
-      $('#node-input-awaitAck').on('change', refreshAckRows);
-      refreshAckRows();
+      $('#node-input-delivery').on('change', refreshDeliveryRows);
+      refreshDeliveryRows();
 
       this._collectParams = function () {
         if (!metadataSettled) {
@@ -984,10 +990,14 @@
     </select>
   </div>
   <div class="form-row">
-    <label for="node-input-awaitAck" title="Send via the connection and wait for COMMAND_ACK">Await ack</label>
-    <input type="checkbox" id="node-input-awaitAck" title="Send via the connection and wait for COMMAND_ACK" style="width:auto; vertical-align:middle;">
+    <label for="node-input-delivery"><i class="fa fa-arrow-right"></i> Delivery</label>
+    <select id="node-input-delivery" style="width:70%;">
+      <option value="build">Build only (hand off to MAVLink Out)</option>
+      <option value="send">Send via connection (fire-and-forget)</option>
+      <option value="await">Send &amp; await result (COMMAND_ACK)</option>
+    </select>
   </div>
-  <div class="form-row mav-cmd-ack">
+  <div class="form-row mav-cmd-connection">
     <label for="node-input-connection">Connection</label>
     <input type="text" id="node-input-connection">
   </div>

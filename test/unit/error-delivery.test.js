@@ -131,14 +131,14 @@ test('command await-ack failure: error on the output, done() (#89)', async () =>
     profile: 'p1',
     connection: 'conn1',
     command: 'arm',
-    awaitAck: true
+    delivery: 'await'
   });
   const { collected, err } = await RED.inject(node, { payload: {} });
 
   assert.strictEqual(collected.length, 1, 'exactly one error message on the output');
-  assert.strictEqual(collected[0].topic, 'mavlink/error');
-  assert.strictEqual(collected[0].payload.code, 'COMMAND_FAILED');
-  assert.match(collected[0].payload.message, /link down/);
+  assert.strictEqual(collected[0][1].topic, 'mavlink/error');
+  assert.strictEqual(collected[0][1].payload.code, 'COMMAND_FAILED');
+  assert.match(collected[0][1].payload.message, /link down/);
   assert.strictEqual(err, undefined, 'done() without the error — Catch must not fire too');
 });
 

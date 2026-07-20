@@ -1,7 +1,8 @@
 'use strict';
 
-const { MavlinkError, errorPayload, toMavlinkError } = require('../lib/util/errors');
+const { MavlinkError, toMavlinkError } = require('../lib/util/errors');
 const { makeFail } = require('../lib/util/node-errors');
+const { DELIVERY, resolveDeliveryMode } = require('../lib/util/delivery');
 const { firstDefined, toInt, toNum, toBool, parseJsonObjectConfig } = require('../lib/util/validation');
 const { registerEditorApi } = require('../lib/editor-api');
 const { resolveFlightMode, splitPx4CustomMode } = require('../lib/command/flight-modes');
@@ -95,13 +96,13 @@ function validatePresetInputs(selected, merged, configParams) {
 /**
  * mavlink-ai-command (DESIGN.md §13.5).
  *
- * Builds common command messages as normalized outbound objects for
- * mavlink-ai-out. Building and sending are separate concerns, so by default
- * this node only builds — wire it into a mavlink-ai-out node to send.
- *
- * With "await ack" enabled (and a connection selected) the node instead runs
- * the full command protocol itself: send, retransmit with an incrementing
- * confirmation on timeout, and output the COMMAND_ACK result (issue #16).
+ * Builds common command messages as normalized outbound objects. Delivery is
+ * explicit (#207): "Build only" hands the built message to a downstream
+ * mavlink-ai-out node; "Send via connection" sends it directly and fire-and-
+ * forgets; "Send & await result" sends it and runs the full command protocol
+ * itself — retransmit with an incrementing confirmation on timeout, and
+ * output the COMMAND_ACK result (issue #16). Every mode emits on port 0
+ * (product) with errors on port 1.
  */
 module.exports = function registerMavlinkAiCommand(RED) {
   // Serve message/enum metadata to the editor's MAV_CMD picker.
@@ -247,18 +248,17 @@ module.exports = function registerMavlinkAiCommand(RED) {
     node.name = config.name;
     /**
      * Resolve node.profile + node.connection and keep their idle badges live
-     * across deploys. The connection is only *needed* when await-acks is on
-     * (otherwise the node emits mavlink/send for a downstream Out node), so a
-     * missing connection is badged only in that case (#164).
+     * across deploys. The connection is only *needed* for Send/Await delivery
+     * (Build only hands mavlink/send to a downstream Out node), so a missing
+     * connection is badged only in those modes (#164, #207).
      */
     watchConfigBadge(RED, node, config, {
       profile: 'required',
       connection: 'optional',
-      connectionRequiredWhen: () => toBool(config.awaitAck, false)
+      connectionRequiredWhen: () => config.delivery === DELIVERY.SEND || config.delivery === DELIVERY.AWAIT
     });
     node.command = config.command || 'arm';
     node.sendAs = config.sendAs || 'long'; // 'long' | 'int' (COMMAND_INT, issue #17)
-    node.awaitAck = toBool(config.awaitAck, false);
     node.timeoutMs = toInt(config.timeoutMs, 3000);
     node.maxRetries = toInt(config.maxRetries, 3);
 
@@ -299,14 +299,34 @@ module.exports = function registerMavlinkAiCommand(RED) {
      * @param {object} [context]
      * @returns {void}
      */
-    node.on('input', (msg, send, done) => {
+    node.on('input', async (msg, send, done) => {
       /**
        * The single error exit (#285): one closure binds node/msg/send/done,
        * so call sites pass only the failure — the positional
        * (msg, send, done, code, ...) threading that invited a #276-style
-       * arity shift is gone.
+       * arity shift is gone. Two ports (#207): product on 0, error on 1.
        */
-      const fail = makeFail({ node, nodeName: 'mavlink-ai-command', msg, send, done });
+      const fail = makeFail({
+        node,
+        nodeName: 'mavlink-ai-command',
+        msg,
+        send,
+        done,
+        outputs: 2,
+        errorIndex: 1,
+        connectionName: () => node.connection && node.connection.name
+      });
+      /**
+       * Delivery is explicit (#207): a node saved before this change (or
+       * imported/API-created without a delivery value) fails closed instead
+       * of silently picking a behavior.
+       */
+      let mode;
+      try {
+        mode = resolveDeliveryMode(config, { allow: [DELIVERY.BUILD, DELIVERY.SEND, DELIVERY.AWAIT] });
+      } catch (err) {
+        return fail(err);
+      }
       if (node._configError) {
         return fail(new MavlinkError('INVALID_CONFIG', `mavlink-ai-command: ${node._configError}`));
       }
@@ -525,11 +545,11 @@ module.exports = function registerMavlinkAiCommand(RED) {
         return fail(e);
       }
 
-      // --- await-ack mode (issue #16): run the command protocol ourselves ----
-      if (node.awaitAck) {
+      // --- Send & await result (issue #16): run the command protocol ourselves
+      if (mode === DELIVERY.AWAIT) {
         if (!node.connection) {
           return fail(new MavlinkError('NO_CONNECTION',
-            'Await ack requires a connection to send on (select one in the node config).'));
+            'Send & await result requires a connection to send on (select one in the node config).'));
         }
         if (Number(targetSystem) === 0) {
           /**
@@ -539,7 +559,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
            * same way (BROADCAST_NO_ACK).
            */
           return fail(new MavlinkError('BROADCAST_NO_ACK',
-            'Broadcast (target_system 0) cannot confirm a COMMAND_ACK — use the fan-out node for per-vehicle acks, or disable await ack.'));
+            'Broadcast (target_system 0) cannot confirm a COMMAND_ACK — use the fan-out node for per-vehicle acks, or switch delivery to Send or Build only.'));
         }
         const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
         // The Local Identity this workflow transmits as (#228): the explicit
@@ -593,7 +613,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
             node.status({ fill: 'green', shape: 'dot', text: `${selected} accepted` });
             msg.topic = result.topic;
             msg.payload = result.payload;
-            send(msg);
+            send([msg, null]);
             done();
           })
           .catch((err) => {
@@ -601,23 +621,42 @@ module.exports = function registerMavlinkAiCommand(RED) {
             if (closed) {
               return done(); // aborted by close: no output from an obsolete node
             }
-            const e = toMavlinkError(err, 'COMMAND_FAILED');
-            node.status({ fill: 'red', shape: 'ring', text: e.code });
-            msg.topic = 'mavlink/error';
-            msg.payload = errorPayload({
-              node: 'mavlink-ai-command',
-              connection: node.connection.name,
-              code: e.code,
-              message: e.message,
-              context: e.context
-            });
-            send(msg);
             // The structured error on the output is the one delivery of this
-            // failure (#89): done() — not done(err) — so a Catch node doesn't
-            // also fire for it.
-            done();
+            // failure (#89): fail()'s done() — not done(err) — so a Catch node
+            // doesn't also fire for it.
+            fail(err, 'COMMAND_FAILED');
           });
         return;
+      }
+
+      // --- Send via connection (fire-and-forget, #207) ------------------------
+      if (mode === DELIVERY.SEND) {
+        if (!node.connection) {
+          return fail(new MavlinkError('NO_CONNECTION',
+            'Send via connection requires a connection to send on (select one in the node config).'));
+        }
+        const sendBundle = node.profile && node.profile.getDialect ? node.profile.getDialect() : null;
+        const priority = commandPriorityFor(sendBundle ? sendBundle.enums : null, fields.command);
+        try {
+          await node.connection.send(
+            {
+              name: messageName,
+              vehicleProfile: node.profile.id,
+              localIdentity: incoming.localIdentity,
+              target_system: targetSystem,
+              target_component: targetComponent,
+              fields
+            },
+            { priority }
+          );
+        } catch (err) {
+          return fail(err, 'SEND_FAILED');
+        }
+        node.status({ fill: 'green', shape: 'dot', text: `${selected} sent` });
+        msg.topic = 'command/sent';
+        msg.payload = { name: messageName, target_system: targetSystem, target_component: targetComponent, sent: true };
+        send([msg, null]);
+        return done();
       }
 
       // --- build-only mode (default): hand off to mavlink-ai-out -------------
@@ -653,7 +692,7 @@ module.exports = function registerMavlinkAiCommand(RED) {
       }
 
       node.status({ fill: 'green', shape: 'dot', text: selected });
-      send(msg);
+      send([msg, null]);
       done();
     });
 
