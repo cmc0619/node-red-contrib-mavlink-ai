@@ -47,7 +47,24 @@
     defaults: {
       name: { value: '' },
       profile: { value: '', type: 'mavlink-ai-vehicle', required: true },
-      connection: { value: '', type: 'mavlink-ai-connection', required: false },
+      connection: {
+        value: '',
+        type: 'mavlink-ai-connection',
+        required: false,
+        /** Send/Await have nothing to send on without a connection; catch it at edit time, not as a runtime NO_CONNECTION (#154, #207). */
+        validate: function (v) {
+          /**
+           * Read the live select while the dialog is open — `this.delivery`
+           * holds the pre-edit value, so switching to Send/Await and leaving
+           * the connection blank would pass validation until the node is
+           * reopened. Outside the dialog (import/deploy checks) fall back to
+           * the stored value; the command node's validator uses the same pattern.
+           */
+          const $live = $('#node-input-delivery');
+          const mode = $live.length ? $live.val() : this.delivery;
+          return (mode !== 'send' && mode !== 'await') || (v !== '' && v != null);
+        }
+      },
       action: { value: 'camera_photo', required: true },
       /** Blank => the profile's default component; set it for a camera/gimbal on its own component id. */
       targetComponent: { value: '' },
@@ -86,8 +103,8 @@
       /** Default to the non-destructive 'disable'; the operator must consciously pick 'release'. */
       parachuteAction: { value: 'disable' },
       period: { value: '' },
-      /** Optional COMMAND_ACK wait for the command-type verbs (#129). */
-      awaitAck: { value: false },
+      /** Explicit delivery mode (#207): Build only / Send via connection / Send & await result. */
+      delivery: { value: 'build' },
       timeoutMs: { value: '' },
       maxRetries: { value: '' },
       /** Required (non-negative) only for the trigger-by-distance action. */
@@ -105,7 +122,10 @@
       triggerNow: { value: false }
     },
     inputs: 1,
-    outputs: 1,
+    outputs: 2,
+    outputLabels: function (i) {
+      return i === 1 ? 'error' : (this.delivery === 'build' ? 'message' : 'result');
+    },
     icon: 'font-awesome/fa-camera',
     label: function () {
       return this.name || 'payload ' + (this.action || '').replace(/_/g, ' ');
@@ -123,14 +143,16 @@
         });
 
         /**
-         * Await-ack only applies to COMMAND_LONG verbs — message verbs carry no
-         * COMMAND_ACK — so hide the whole section for those, and reveal the
-         * timeout/retry rows only when the wait is enabled.
+         * Delivery controls which rows apply (#207): Send/Await need a
+         * connection to send on; the timeout/retry rows only matter for the
+         * COMMAND_ACK wait, which — like the old await-ack checkbox — only
+         * runs for COMMAND_LONG verbs (message verbs like the gimbal-manager
+         * ones carry no ack and degrade to Send semantics under Await).
          */
+        const delivery = $('#node-input-delivery').val();
+        $('.mav-payload-connection').toggle(delivery === 'send' || delivery === 'await');
         const isCommandVerb = MAV_PAYLOAD_MESSAGE_VERBS.indexOf(action) === -1;
-        $('.mav-payload-ack').toggle(isCommandVerb);
-        const showAckOpts = isCommandVerb && $('#node-input-awaitAck').is(':checked');
-        $('.mav-payload-ack-opts').toggle(showAckOpts);
+        $('.mav-payload-ack').toggle(delivery === 'await' && isCommandVerb);
 
         /**
          * Device-aware Component hint: make the addressing choice deliberate.
@@ -150,7 +172,7 @@
       }
 
       $action.on('change', refresh);
-      $('#node-input-awaitAck').on('change', refresh);
+      $('#node-input-delivery').on('change', refresh);
       refresh();
     }
   });
@@ -166,11 +188,16 @@
     <input type="text" id="node-input-profile">
   </div>
   <div class="form-row">
+    <label for="node-input-delivery"><i class="fa fa-arrow-right"></i> Delivery</label>
+    <select id="node-input-delivery" style="width:70%;">
+      <option value="build">Build only (hand off to MAVLink Out)</option>
+      <option value="send">Send via connection (fire-and-forget)</option>
+      <option value="await">Send &amp; await result (COMMAND_ACK)</option>
+    </select>
+  </div>
+  <div class="form-row mav-payload-connection">
     <label for="node-input-connection">Connection</label>
     <input type="text" id="node-input-connection">
-  </div>
-  <div class="form-tips" style="margin: -6px 0 8px 105px; width: 70%;">
-    Set a Connection to <b>send</b> directly; leave it empty to emit a <code>mavlink/send</code> message for a <b>mavlink-ai-out</b> node.
   </div>
   <div class="form-row">
     <label for="node-input-action">Action</label>
@@ -350,14 +377,10 @@
 
   <hr class="mav-payload-ack">
   <div class="form-row mav-payload-ack">
-    <label for="node-input-awaitAck" title="Wait for COMMAND_ACK and confirm the device accepted the command">Await ack</label>
-    <input type="checkbox" id="node-input-awaitAck" title="Wait for COMMAND_ACK and confirm the device accepted the command" style="width:auto; vertical-align:middle;">
-  </div>
-  <div class="form-row mav-payload-ack-opts">
     <label for="node-input-timeoutMs">Timeout (ms)</label>
     <input type="number" step="1" min="1" id="node-input-timeoutMs" placeholder="3000">
   </div>
-  <div class="form-row mav-payload-ack-opts">
+  <div class="form-row mav-payload-ack">
     <label for="node-input-maxRetries">Max retries</label>
     <input type="number" step="1" min="0" id="node-input-maxRetries" placeholder="3">
   </div>

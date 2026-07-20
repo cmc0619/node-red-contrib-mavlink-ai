@@ -291,13 +291,13 @@ test('move node: missing profile delivers one mavlink/error, done() clean (#285)
 
 test('payload node: missing profile delivers one mavlink/error, done() clean (#285)', async () => {
   const RED = new MockRED().loadNodes();
-  const node = RED.create('mavlink-ai-payload', { id: 'pl1', action: 'gripper_grab' });
+  const node = RED.create('mavlink-ai-payload', { id: 'pl1', action: 'gripper_grab', delivery: 'build' });
   const { collected, err } = await RED.inject(node, { payload: {} });
   assert.strictEqual(err, undefined);
   assert.strictEqual(collected.length, 1);
-  assert.strictEqual(collected[0].topic, 'mavlink/error');
-  assert.strictEqual(collected[0].payload.code, 'MISSING_PROFILE');
-  assert.strictEqual(collected[0].payload.node, 'mavlink-ai-payload');
+  assert.strictEqual(collected[0][1].topic, 'mavlink/error');
+  assert.strictEqual(collected[0][1].payload.code, 'MISSING_PROFILE');
+  assert.strictEqual(collected[0][1].payload.node, 'mavlink-ai-payload');
 });
 
 test('fanout node: missing profile delivers one mavlink/error, done() clean (#285)', async () => {
