@@ -339,8 +339,9 @@ module.exports = function registerMavlinkAiCommand(RED) {
       /**
        * A send failure must name the connection it actually used, even if a
        * live redeploy replaced node.connection mid-flight (#128/#238) — the
-       * Send delivery path below records its captured connection here before
-       * awaiting, mirroring the payload/move nodes' `sentOn` pattern.
+       * Send and Await delivery paths below each record their captured
+       * connection here before their async work starts, mirroring the
+       * payload/move nodes' `sentOn` pattern.
        */
       let sentOn = null;
       const fail = makeFail({
@@ -601,6 +602,15 @@ module.exports = function registerMavlinkAiCommand(RED) {
           return fail(new MavlinkError('BROADCAST_NO_ACK',
             'Broadcast (target_system 0) cannot confirm a COMMAND_ACK — use the fan-out node for per-vehicle acks, or switch delivery to Send or Build only.'));
         }
+        /**
+         * Captured before the workflow starts (#308 R4): a live flows:started
+         * refresh can swap or null node.connection while the await-ack
+         * workflow's send/retransmits are in flight, and a COMMAND_FAILED
+         * raised from that workflow must name the connection it actually ran
+         * on rather than a stale/absent node.connection read after the fact —
+         * mirrors the Send path's `sentOn` capture just below.
+         */
+        sentOn = node.connection;
         const bundle = node.profile.getDialect ? node.profile.getDialect() : null;
         // The Local Identity this workflow transmits as (#228): the explicit
         // payload request when present (which must be attached and permitted on

@@ -743,6 +743,35 @@ test('command Send & await result emits command/ack on port 0', async (t) => {
 });
 
 /**
+ * The Await-path mirror of the Send mid-flight swap test above (#308 R4): the
+ * CommandSend workflow's own `connection.send()` call is awaited internally,
+ * so a live redeploy that swaps/nulls node.connection while that send is in
+ * flight must not change which connection a resulting COMMAND_FAILED names.
+ * Before this fix only the Send branch captured `sentOn` before its async
+ * work started; the Await branch read `node.connection` after the fact via
+ * the same fallback and could name the swapped-in connection instead.
+ */
+test('command Send & await result reports the connection actually used, even if node.connection is swapped mid-flight (#308 R4)', async (t) => {
+  const { RED, conn, node } = setupWithConnection({ delivery: 'await', command: 'arm' });
+  t.after(() => RED.close(node));
+  let rejectSend;
+  conn.send = () => new Promise((_resolve, reject) => {
+    rejectSend = reject;
+  });
+  const injected = RED.inject(node, {});
+  // Let the input handler run up to the workflow's `connection.send(...)`,
+  // where node.connection has already been captured into `sentOn`, before
+  // swapping it out.
+  await new Promise((r) => setTimeout(r, 0));
+  node.connection = { name: 'swapped-in-by-redeploy' };
+  rejectSend(new Error('boom'));
+  const { collected } = await injected;
+  const err = collected.map((o) => o[1]).find(Boolean);
+  assert.strictEqual(err.payload.code, 'COMMAND_FAILED');
+  assert.strictEqual(err.payload.connection, 'conn', 'names the connection actually used, not the swapped-in one');
+});
+
+/**
  * #308 review finding G2: the Send (fire-and-forget) path awaits
  * connection.send() and, before this fix, emitted command/sent unconditionally
  * once it resolved. A close/redeploy that lands while that send is still
