@@ -163,14 +163,13 @@ module.exports = function registerMavlinkAiSwarm(RED) {
       }
 
       if (!registry) {
-        const profile = node.connection.profile;
-        const bundle = profile && typeof profile.getDialect === 'function' ? profile.getDialect() : null;
+        const bundle = node.connection.profile.getDialect();
         registry = new VehicleRegistry({
           staleMs: node.staleMs,
           expireMs: node.expireMs,
           includeGcs: node.includeGcs,
-          enums: bundle && bundle.valid ? bundle.enums : null,
-          dialect: bundle && bundle.valid ? bundle.name : 'unknown'
+          enums: bundle.enums,
+          dialect: bundle.name
         });
         registry.setGroups(groups);
         /** Exposed for tests/diagnostics. */

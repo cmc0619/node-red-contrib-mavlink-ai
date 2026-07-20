@@ -212,12 +212,12 @@ module.exports = function (RED) {
       // enum names resolve against stale enums and fresh telemetry diffs against
       // the previous state. State is observational and safe to rebuild
       // (spec §Node lifecycle).
-      const bundle = profile && typeof profile.getDialect === 'function' ? profile.getDialect() : null;
+      const bundle = profile.getDialect();
       engine = new VehicleStateEngine({
         staleMs: node.staleMs,
         statustextBuffer,
-        enums: bundle && bundle.valid ? bundle.enums : null,
-        dialect: bundle && bundle.valid ? bundle.name : 'unknown'
+        enums: bundle.enums,
+        dialect: bundle.name
       });
       node.engine = engine;
       node._reemit = reEmitAll;

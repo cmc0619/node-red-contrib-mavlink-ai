@@ -19,14 +19,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Dialect-independent common protocol values (command/mission results, mission
-  and frame types, param types/capabilities, vehicle classification) now resolve
-  from the always-available core (`minimal`+`standard`+`common`) bundle rather
-  than the profile's dialect. Command, mission, param, move, payload, and swarm
-  operations that need only common values keep working even for a profile whose
-  custom dialect fails to load; genuinely dialect-specific lookups (ArduPilot
-  flight-mode names, custom mission types) still fail closed with
-  `ENUM_VALUE_UNAVAILABLE`.
+- Dialect-*independent* protocol values (command/mission results, the mission
+  and frame type constants, vehicle classification, `base_mode`) resolve from
+  the core (`minimal`+`standard`+`common`) defs — the correct source for values
+  every dialect shares. Everything dialect-dependent (frames, payload actions,
+  param capabilities, custom mission types, ArduPilot mode names) binds strictly
+  to the profile's loaded dialect and fails loud with `ENUM_VALUE_UNAVAILABLE`
+  if the value is unavailable. There is no silent fallback: a broken/absent
+  dialect fails closed at the connection boundary rather than substituting a
+  value that may not apply.
 
 ### Migration
 

@@ -103,7 +103,7 @@ module.exports = function registerMavlinkAiParam(RED) {
       } catch (err) {
         return fail(err, 'PROFILE_UNRESOLVED');
       }
-      const bundle = profile && profile.getDialect ? profile.getDialect() : null;
+      const bundle = profile.getDialect();
 
       // Reject out-of-range targets before locking/sending (#55).
       try {
@@ -187,8 +187,8 @@ module.exports = function registerMavlinkAiParam(RED) {
         const resolved = resolveParamEncoding({
           capabilities: node.connection.getVehicleCapabilities(targetSystem, targetComponent),
           firmware: defaults.firmware,
-          enums: bundle ? bundle.enums : null,
-          dialect: bundle ? bundle.name : 'unknown'
+          enums: bundle.enums,
+          dialect: bundle.name
         });
         if (resolved.source === 'capabilities') {
           const labeled = defaults.firmware === 'px4' ? 'bytewise' : 'ccast';
@@ -214,8 +214,8 @@ module.exports = function registerMavlinkAiParam(RED) {
         localIdentity,
         targetSystem,
         targetComponent,
-        enums: bundle ? bundle.enums : null,
-        dialect: bundle ? bundle.name : 'unknown',
+        enums: bundle.enums,
+        dialect: bundle.name,
         // Label fallback for vehicles that never report capabilities.
         firmware: defaults.firmware,
         paramEncoding,
