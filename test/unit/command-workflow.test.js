@@ -361,6 +361,19 @@ test('resolveFlightMode maps PX4 main/sub modes as separate DO_SET_MODE params (
   });
 });
 
+test('resolveFlightMode resolves PX4 base_mode from core with no loaded dialect (#309 review: apply core)', () => {
+  // MavModeFlag.CUSTOM_MODE_ENABLED is a common core bit, so a PX4 profile
+  // whose custom dialect failed to load (enums: null) still resolves every
+  // set_mode to base_mode 1 instead of throwing ENUM_VALUE_UNAVAILABLE. PX4
+  // custom_mode/custom_submode come from the hardcoded PX4 tables, never a dialect.
+  const px4NoDialect = { firmware: 'px4', vehicleType: 'copter', enums: null, dialect: 'unknown' };
+  assert.deepStrictEqual(resolveFlightMode(px4NoDialect, 'POSITION'), {
+    base_mode: minimal.MavModeFlag.CUSTOM_MODE_ENABLED,
+    custom_mode: 3,
+    custom_submode: 0
+  });
+});
+
 test('splitPx4CustomMode splits packed values and passes bare main modes through (#136)', () => {
   const { splitPx4CustomMode } = require('../../lib/command/flight-modes');
   assert.deepStrictEqual(splitPx4CustomMode(((6 << 16) >>> 0)), { main: 6, sub: 0 });
